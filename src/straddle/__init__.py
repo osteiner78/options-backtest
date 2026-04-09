@@ -1,0 +1,39 @@
+"""SPY short strangle backtesting engine.
+
+Public API::
+
+    from straddle import (
+        PARAMS,
+        load_market_data,
+        SyntheticEngine,
+        MarketEngine,
+        make_engine,
+        run_backtest,
+        Trade,
+        compute_metrics,
+        plot_backtest,
+        plot_engine_comparison,
+    )
+"""
+
+from straddle.params import PARAMS
+from straddle.data import load_market_data, validate_market_mode_dates
+from straddle.engines import SyntheticEngine, MarketEngine, make_engine
+from straddle.strategy import run_backtest, Trade, LegRollEvent
+from straddle.metrics import compute_metrics
+from straddle.plotting import plot_backtest, plot_engine_comparison
+
+__all__ = [
+    "PARAMS",
+    "load_market_data",
+    "validate_market_mode_dates",
+    "SyntheticEngine",
+    "MarketEngine",
+    "make_engine",
+    "run_backtest",
+    "Trade",
+    "LegRollEvent",
+    "compute_metrics",
+    "plot_backtest",
+    "plot_engine_comparison",
+]
