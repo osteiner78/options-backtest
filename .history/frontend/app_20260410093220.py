@@ -25,6 +25,7 @@ from straddle import (
     make_engine,
     run_backtest,
     run_portfolio_backtest,
+    plot_portfolio_backtest,
 )
 
 # ── Page config ──────────────────────────────────────────────────────────
@@ -459,12 +460,7 @@ if "last_result" in st.session_state:
     # Equity curve
     st.subheader("Equity Curve")
     if is_portfolio and equity_df is not None and not equity_df.empty:
-        # Generate the enhanced HTML report link
-        report_path = plot_portfolio_backtest(trades, equity_df, portfolio, params, data=data)
-        if report_path:
-            st.success(f"📈 [View Detailed Portfolio Dashboard]({report_path})")
-        
-        # Portfolio mode: use the equity_df directly for the simple Streamlit plot
+        # Portfolio mode: use the equity_df directly
         chart_data = equity_df[["total_equity"]].copy()
         chart_data.columns = ["Total Portfolio"]
         if "available_cash" in equity_df.columns:
@@ -568,15 +564,12 @@ if "last_result" in st.session_state:
     # ── VIX Regime Table ─────────────────────────────────────────────────
     st.header("🌡️ VIX Regime")
 
-    # Define VIX ranges dynamically from PARAMS
-    vix_low = params.get("vix_low", 15)
-    vix_high = params.get("vix_high", 25)
-
+    # Define VIX ranges
     vix_ranges = [
-        ("Low", 0, vix_low),
-        ("Normal", vix_low, vix_high),
-        ("Elevated", vix_high, 35),
-        ("High", 35, 50),
+        ("Low", 0, 15),
+        ("Normal", 15, 20),
+        ("Elevated", 20, 30),
+        ("High", 30, 50),
         ("Extreme", 50, 200),
     ]
 
@@ -700,7 +693,7 @@ if "last_result" in st.session_state:
         return [""] * len(row)
 
     styled_df = trade_df.style.apply(highlight_exit_type, axis=1)
-    st.dataframe(styled_df, width='stretch', hide_index=True)
+    st.dataframe(styled_df, use_container_width=True, hide_index=True)
 
     # ── Saved Runs ───────────────────────────────────────────────────────
     if st.session_state.saved_runs:

@@ -11,7 +11,6 @@ Gap-open pricing always uses SyntheticEngine in both modes — the DB is
 EOD-only, so intraday stop modelling is always synthetic.
 """
 
-from dataclasses import dataclass
 from typing import Optional
 
 import numpy as np
@@ -19,17 +18,6 @@ import pandas as pd
 from scipy.stats import norm
 
 from straddle.data import validate_market_mode_dates
-from straddle.params import RISK_FREE_RATE_DEFAULT
-
-
-# ── Pricing Context ──────────────────────────────────────────────────────
-
-@dataclass
-class PricingContext:
-    """Optional metadata for engine lookups (dates, expirations)."""
-    eval_date: Optional[pd.Timestamp] = None
-    expiration: Optional[pd.Timestamp] = None
-    target_delta: Optional[float] = None # can override default engine delta
 
 
 # ── Black-Scholes primitives ─────────────────────────────────────────────
@@ -127,32 +115,34 @@ class SyntheticEngine:
         self.delta = params["target_delta"]
         self.put_slope = params.get("put_slope", 0.30)
         self.call_slope = params.get("call_slope", 0.10)
-        self.r_default = params.get("risk_free_rate", RISK_FREE_RATE_DEFAULT)
+        self.r_default = params.get("risk_free_rate", 0.045)
         self.gap_mult = params.get("gap_vix_multiplier", 3.0)
         self.vix_iv_mult = params.get("vix_to_iv_multiplier", 1.0)
-        self.o_adj = params.get("open_fill_adj", -0.05)
-        self.c_adj = params.get("close_fill_adj", 0.05)
-
-    def apply_fill_adj(self, mid_ps: float, side: str) -> float:
-        """Apply synthetic fill adjustment. side: 'open' or 'close'."""
-        if side == "open":
-            return mid_ps * (1.0 + self.o_adj)
-        return mid_ps * (1.0 + self.c_adj)
 
     def get_entry_marks(
-        self, S: float, T: float, r: float, vix: float, ctx: PricingContext = None
+        self, S: float, T: float, r: float, vix: float, **_kwargs
     ) -> tuple:
-        """Compute 16-delta strikes and per-share mids at trade entry."""
+        """Compute 16-delta strikes and per-share mids at trade entry.
+
+        Args:
+            S:   SPY close on entry date
+            T:   Time to expiry in years (entry_dte / 365)
+            r:   Risk-free rate for this date
+            vix: VIX close on entry date
+
+        Returns:
+            (put_strike, call_strike, put_mid_ps, call_mid_ps, used_market_data)
+            Per-share mids before fill adjustment; caller applies o_adj.
+        """
         sigma = (vix / 100.0) * self.vix_iv_mult
-        target_delta = (ctx.target_delta if ctx else None) or self.delta
         sigma_put = apply_skew(
-            sigma, target_delta, "put", self.put_slope, self.call_slope
+            sigma, self.delta, "put", self.put_slope, self.call_slope
         )
         sigma_call = apply_skew(
-            sigma, target_delta, "call", self.put_slope, self.call_slope
+            sigma, self.delta, "call", self.put_slope, self.call_slope
         )
-        put_k = strike_from_delta(S, T, r, sigma_put, target_delta, "put")
-        call_k = strike_from_delta(S, T, r, sigma_call, target_delta, "call")
+        put_k = strike_from_delta(S, T, r, sigma_put, self.delta, "put")
+        call_k = strike_from_delta(S, T, r, sigma_call, self.delta, "call")
         put_mid = bs_price(S, put_k, T, r, sigma_put, "put")
         call_mid = bs_price(S, call_k, T, r, sigma_call, "call")
         return put_k, call_k, put_mid, call_mid, False  # used_market_data=False
@@ -165,7 +155,7 @@ class SyntheticEngine:
         dte_rem: int,
         vix_d: float,
         r_d: float,
-        ctx: PricingContext = None,
+        **_kwargs,
     ) -> float:
         """Combined per-share strangle mid at EOD during the hold period.
 
@@ -181,16 +171,11 @@ class SyntheticEngine:
         """
         sigma_d = (vix_d / 100.0) * self.vix_iv_mult
         T_d = max(dte_rem / 365.0, 1e-7)
-
-        # Estimate current deltas using ATM vol to pick the right skew zone
-        d_put_est = bs_delta(S_d, put_k, T_d, r_d, sigma_d, "put")
-        d_call_est = bs_delta(S_d, call_k, T_d, r_d, sigma_d, "call")
-
         sigma_put = apply_skew(
-            sigma_d, d_put_est, "put", self.put_slope, self.call_slope
+            sigma_d, self.delta, "put", self.put_slope, self.call_slope
         )
         sigma_call = apply_skew(
-            sigma_d, d_call_est, "call", self.put_slope, self.call_slope
+            sigma_d, self.delta, "call", self.put_slope, self.call_slope
         )
         return bs_price(S_d, put_k, T_d, r_d, sigma_put, "put") + bs_price(
             S_d, call_k, T_d, r_d, sigma_call, "call"
@@ -204,15 +189,13 @@ class SyntheticEngine:
         vix_d: float,
         r_d: float,
         opt: str,
-        ctx: PricingContext = None,
+        **_kwargs,
     ) -> float:
         """Per-leg delta on eval_date (used by defensive leg roll trigger check)."""
         sigma_d = (vix_d / 100.0) * self.vix_iv_mult
         T_d = max(dte_rem / 365.0, 1e-7)
-        # Estimate delta for skew lookup
-        d_est = bs_delta(S_d, strike, T_d, r_d, sigma_d, opt)
         sigma_skewed = apply_skew(
-            sigma_d, d_est, opt, self.put_slope, self.call_slope
+            sigma_d, self.delta, opt, self.put_slope, self.call_slope
         )
         return bs_delta(S_d, strike, T_d, r_d, sigma_skewed, opt)
 
@@ -224,14 +207,13 @@ class SyntheticEngine:
         vix_d: float,
         r_d: float,
         opt: str,
-        ctx: PricingContext = None,
+        **_kwargs,
     ) -> float:
         """Per-share BS mid for a single leg (no fill adj, no commission)."""
         sigma_d = (vix_d / 100.0) * self.vix_iv_mult
         T_d = max(dte_rem / 365.0, 1e-7)
-        d_est = bs_delta(S_d, strike, T_d, r_d, sigma_d, opt)
         sigma_skewed = apply_skew(
-            sigma_d, d_est, opt, self.put_slope, self.call_slope
+            sigma_d, self.delta, opt, self.put_slope, self.call_slope
         )
         return bs_price(S_d, strike, T_d, r_d, sigma_skewed, opt)
 
@@ -243,12 +225,12 @@ class SyntheticEngine:
         vix_d: float,
         target_delta: float,
         opt: str,
-        ctx: PricingContext = None,
+        **_kwargs,
     ) -> tuple:
         """Return (strike, per-share mid) for a new leg at target_delta."""
         sigma_d = (vix_d / 100.0) * self.vix_iv_mult
         sigma_skewed = apply_skew(
-            sigma_d, target_delta, opt, self.put_slope, self.call_slope
+            sigma_d, self.delta, opt, self.put_slope, self.call_slope
         )
         strike = strike_from_delta(S_d, T_d, r_d, sigma_skewed, target_delta, opt)
         mark = bs_price(S_d, strike, T_d, r_d, sigma_skewed, opt)
@@ -330,13 +312,9 @@ class MarketEngine:
         self._con = _sqlite3.connect(db_path, check_same_thread=False)
         self._con.row_factory = _sqlite3.Row
         self.delta = params["target_delta"]
-        print(f"MarketEngine: connected to {db_path}")
+    self.vix_iv_mult = params.get("vix_to_iv_multiplier", 1.0)
 
-    def apply_fill_adj(self, mid_ps: float, side: str) -> float:
-        """Market mode: fill adjustment is already baked into bid/ask selection.
-        Returns mid_ps as is. (Synthetic fallback still uses its own adj).
-        """
-        return mid_ps
+        print(f"MarketEngine: connected to {db_path}")
 
     # ── public interface ────────────────────────────────────────────────
 
@@ -346,22 +324,27 @@ class MarketEngine:
         T: float,
         r: float,
         vix: float,
-        ctx: PricingContext = None,
+        entry_date: pd.Timestamp = None,
+        expiration: pd.Timestamp = None,
     ) -> tuple:
-        """Nearest-delta strike and mark from DB at entry."""
-        if ctx is None or ctx.eval_date is None or ctx.expiration is None or ctx.eval_date < self._DB_START:
-            return self._synth.get_entry_marks(S, T, r, vix, ctx)  # used_market_data=False
+        """Nearest-delta strike and mark from DB at entry.
 
-        date_str = ctx.eval_date.strftime("%Y-%m-%d")
-        exp_str = ctx.expiration.strftime("%Y-%m-%d")
+        The extra keyword arguments (entry_date, expiration) are used by
+        MarketEngine; SyntheticEngine ignores them via **kwargs compatibility
+        handled at the call site.
+        """
+        if entry_date is None or expiration is None or entry_date < self._DB_START:
+            return self._synth.get_entry_marks(S, T, r, vix)  # used_market_data=False
 
-        target_delta = ctx.target_delta or self.delta
-        put_row = self._best_row(date_str, exp_str, "put", -target_delta)
-        call_row = self._best_row(date_str, exp_str, "call", +target_delta)
+        date_str = entry_date.strftime("%Y-%m-%d")
+        exp_str = expiration.strftime("%Y-%m-%d")
+
+        put_row = self._best_row(date_str, exp_str, "put", -self.delta)
+        call_row = self._best_row(date_str, exp_str, "call", +self.delta)
 
         if put_row is None or call_row is None:
             # No valid DB row -- fall back to synthetic
-            return self._synth.get_entry_marks(S, T, r, vix, ctx)  # used_market_data=False
+            return self._synth.get_entry_marks(S, T, r, vix)  # used_market_data=False
 
         return (
             float(put_row["strike"]),
@@ -379,28 +362,47 @@ class MarketEngine:
         dte_rem: int,
         vix_d: float,
         r_d: float,
-        ctx: PricingContext = None,
+        eval_date: pd.Timestamp = None,
+        expiration: pd.Timestamp = None,
     ) -> float:
         """Sum of put and call ask prices from DB on eval_date.
 
         Ask = cost to buy back each leg (most conservative close fill).
         Falls back per-leg to synthetic BS if a strike is missing.
         """
-        if ctx is None or ctx.eval_date is None or ctx.eval_date < self._DB_START:
-            return self._synth.get_daily_mark(put_k, call_k, S_d, dte_rem, vix_d, r_d, ctx)
+        if eval_date is None or eval_date < self._DB_START:
+            return self._synth.get_daily_mark(put_k, call_k, S_d, dte_rem, vix_d, r_d)
 
-        date_str = ctx.eval_date.strftime("%Y-%m-%d")
-        exp_str = ctx.expiration.strftime("%Y-%m-%d") if ctx.expiration else None
+        date_str = eval_date.strftime("%Y-%m-%d")
+        exp_str = expiration.strftime("%Y-%m-%d") if expiration else None
 
         put_mark = self._strike_ask(date_str, exp_str, "put", put_k)
         call_mark = self._strike_ask(date_str, exp_str, "call", call_k)
 
         # Per-leg synthetic fallback
         if put_mark is None:
-            put_mark = self._synth.get_leg_mark(put_k, S_d, dte_rem, vix_d, r_d, "put", ctx)
+            sigma_d = vix_d / 100.0
+            T_d = max(dte_rem / 365.0, 1e-7)
+            sigma_put = apply_skew(
+                sigma_d,
+                self.delta,
+                "put",
+                self._synth.put_slope,
+                self._synth.call_slope,
+            )
+            put_mark = bs_price(S_d, put_k, T_d, r_d, sigma_put, "put")
 
         if call_mark is None:
-            call_mark = self._synth.get_leg_mark(call_k, S_d, dte_rem, vix_d, r_d, "call", ctx)
+            sigma_d = vix_d / 100.0 * self.vix_iv_mult
+            T_d = max(dte_rem / 365.0, 1e-7)
+            sigma_call = apply_skew(
+                sigma_d,
+                self.delta,
+                "call",
+                self._synth.put_slope,
+                self._synth.call_slope,
+            )
+            call_mark = bs_price(S_d, call_k, T_d, r_d, sigma_call, "call")
 
         return float(put_mark) + float(call_mark)
 
@@ -427,13 +429,15 @@ class MarketEngine:
         vix_d: float,
         r_d: float,
         opt: str,
-        ctx: PricingContext = None,
+        eval_date=None,
+        expiration=None,
+        **_kwargs,
     ) -> float:
         """Per-leg delta from DB on eval_date; falls back to synthetic BS."""
-        if ctx is None or ctx.eval_date is None or ctx.eval_date < self._DB_START or ctx.expiration is None:
-            return self._synth.get_daily_delta(strike, S_d, dte_rem, vix_d, r_d, opt, ctx)
-        date_str = ctx.eval_date.strftime("%Y-%m-%d")
-        exp_str = ctx.expiration.strftime("%Y-%m-%d")
+        if eval_date is None or eval_date < self._DB_START or expiration is None:
+            return self._synth.get_daily_delta(strike, S_d, dte_rem, vix_d, r_d, opt)
+        date_str = eval_date.strftime("%Y-%m-%d")
+        exp_str = expiration.strftime("%Y-%m-%d")
         cur = self._con.execute(
             """SELECT delta FROM options_data
                WHERE date = ? AND expiration = ? AND type = ? AND strike = ?
@@ -443,7 +447,7 @@ class MarketEngine:
         row = cur.fetchone()
         if row and row["delta"] is not None:
             return float(row["delta"])
-        return self._synth.get_daily_delta(strike, S_d, dte_rem, vix_d, r_d, opt, ctx)
+        return self._synth.get_daily_delta(strike, S_d, dte_rem, vix_d, r_d, opt)
 
     def get_leg_mark(
         self,
@@ -453,13 +457,15 @@ class MarketEngine:
         vix_d: float,
         r_d: float,
         opt: str,
-        ctx: PricingContext = None,
+        eval_date=None,
+        expiration=None,
+        **_kwargs,
     ) -> float:
         """Ask price for one leg from DB (buy-to-close fill); falls back to synthetic."""
-        if ctx is None or ctx.eval_date is None or ctx.eval_date < self._DB_START or ctx.expiration is None:
-            return self._synth.get_leg_mark(strike, S_d, dte_rem, vix_d, r_d, opt, ctx)
-        date_str = ctx.eval_date.strftime("%Y-%m-%d")
-        exp_str = ctx.expiration.strftime("%Y-%m-%d")
+        if eval_date is None or eval_date < self._DB_START or expiration is None:
+            return self._synth.get_leg_mark(strike, S_d, dte_rem, vix_d, r_d, opt)
+        date_str = eval_date.strftime("%Y-%m-%d")
+        exp_str = expiration.strftime("%Y-%m-%d")
         cur = self._con.execute(
             """SELECT ask FROM options_data
                WHERE date = ? AND expiration = ? AND type = ? AND strike = ?
@@ -469,7 +475,7 @@ class MarketEngine:
         row = cur.fetchone()
         if row and row["ask"] is not None and row["ask"] > 0:
             return float(row["ask"])
-        return self._synth.get_leg_mark(strike, S_d, dte_rem, vix_d, r_d, opt, ctx)
+        return self._synth.get_leg_mark(strike, S_d, dte_rem, vix_d, r_d, opt)
 
     def find_strike_at_delta(
         self,
@@ -479,17 +485,19 @@ class MarketEngine:
         vix_d: float,
         target_delta: float,
         opt: str,
-        ctx: PricingContext = None,
+        eval_date=None,
+        expiration=None,
+        **_kwargs,
     ) -> tuple:
         """Return (strike, bid) for the DB row whose delta is closest to target_delta.
         Uses bid for sell-to-open. Falls back to synthetic if no DB row.
         """
-        if ctx is None or ctx.eval_date is None or ctx.eval_date < self._DB_START or ctx.expiration is None:
+        if eval_date is None or eval_date < self._DB_START or expiration is None:
             return self._synth.find_strike_at_delta(
-                S_d, T_d, r_d, vix_d, target_delta, opt, ctx
+                S_d, T_d, r_d, vix_d, target_delta, opt
             )
-        date_str = ctx.eval_date.strftime("%Y-%m-%d")
-        exp_str = ctx.expiration.strftime("%Y-%m-%d")
+        date_str = eval_date.strftime("%Y-%m-%d")
+        exp_str = expiration.strftime("%Y-%m-%d")
         # puts: delta is negative in DB; calls: positive
         signed_target = -target_delta if opt == "put" else target_delta
         cur = self._con.execute(
@@ -502,7 +510,7 @@ class MarketEngine:
         row = cur.fetchone()
         if row and row["bid"] is not None and row["bid"] > 0:
             return float(row["strike"]), float(row["bid"])
-        return self._synth.find_strike_at_delta(S_d, T_d, r_d, vix_d, target_delta, opt, ctx)
+        return self._synth.find_strike_at_delta(S_d, T_d, r_d, vix_d, target_delta, opt)
 
     def close(self) -> None:
         """Close the DB connection. Call when done if running in a loop."""

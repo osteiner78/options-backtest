@@ -459,12 +459,7 @@ if "last_result" in st.session_state:
     # Equity curve
     st.subheader("Equity Curve")
     if is_portfolio and equity_df is not None and not equity_df.empty:
-        # Generate the enhanced HTML report link
-        report_path = plot_portfolio_backtest(trades, equity_df, portfolio, params, data=data)
-        if report_path:
-            st.success(f"📈 [View Detailed Portfolio Dashboard]({report_path})")
-        
-        # Portfolio mode: use the equity_df directly for the simple Streamlit plot
+        # Portfolio mode: use the equity_df directly
         chart_data = equity_df[["total_equity"]].copy()
         chart_data.columns = ["Total Portfolio"]
         if "available_cash" in equity_df.columns:

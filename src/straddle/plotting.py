@@ -220,18 +220,18 @@ def plot_backtest(
     ]
     ax7.plot(vx.index, vx.values, color="#7f8c8d", lw=0.8, alpha=0.8)
     ax7.axhline(
-        params["vix_low"],
+        params.get("vix_low", 15),
         color="#3498db",
         ls="--",
         lw=0.9,
-        label=f'VIX={params["vix_low"]}',
+        label=f'VIX={params.get("vix_low", 15)}',
     )
     ax7.axhline(
-        params["vix_high"],
+        params.get("vix_high", 25),
         color="#e74c3c",
         ls="--",
         lw=0.9,
-        label=f'VIX={params["vix_high"]}',
+        label=f'VIX={params.get("vix_high", 25)}',
     )
     ax7.scatter(
         [t.entry_date for t in trades],

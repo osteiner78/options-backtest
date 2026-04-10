@@ -48,7 +48,6 @@ class PricingParams(TypedDict, total=False):
     risk_free_rate: float
     put_slope: float
     call_slope: float
-    vix_to_iv_multiplier: float
 
 
 class OvershootParams(TypedDict, total=False):
@@ -64,11 +63,6 @@ class PortfolioParams(TypedDict, total=False):
     max_bpr_allocation: float
     cash_yield_annual: float
     entry_cooldown_days: int
-
-
-# ── Constants ───────────────────────────────────────────────────────────
-
-RISK_FREE_RATE_DEFAULT = 0.045
 
 
 # ── Backtest infrastructure ─────────────────────────────────────────────
@@ -125,10 +119,9 @@ PRICING: PricingParams = {
     # Synthetic model parameters.
     # In market mode these are still used for gap-open stop pricing
     # (DB is EOD-only, so overnight gaps always fall back to BS).
-    "risk_free_rate": RISK_FREE_RATE_DEFAULT,  # fallback when ^IRX data unavailable
+    "risk_free_rate": 0.045,  # fallback when ^IRX data unavailable
     "put_slope": 0.30,  # 16Δ put skew: vol × (1 + 0.30 × Δ) ≈ vol × 1.10
     "call_slope": 0.10,  # 16Δ call skew: vol × (1 + 0.10 × Δ) ≈ vol × 1.03
-    "vix_to_iv_multiplier": 1.15,  # SPY IV is typically ~15% higher than VIX
 }
 
 # ── Stop-loss overshoot model ────────────────────────────────────────────

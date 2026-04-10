@@ -8,13 +8,12 @@ Usage:
 """
 
 import json
-import threading
-from concurrent.futures import ThreadPoolExecutor
+import logging
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 from uuid import uuid4
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, BackgroundTasks
 from pydantic import BaseModel, Field
 
 from straddle import (
@@ -25,15 +24,18 @@ from straddle import (
     run_backtest,
 )
 
+# ── Logging Setup ────────────────────────────────────────────────────────
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
 app = FastAPI(
     title="SPY Short Strangle Backtest API",
     description="REST API for running SPY short strangle backtests",
     version="0.1.0",
 )
 
-# In-memory result store
+# In-memory result store (In a production app, use Redis/Postgres)
 _results: Dict[str, dict] = {}
-_executor = ThreadPoolExecutor(max_workers=2)
 
 
 # ── Pydantic Models ──────────────────────────────────────────────────────
@@ -103,6 +105,88 @@ class BacktestResponse(BaseModel):
     error: Optional[str] = None
 
 
+# ── Internal Worker ──────────────────────────────────────────────────────
+
+def _run_backtest_task(run_id: str, params: dict):
+    """Worker function to run backtest in the background."""
+    _results[run_id]["status"] = "running"
+    
+    try:
+        data = load_market_data(
+            start_date=params["start_date"],
+            end_date=params["end_date"],
+        )
+        engine = make_engine(params)
+        
+        try:
+            trades, equity_curve, skipped_entries, skipped_vix = run_backtest(
+                data, params, engine
+            )
+        finally:
+            if hasattr(engine, "close"):
+                engine.close()
+
+        metrics = compute_metrics(trades, equity_curve, params, data)
+
+        # Serialize trades
+        trade_summaries = [
+            TradeSummary(
+                trade_num=t.trade_num,
+                entry_date=str(t.entry_date.date()),
+                exit_date=str(t.exit_date.date()) if t.exit_date else None,
+                expiration=str(t.expiration.date()),
+                put_strike=t.put_strike,
+                call_strike=t.call_strike,
+                net_credit=t.net_credit,
+                pnl=t.pnl,
+                pnl_pct=t.pnl_pct,
+                exit_type=t.exit_type,
+                entry_vix=t.entry_vix,
+            )
+            for t in trades
+        ]
+
+        # Serialize equity curve
+        eq_curve = {str(k.date()): v for k, v in equity_curve.items()}
+
+        # Exit breakdown
+        exit_breakdown = {}
+        for t in trades:
+            et = t.exit_type or "UNKNOWN"
+            exit_breakdown[et] = exit_breakdown.get(et, 0) + 1
+
+        _results[run_id].update({
+            "status": "completed",
+            "metrics": MetricsResponse(
+                n_trades=metrics.get("n", 0),
+                initial_balance=metrics.get("init", 0),
+                final_balance=metrics.get("final", 0),
+                total_return=metrics.get("tot", 0),
+                annualized_return=metrics.get("ann", 0),
+                sharpe=metrics.get("sharpe", 0),
+                max_drawdown=metrics.get("mdd", 0),
+                calmar=metrics.get("calmar", 0),
+                win_rate=metrics.get("wr", 0),
+                win_rate_chain=metrics.get("wr_chain", 0),
+                avg_pnl=metrics.get("avg_pnl", 0),
+                max_consecutive_losses=metrics.get("max_streak", 0),
+                spy_total_return=metrics.get("spy_total_return", 0),
+                spy_sharpe=metrics.get("spy_sharpe", 0),
+                exit_breakdown=exit_breakdown,
+            ),
+            "trades": trade_summaries,
+            "equity_curve": eq_curve,
+        })
+        logger.info(f"Backtest {run_id} completed successfully.")
+
+    except Exception as e:
+        logger.error(f"Backtest {run_id} failed: {e}")
+        _results[run_id].update({
+            "status": "failed",
+            "error": str(e),
+        })
+
+
 # ── Helpers ──────────────────────────────────────────────────────────────
 
 def _build_params(req: BacktestRequest) -> dict:
@@ -111,78 +195,6 @@ def _build_params(req: BacktestRequest) -> dict:
     overrides = req.model_dump(exclude_none=True)
     params.update(overrides)
     return params
-
-
-def _run_backtest_sync(params: dict) -> dict:
-    """Run a full backtest and return results dict."""
-    data = load_market_data(
-        start_date=params["start_date"],
-        end_date=params["end_date"],
-    )
-    engine = make_engine(params)
-    try:
-        trades, equity_curve, skipped_entries, skipped_vix = run_backtest(
-            data, params, engine
-        )
-    finally:
-        if hasattr(engine, "close"):
-            engine.close()
-
-    metrics = compute_metrics(trades, equity_curve, params, data)
-
-    # Serialize trades
-    trade_summaries = [
-        TradeSummary(
-            trade_num=t.trade_num,
-            entry_date=str(t.entry_date.date()),
-            exit_date=str(t.exit_date.date()) if t.exit_date else None,
-            expiration=str(t.expiration.date()),
-            put_strike=t.put_strike,
-            call_strike=t.call_strike,
-            net_credit=t.net_credit,
-            pnl=t.pnl,
-            pnl_pct=t.pnl_pct,
-            exit_type=t.exit_type,
-            entry_vix=t.entry_vix,
-        )
-        for t in trades
-    ]
-
-    # Serialize equity curve
-    eq_curve = {str(k.date()): v for k, v in equity_curve.items()}
-
-    # Exit breakdown
-    exit_breakdown = {}
-    for t in trades:
-        et = t.exit_type or "UNKNOWN"
-        exit_breakdown[et] = exit_breakdown.get(et, 0) + 1
-
-    final_balance = params["initial_balance"] + sum(t.pnl for t in trades)
-
-    return {
-        "params": params,
-        "metrics": MetricsResponse(
-            n_trades=metrics.get("n", 0),
-            initial_balance=metrics.get("init", 0),
-            final_balance=metrics.get("final", 0),
-            total_return=metrics.get("tot", 0),
-            annualized_return=metrics.get("ann", 0),
-            sharpe=metrics.get("sharpe", 0),
-            max_drawdown=metrics.get("mdd", 0),
-            calmar=metrics.get("calmar", 0),
-            win_rate=metrics.get("wr", 0),
-            win_rate_chain=metrics.get("wr_chain", 0),
-            avg_pnl=metrics.get("avg_pnl", 0),
-            max_consecutive_losses=metrics.get("max_streak", 0),
-            spy_total_return=metrics.get("spy_total_return", 0),
-            spy_sharpe=metrics.get("spy_sharpe", 0),
-            exit_breakdown=exit_breakdown,
-        ),
-        "trades": trade_summaries,
-        "equity_curve": eq_curve,
-        "skipped_entries": skipped_entries,
-        "skipped_vix": skipped_vix,
-    }
 
 
 # ── Routes ───────────────────────────────────────────────────────────────
@@ -194,46 +206,60 @@ def health_check():
 
 
 @app.post("/backtest", response_model=BacktestResponse)
-def run_backtest_api(req: BacktestRequest = BacktestRequest()):
-    """Run a backtest with optional parameter overrides.
+async def run_backtest_api(
+    background_tasks: BackgroundTasks, 
+    req: BacktestRequest = BacktestRequest()
+):
+    """Trigger a backtest in the background.
 
-    Returns the full results inline. For long-running backtests,
-    consider using the async endpoint (future).
+    Returns a run_id immediately. Poll /backtest/{run_id} for results.
     """
     run_id = str(uuid4())[:8]
     params = _build_params(req)
-
-    try:
-        result = _run_backtest_sync(params)
-        return BacktestResponse(
-            run_id=run_id,
-            status="completed",
-            params=params,
-            metrics=result["metrics"],
-            trades=result["trades"],
-            equity_curve=result["equity_curve"],
-        )
-    except Exception as e:
-        return BacktestResponse(
-            run_id=run_id,
-            status="failed",
-            params=params,
-            error=str(e),
-        )
+    
+    # Initialize record
+    _results[run_id] = {
+        "run_id": run_id,
+        "status": "pending",
+        "params": params,
+    }
+    
+    # Queue task
+    background_tasks.add_task(_run_backtest_task, run_id, params)
+    
+    return BacktestResponse(
+        run_id=run_id,
+        status="pending",
+        params=params,
+    )
 
 
 @app.get("/backtest/{run_id}", response_model=BacktestResponse)
 def get_backtest_result(run_id: str):
-    """Retrieve a previously run backtest result by ID."""
+    """Retrieve backtest status or results by ID."""
     if run_id not in _results:
         raise HTTPException(status_code=404, detail=f"Run {run_id} not found")
-    result = _results[run_id]
+    
+    res = _results[run_id]
     return BacktestResponse(
         run_id=run_id,
-        status=result.get("status", "unknown"),
-        params=result.get("params", {}),
-        metrics=result.get("metrics"),
-        trades=result.get("trades"),
-        equity_curve=result.get("equity_curve"),
-        error=result.get("error"),
+        status=res.get("status", "unknown"),
+        params=res.get("params", {}),
+        metrics=res.get("metrics"),
+        trades=res.get("trades"),
+        equity_curve=res.get("equity_curve"),
+        error=res.get("error"),
     )
+
+
+@app.get("/backtests", response_model=List[BacktestResponse])
+def list_backtests():
+    """List all recent backtest runs."""
+    return [
+        BacktestResponse(
+            run_id=rid,
+            status=data["status"],
+            params=data["params"],
+        )
+        for rid, data in _results.items()
+    ]
