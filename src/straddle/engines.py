@@ -263,6 +263,7 @@ class SyntheticEngine:
         call_k: float,
         T_d: float,
         r_open: float,
+        ctx: PricingContext = None,
     ) -> float:
         """Per-share strangle mid priced at the open on a gap day.
 
@@ -280,15 +281,17 @@ class SyntheticEngine:
             put_k / call_k: strikes
             T_d:          Time to expiry in years
             r_open:       Risk-free rate at the open
+            ctx:          Optional PricingContext
         """
         vix_open_sigma = (
             vix_prev_raw * (1.0 + self.gap_mult * gap_pct)
         ) * self.vix_iv_mult
+        target_delta = (ctx.target_delta if ctx else None) or self.delta
         sigma_put = apply_skew(
-            vix_open_sigma, self.delta, "put", self.put_slope, self.call_slope
+            vix_open_sigma, target_delta, "put", self.put_slope, self.call_slope
         )
         sigma_call = apply_skew(
-            vix_open_sigma, self.delta, "call", self.put_slope, self.call_slope
+            vix_open_sigma, target_delta, "call", self.put_slope, self.call_slope
         )
         return bs_price(spy_open, put_k, T_d, r_open, sigma_put, "put") + bs_price(
             spy_open, call_k, T_d, r_open, sigma_call, "call"
@@ -413,10 +416,11 @@ class MarketEngine:
         call_k: float,
         T_d: float,
         r_open: float,
+        ctx: PricingContext = None,
     ) -> float:
         """Always synthetic -- DB is EOD-only."""
         return self._synth.get_gap_open_mark(
-            spy_open, vix_prev_raw, gap_pct, put_k, call_k, T_d, r_open
+            spy_open, vix_prev_raw, gap_pct, put_k, call_k, T_d, r_open, ctx
         )
 
     def get_daily_delta(

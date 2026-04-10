@@ -441,6 +441,7 @@ def evaluate_trade_step(
             trade.active_call_strike,
             T_d,
             r_open,
+            ctx=ctx,
         )
 
         open_mid_dollar = open_mid * 100.0
