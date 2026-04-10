@@ -13,6 +13,11 @@ Public API::
         compute_metrics,
         plot_backtest,
         plot_engine_comparison,
+        # Portfolio mode:
+        PortfolioManager,
+        calculate_reg_t_strangle_margin,
+        run_portfolio_backtest,
+        plot_portfolio_backtest,
     )
 """
 
@@ -20,8 +25,14 @@ from straddle.params import PARAMS
 from straddle.data import load_market_data, validate_market_mode_dates
 from straddle.engines import SyntheticEngine, MarketEngine, make_engine
 from straddle.strategy import run_backtest, Trade, LegRollEvent
-from straddle.metrics import compute_metrics
+from straddle.metrics import compute_metrics, compute_portfolio_metrics
 from straddle.plotting import plot_backtest, plot_engine_comparison
+from straddle.portfolio import (
+    PortfolioManager,
+    calculate_reg_t_strangle_margin,
+    run_portfolio_backtest,
+    plot_portfolio_backtest,
+)
 
 __all__ = [
     "PARAMS",
@@ -34,6 +45,12 @@ __all__ = [
     "Trade",
     "LegRollEvent",
     "compute_metrics",
+    "compute_portfolio_metrics",
     "plot_backtest",
     "plot_engine_comparison",
+    # Portfolio mode
+    "PortfolioManager",
+    "calculate_reg_t_strangle_margin",
+    "run_portfolio_backtest",
+    "plot_portfolio_backtest",
 ]

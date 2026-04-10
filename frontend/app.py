@@ -20,9 +20,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 from straddle import (
     PARAMS,
     compute_metrics,
+    compute_portfolio_metrics,
     load_market_data,
     make_engine,
     run_backtest,
+    run_portfolio_backtest,
 )
 
 # ── Page config ──────────────────────────────────────────────────────────
@@ -109,6 +111,44 @@ single_position = st.sidebar.checkbox(
     "Single position (no overlap)",
     value=PARAMS["single_position"],
 )
+
+# Portfolio mode
+st.sidebar.header("💼 Portfolio Mode")
+portfolio_mode = st.sidebar.radio(
+    "Backtest Mode",
+    options=["Single Position", "Portfolio (Laddering)"],
+    index=0,
+    horizontal=False,
+    help="Single Position: one trade at a time. Portfolio: multiple concurrent positions with laddering.",
+)
+is_portfolio = portfolio_mode == "Portfolio (Laddering)"
+
+if is_portfolio:
+    max_bpr_allocation = st.sidebar.slider(
+        "Max BPR Allocation (%)",
+        min_value=10,
+        max_value=80,
+        value=int(PARAMS.get("max_bpr_allocation", 0.30) * 100),
+        step=5,
+        format="%d%%",
+        help="Maximum percentage of starting capital used as margin.",
+    )
+    cash_yield_annual = st.sidebar.number_input(
+        "Cash Yield Annual (%)",
+        value=float(PARAMS.get("cash_yield_annual", 4.0) * 100),
+        min_value=0.0,
+        max_value=10.0,
+        step=0.25,
+        format="%.2f",
+        help="Annual risk-free rate earned on uninvested cash.",
+    )
+    entry_cooldown_days = st.sidebar.number_input(
+        "Entry Cooldown (days)",
+        value=int(PARAMS.get("entry_cooldown_days", 3)),
+        min_value=1,
+        max_value=10,
+        help="Minimum trading days between new entries.",
+    )
 
 # VIX entry filter
 st.sidebar.header("🌡️ VIX Entry Filter")
@@ -218,7 +258,7 @@ def build_params() -> dict:
         "roll_for_credit": bool(roll_for_credit),
         "manage_at_dte": int(manage_at_dte),
         "max_rolls": int(max_rolls),
-        "single_position": bool(single_position),
+        "single_position": bool(single_position) and not is_portfolio,
         "vix_entry_filter_enabled": bool(vix_filter_enabled),
         "vix_entry_max": float(vix_entry_max),
         "defensive_leg_roll_enabled": bool(defensive_roll),
@@ -229,6 +269,12 @@ def build_params() -> dict:
         "put_slope": float(put_slope),
         "call_slope": float(call_slope),
     })
+    if is_portfolio:
+        p.update({
+            "max_bpr_allocation": float(max_bpr_allocation) / 100.0,
+            "cash_yield_annual": float(cash_yield_annual) / 100.0,
+            "entry_cooldown_days": int(entry_cooldown_days),
+        })
     return p
 
 
@@ -240,7 +286,7 @@ st.caption("Monthly short strangle · 30–45 DTE · configurable profit target 
 # Run button
 col1, col2 = st.columns([1, 4])
 with col1:
-    run_clicked = st.button("🚀 Run Backtest", type="primary", use_container_width=True)
+    run_clicked = st.button("🚀 Run Backtest", type="primary", width='stretch')
 
 if run_clicked:
     params = build_params()
@@ -253,21 +299,37 @@ if run_clicked:
 
     with st.spinner(f"Running backtest ({params['mode']} mode)..."):
         engine = make_engine(params)
-        trades, equity_curve, skipped_entries, skipped_vix = run_backtest(
-            data, params, engine
-        )
+        if is_portfolio:
+            trades, equity_df, portfolio = run_portfolio_backtest(
+                data, params, engine
+            )
+            equity_curve = equity_df["total_equity"] if not equity_df.empty else pd.Series(dtype=float)
+            skipped_entries = 0
+            skipped_vix = 0
+        else:
+            trades, equity_curve, skipped_entries, skipped_vix = run_backtest(
+                data, params, engine
+            )
+            equity_df = None
+            portfolio = None
 
-    metrics = compute_metrics(trades, equity_curve, params, data)
+    if is_portfolio and equity_df is not None and not equity_df.empty:
+        metrics = compute_portfolio_metrics(trades, equity_df, params, data)
+    else:
+        metrics = compute_metrics(trades, equity_curve, params, data)
 
     # Store in session state
     st.session_state.last_result = {
         "trades": trades,
         "equity_curve": equity_curve,
+        "equity_df": equity_df,
+        "portfolio": portfolio,
         "metrics": metrics,
         "params": params,
         "data": data,
         "skipped_entries": skipped_entries,
         "skipped_vix": skipped_vix,
+        "is_portfolio": is_portfolio,
     }
 
 # Display results if available
@@ -275,16 +337,19 @@ if "last_result" in st.session_state:
     result = st.session_state.last_result
     trades = result["trades"]
     equity_curve = result["equity_curve"]
+    equity_df = result.get("equity_df")
+    portfolio = result.get("portfolio")
     metrics = result["metrics"]
     params = result["params"]
     data = result["data"]
     skipped_entries = result.get("skipped_entries", 0)
     skipped_vix = result.get("skipped_vix", 0)
+    is_portfolio = result.get("is_portfolio", False)
 
     # ── Save run button ──────────────────────────────────────────────────
     col1, col2 = st.columns([1, 4])
     with col1:
-        if st.button("💾 Save This Run", use_container_width=True):
+        if st.button("💾 Save This Run", width='stretch'):
             run_label = (
                 f"{params['start_date']} → {params['end_date']} "
                 f"({params['mode']}, {len(trades)} trades)"
@@ -299,7 +364,10 @@ if "last_result" in st.session_state:
     # ── Performance Summary ──────────────────────────────────────────────
     st.header("📈 Performance Summary")
 
-    final_balance = params["initial_balance"] + sum(t.pnl for t in trades)
+    if is_portfolio and equity_df is not None and not equity_df.empty:
+        final_balance = float(equity_df["total_equity"].iloc[-1])
+    else:
+        final_balance = params["initial_balance"] + sum(t.pnl for t in trades)
     total_return = (final_balance - params["initial_balance"]) / params["initial_balance"]
 
     # Row 1: Initial & Final Balance
@@ -307,6 +375,17 @@ if "last_result" in st.session_state:
     col1, col2 = st.columns(2)
     col1.metric("Initial Balance", f"${params['initial_balance']:,.0f}")
     col2.metric("Final Balance", f"${final_balance:,.0f}")
+
+    # Portfolio-specific stats
+    if is_portfolio:
+        st.subheader("💼 Portfolio Stats")
+        col1, col2, col3, col4 = st.columns(4)
+        col1.metric("Peak Positions", metrics.get("peak_positions", 0))
+        col2.metric("Avg Positions", f"{metrics.get('avg_positions', 0):.1f}")
+        col3.metric("Avg BPR Util", f"{metrics.get('avg_bpr_util', 0):.1f}%")
+        col4.metric("Peak BPR Util", f"{metrics.get('peak_bpr_util', 0):.1f}%")
+        col1, col2 = st.columns(2)
+        col1.metric("Cash Yield Earned", f"${metrics.get('cash_yield_earned', 0):,.0f}")
 
     # Row 2: Return metrics grouped
     st.subheader("Returns & Risk")
@@ -326,12 +405,19 @@ if "last_result" in st.session_state:
 
     # Row 3: Trade stats grouped
     st.subheader("Trade Statistics")
-    col1, col2, col3, col4, col5 = st.columns(5)
-    col1.metric("Trades Executed", len(trades))
-    col2.metric("Skipped (Single Pos)", skipped_entries)
-    col3.metric("Skipped (VIX High)", skipped_vix)
-    col4.metric("Win Rate (Chain)", f"{metrics.get('wr_chain', 0)*100:.1f}%")
-    col5.metric("Avg P&L", f"${metrics.get('avg_pnl', 0):,.0f}")
+    if is_portfolio:
+        col1, col2, col3, col4 = st.columns(4)
+        col1.metric("Trades Executed", len(trades))
+        col2.metric("Win Rate", f"{metrics.get('wr', 0)*100:.1f}%")
+        col3.metric("Avg P&L", f"${metrics.get('avg_pnl', 0):,.0f}")
+        col4.metric("Max Drawdown", f"{metrics.get('mdd', 0)*100:.1f}%")
+    else:
+        col1, col2, col3, col4, col5 = st.columns(5)
+        col1.metric("Trades Executed", len(trades))
+        col2.metric("Skipped (Single Pos)", skipped_entries)
+        col3.metric("Skipped (VIX High)", skipped_vix)
+        col4.metric("Win Rate (Chain)", f"{metrics.get('wr_chain', 0)*100:.1f}%")
+        col5.metric("Avg P&L", f"${metrics.get('avg_pnl', 0):,.0f}")
 
     # Row 4: SPY benchmark (separate)
     st.subheader("📊 SPY Benchmark")
@@ -365,27 +451,35 @@ if "last_result" in st.session_state:
         }
         for k, v in exit_types.items()
     ])
-    st.dataframe(exit_df, use_container_width=True, hide_index=True)
+    st.dataframe(exit_df, width='stretch', hide_index=True)
 
     # ── Charts ───────────────────────────────────────────────────────────
     st.header("📉 Charts")
 
     # Equity curve
     st.subheader("Equity Curve")
-    eq_dates = [pd.Timestamp(params["start_date"])] + list(equity_curve.index)
-    eq_vals = [params["initial_balance"]] + list(equity_curve.values)
-    eq_df = pd.DataFrame({"Date": eq_dates, "Strangle": eq_vals})
+    if is_portfolio and equity_df is not None and not equity_df.empty:
+        # Portfolio mode: use the equity_df directly
+        chart_data = equity_df[["total_equity"]].copy()
+        chart_data.columns = ["Total Portfolio"]
+        if "available_cash" in equity_df.columns:
+            chart_data["Cash"] = equity_df["available_cash"]
+        st.line_chart(chart_data, width='stretch')
+    else:
+        eq_dates = [pd.Timestamp(params["start_date"])] + list(equity_curve.index)
+        eq_vals = [params["initial_balance"]] + list(equity_curve.values)
+        eq_df = pd.DataFrame({"Date": eq_dates, "Strangle": eq_vals})
 
-    # SPY B&H for comparison
-    spy_eq = data.loc[
-        pd.Timestamp(params["start_date"]) : pd.Timestamp(params["end_date"]),
-        "spy_close",
-    ]
-    spy_eq = spy_eq / float(spy_eq.iloc[0]) * params["initial_balance"]
-    spy_df = pd.DataFrame({"Date": spy_eq.index, "SPY B&H": spy_eq.values})
+        # SPY B&H for comparison
+        spy_eq = data.loc[
+            pd.Timestamp(params["start_date"]) : pd.Timestamp(params["end_date"]),
+            "spy_close",
+        ]
+        spy_eq = spy_eq / float(spy_eq.iloc[0]) * params["initial_balance"]
+        spy_df = pd.DataFrame({"Date": spy_eq.index, "SPY B&H": spy_eq.values})
 
-    chart_df = eq_df.merge(spy_df, on="Date", how="outer").sort_values("Date").ffill()
-    st.line_chart(chart_df.set_index("Date"), use_container_width=True)
+        chart_df = eq_df.merge(spy_df, on="Date", how="outer").sort_values("Date").ffill()
+        st.line_chart(chart_df.set_index("Date"), width='stretch')
 
     # P&L per trade (bar chart with dates on x-axis, colored by exit type)
     st.subheader("P&L per Trade")
@@ -432,7 +526,7 @@ if "last_result" in st.session_state:
                 nticks=20,
             ),
         )
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width='stretch')
 
     # Cumulative P&L chart
     st.subheader("Cumulative P&L")
@@ -464,7 +558,7 @@ if "last_result" in st.session_state:
                 nticks=20,
             ),
         )
-        st.plotly_chart(fig_cum, use_container_width=True)
+        st.plotly_chart(fig_cum, width='stretch')
 
     # ── VIX Regime Table ─────────────────────────────────────────────────
     st.header("🌡️ VIX Regime")
@@ -530,7 +624,7 @@ if "last_result" in st.session_state:
             })
 
     regime_df = pd.DataFrame(regime_rows)
-    st.dataframe(regime_df, use_container_width=True, hide_index=True)
+    st.dataframe(regime_df, width='stretch', hide_index=True)
 
     # ── Trade Log ────────────────────────────────────────────────────────
     st.header("📋 Trade Log")
@@ -598,7 +692,7 @@ if "last_result" in st.session_state:
         return [""] * len(row)
 
     styled_df = trade_df.style.apply(highlight_exit_type, axis=1)
-    st.dataframe(styled_df, use_container_width=True, hide_index=True)
+    st.dataframe(styled_df, width='stretch', hide_index=True)
 
     # ── Saved Runs ───────────────────────────────────────────────────────
     if st.session_state.saved_runs:

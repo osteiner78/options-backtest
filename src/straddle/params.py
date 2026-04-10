@@ -59,6 +59,12 @@ class OvershootParams(TypedDict, total=False):
     gap_vix_multiplier: float
 
 
+class PortfolioParams(TypedDict, total=False):
+    max_bpr_allocation: float
+    cash_yield_annual: float
+    entry_cooldown_days: int
+
+
 # ── Backtest infrastructure ─────────────────────────────────────────────
 
 BACKTEST: BacktestParams = {
@@ -135,8 +141,16 @@ OVERSHOOT: OvershootParams = {
     "gap_vix_multiplier": 3.0,
 }
 
+# ── Portfolio / laddering ────────────────────────────────────────────────
+
+PORTFOLIO: PortfolioParams = {
+    "max_bpr_allocation": 0.30,  # max 30% of starting capital as margin usage
+    "cash_yield_annual": 0.04,  # 4% annual risk-free rate on uninvested cash
+    "entry_cooldown_days": 3,  # minimum trading days between new entries
+}
+
 # ── Merge into a single flat dict for backward compatibility ─────────────
 # All downstream cells (run_backtest, compute_metrics, plot) read from PARAMS.
 # The sub-dicts are the human-facing interface; PARAMS is the machine interface.
 
-PARAMS: dict = {**BACKTEST, **STRATEGY, **PRICING, **OVERSHOOT}
+PARAMS: dict = {**BACKTEST, **STRATEGY, **PRICING, **OVERSHOOT, **PORTFOLIO}

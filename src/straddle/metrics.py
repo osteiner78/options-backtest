@@ -209,3 +209,138 @@ def compute_metrics(trades, equity_curve, params, data) -> dict:
         spy_total_return=spy_total_return,
         spy_sharpe=spy_sharpe,
     )
+
+
+# ── Portfolio-specific metrics ───────────────────────────────────────────
+
+def compute_portfolio_metrics(
+    trades: list,
+    equity_df: pd.DataFrame,
+    params: dict,
+    data: pd.DataFrame,
+) -> dict:
+    """Compute performance metrics for a portfolio-mode backtest.
+
+    Works with the equity DataFrame produced by ``run_portfolio_backtest``
+    and the list of closed trades.  Computes total return, Sharpe (from
+    daily equity changes), max drawdown, win rate, and portfolio-level
+    stats like peak concurrent positions and average BPR utilization.
+
+    Args:
+        trades: List of closed Trade objects.
+        equity_df: DataFrame with columns total_equity, available_cash,
+            utilized_bpr, open_positions (indexed by date).
+        params: Flat PARAMS dict.
+        data: DataFrame from load_market_data (for SPY benchmark).
+
+    Returns:
+        Dict with portfolio metrics.
+    """
+    if equity_df.empty:
+        return {}
+
+    init = params.get("initial_balance", 50_000)
+    total_equity = equity_df["total_equity"].values
+    final = float(total_equity[-1])
+    years = (
+        pd.Timestamp(params["end_date"]) - pd.Timestamp(params["start_date"])
+    ).days / 365.25
+    ann = (final / init) ** (1.0 / years) - 1.0 if years > 0 else 0.0
+    total_return = (final - init) / init
+
+    # Sharpe from daily equity changes
+    daily_changes = equity_df["total_equity"].diff().dropna()
+    rf_daily = params.get("risk_free_rate", 0.045) / 252
+    sharpe = (
+        float((daily_changes.mean() - rf_daily) / daily_changes.std(ddof=1) * np.sqrt(252))
+        if len(daily_changes) > 1 and daily_changes.std() > 0
+        else float("nan")
+    )
+
+    # Max drawdown
+    pk = np.maximum.accumulate(total_equity)
+    mdd = float(((total_equity - pk) / pk).min()) if len(total_equity) else 0.0
+
+    # Trade-level stats (only non-ROLLED exits for independent outcomes)
+    if trades:
+        pnls = np.array([t.pnl for t in trades if t.pnl is not None])
+        pcts = np.array([t.pnl_pct for t in trades if t.pnl_pct is not None])
+        n = len(pnls)
+        wr = float((pnls > 0).mean()) if n else float("nan")
+        avg_pnl = float(pnls.mean()) if n else float("nan")
+    else:
+        n = 0
+        wr = float("nan")
+        avg_pnl = float("nan")
+
+    # Portfolio-level stats
+    peak_positions = int(equity_df["open_positions"].max()) if "open_positions" in equity_df.columns else 0
+    avg_positions = float(equity_df["open_positions"].mean()) if "open_positions" in equity_df.columns else 0.0
+
+    # BPR utilization
+    if "utilized_bpr" in equity_df.columns and equity_df["utilized_bpr"].max() > 0:
+        max_bpr_cap = init * params.get("max_bpr_allocation", 0.30)
+        avg_bpr_util = float(equity_df["utilized_bpr"].mean() / max_bpr_cap * 100) if max_bpr_cap > 0 else 0.0
+        peak_bpr_util = float(equity_df["utilized_bpr"].max() / max_bpr_cap * 100) if max_bpr_cap > 0 else 0.0
+    else:
+        avg_bpr_util = 0.0
+        peak_bpr_util = 0.0
+
+    # Cash yield earned (difference between final equity and initial + realized PnL)
+    realized_pnl = sum(t.pnl for t in trades if t.pnl is not None)
+    cash_yield_earned = final - init - realized_pnl
+
+    # Exit breakdown
+    def _stats(xt):
+        ts = [t for t in trades if t.exit_type == xt]
+        if not ts:
+            return 0, float("nan"), float("nan")
+        a = np.array([t.pnl for t in ts])
+        return len(ts), float((a > 0).mean()), float(a.mean())
+
+    n_p, wr_p, avg_p = _stats("PROFIT")
+    n_d, wr_d, avg_d = _stats("21DTE")
+    n_e, wr_e, avg_e = _stats("EXPIRY")
+    n_r, wr_r, avg_r = _stats("ROLLED")
+
+    # SPY benchmark
+    spy_window = data.loc[
+        pd.Timestamp(params["start_date"]) : pd.Timestamp(params["end_date"]),
+        "spy_close",
+    ]
+    spy_start_price = float(spy_window.iloc[0])
+    spy_end_price = float(spy_window.iloc[-1])
+    spy_total_return = (spy_end_price - spy_start_price) / spy_start_price
+
+    _spy_daily = spy_window.pct_change().dropna()
+    _spy_rf = data.loc[_spy_daily.index, "risk_free_rate"] / 252
+    spy_sharpe = float(
+        ((_spy_daily - _spy_rf).mean() / _spy_daily.std(ddof=1)) * np.sqrt(252)
+    )
+
+    return dict(
+        n=n,
+        init=init,
+        final=final,
+        tot=total_return,
+        ann=ann,
+        sharpe=sharpe,
+        mdd=mdd,
+        calmar=ann / abs(mdd) if mdd else float("nan"),
+        wr=wr,
+        avg_pnl=avg_pnl,
+        # Portfolio-level
+        peak_positions=peak_positions,
+        avg_positions=avg_positions,
+        avg_bpr_util=avg_bpr_util,
+        peak_bpr_util=peak_bpr_util,
+        cash_yield_earned=cash_yield_earned,
+        # Exit breakdown
+        n_p=n_p, wr_p=wr_p, avg_p=avg_p,
+        n_d=n_d, wr_d=wr_d, avg_d=avg_d,
+        n_e=n_e, wr_e=wr_e, avg_e=avg_e,
+        n_r=n_r, wr_r=wr_r, avg_r=avg_r,
+        # SPY benchmark
+        spy_total_return=spy_total_return,
+        spy_sharpe=spy_sharpe,
+    )
