@@ -228,8 +228,7 @@ def run_portfolio_backtest(
             r_d = float(row.get("risk_free_rate", RISK_FREE_RATE_DEFAULT))
 
             # ── Step 1 & 2: Evaluate open positions and update state ─────────
-            total_liability = 0.0
-            total_bpr = 0.0
+            portfolio.reset_daily_aggregates()
 
             # We iterate over a copy because evaluate_trade_step might trigger an exit (remove)
             for trade_num_open, pos in list(portfolio.open_positions.items()):
@@ -246,7 +245,7 @@ def run_portfolio_backtest(
                     t.pnl = res.pnl
                     t.pnl_pct = res.pnl_pct
 
-                    # Accounting: remove credit from liability and subtract cost from cash
+                    # Accounting: subtract cost from cash and remove position
                     portfolio.available_cash -= res.close_cost
                     portfolio.remove_position(t.trade_num)
                     trades.append(t)
@@ -257,31 +256,28 @@ def run_portfolio_backtest(
                         nt = res.new_trade
                         nt.trade_num = trade_num
 
-                        # Estimate BPR for new trade (using 1.05 as heuristic ask proxy)
-                        # The new_trade already has strikes and mids from evaluate_trade_step
+                        # Calculate BPR for new trade using engine adjustment
                         new_bpr = calculate_reg_t_strangle_margin(
                             spy_close,
                             nt.put_strike,
                             nt.call_strike,
-                            nt.put_mid_ps * 1.05,
-                            nt.call_mid_ps * 1.05,
+                            engine.apply_fill_adj(nt.put_mid_ps, "close"),
+                            engine.apply_fill_adj(nt.call_mid_ps, "close"),
                         )
                         portfolio.available_cash += nt.net_credit
                         portfolio.add_position(nt, new_bpr, spy_close)
                         portfolio.last_entry_date = eval_date
 
-                        # Add new liability and BPR to daily totals
-                        total_liability -= (
+                        # Add new liability to daily total
+                        portfolio.total_unrealized_liability -= (
                             engine.apply_fill_adj(nt.put_mid_ps + nt.call_mid_ps, "close") * 100.0
                             + 2.0 * comm_per_leg
                         )
-                        total_bpr += new_bpr
                 else:
                     # Still open: update liability and recalculate margin
-                    total_liability -= res.close_cost
+                    portfolio.total_unrealized_liability -= res.close_cost
 
                     # Update BPR for margin utilization tracking
-                    # Use marks returned by evaluate_trade_step to avoid extra engine calls
                     put_ask = engine.apply_fill_adj(res.put_mid_d, "close")
                     call_ask = engine.apply_fill_adj(res.call_mid_d, "close")
 
@@ -292,10 +288,7 @@ def run_portfolio_backtest(
                         put_ask,
                         call_ask,
                     )
-                    total_bpr += pos.current_bpr
-
-            # Update utilized_bpr for the manager
-            portfolio.utilized_bpr = total_bpr
+                    portfolio.utilized_bpr += pos.current_bpr
 
             # ── Step 3: Process entries (laddering) ─────────────────────────
             # Estimate BPR for a new 45-DTE strangle at 16-delta
@@ -368,13 +361,11 @@ def run_portfolio_backtest(
                         portfolio.add_position(new_trade, actual_bpr, spy_close)
                         portfolio.last_entry_date = eval_date
 
-                        # Update totals for record_daily_state
-                        total_liability -= (
+                        # Update totals for daily state
+                        portfolio.total_unrealized_liability -= (
                             engine.apply_fill_adj(new_put_mid + new_call_mid, "close") * 100.0
                             + 2.0 * comm_per_leg
                         )
-                        total_bpr += actual_bpr
-                        portfolio.utilized_bpr = total_bpr
 
             # ── Step 4: Cash yield ───────────────────────────────────────────
             if portfolio.available_cash > 0:
@@ -382,8 +373,7 @@ def run_portfolio_backtest(
                 portfolio.available_cash += daily_interest
 
             # ── Step 5: Record daily state ───────────────────────────────────
-            portfolio.last_unrealized_pnl = total_liability
-            portfolio.record_daily_state(eval_date, total_liability)
+            portfolio.record_daily_state(eval_date)
 
         # ── Phase 4: Final reporting ─────────────────────────────────────────
         equity_df = pd.DataFrame(portfolio.equity_curve)
