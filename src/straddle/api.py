@@ -132,9 +132,9 @@ def _run_backtest_task(run_id: str, params: dict):
         trade_summaries = [
             TradeSummary(
                 trade_num=t.trade_num,
-                entry_date=str(t.entry_date.date()),
-                exit_date=str(t.exit_date.date()) if t.exit_date else None,
-                expiration=str(t.expiration.date()),
+                entry_date=t.entry_date.strftime("%Y-%m-%d"),
+                exit_date=t.exit_date.strftime("%Y-%m-%d") if t.exit_date else None,
+                expiration=t.expiration.strftime("%Y-%m-%d"),
                 put_strike=t.put_strike,
                 call_strike=t.call_strike,
                 net_credit=t.net_credit,
@@ -149,31 +149,28 @@ def _run_backtest_task(run_id: str, params: dict):
         # Serialize equity curve
         eq_curve = {str(k.date()): v for k, v in equity_curve.items()}
 
-        # Exit breakdown
-        exit_breakdown = {}
-        for t in trades:
-            et = t.exit_type or "UNKNOWN"
-            exit_breakdown[et] = exit_breakdown.get(et, 0) + 1
+        # Metrics mapping
+        metrics_resp = MetricsResponse(
+            n_trades=metrics.get("n", 0),
+            initial_balance=metrics.get("init", 0),
+            final_balance=metrics.get("final", 0),
+            total_return=metrics.get("tot", 0),
+            annualized_return=metrics.get("ann", 0),
+            sharpe=metrics.get("sharpe", 0),
+            max_drawdown=metrics.get("mdd", 0),
+            calmar=metrics.get("calmar", 0),
+            win_rate=metrics.get("wr", 0),
+            win_rate_chain=metrics.get("wr_chain", 0),
+            avg_pnl=metrics.get("avg_pnl", 0),
+            max_consecutive_losses=metrics.get("max_streak", 0),
+            spy_total_return=metrics.get("spy_total_return", 0),
+            spy_sharpe=metrics.get("spy_sharpe", 0),
+            exit_breakdown={et: metrics.get(f"n_{et.lower()[0]}", 0) for et in ["PROFIT", "STOP", "21DTE", "EXPIRY", "ROLLED"]},
+        )
 
         _results[run_id].update({
             "status": "completed",
-            "metrics": MetricsResponse(
-                n_trades=metrics.get("n", 0),
-                initial_balance=metrics.get("init", 0),
-                final_balance=metrics.get("final", 0),
-                total_return=metrics.get("tot", 0),
-                annualized_return=metrics.get("ann", 0),
-                sharpe=metrics.get("sharpe", 0),
-                max_drawdown=metrics.get("mdd", 0),
-                calmar=metrics.get("calmar", 0),
-                win_rate=metrics.get("wr", 0),
-                win_rate_chain=metrics.get("wr_chain", 0),
-                avg_pnl=metrics.get("avg_pnl", 0),
-                max_consecutive_losses=metrics.get("max_streak", 0),
-                spy_total_return=metrics.get("spy_total_return", 0),
-                spy_sharpe=metrics.get("spy_sharpe", 0),
-                exit_breakdown=exit_breakdown,
-            ),
+            "metrics": metrics_resp,
             "trades": trade_summaries,
             "equity_curve": eq_curve,
         })
