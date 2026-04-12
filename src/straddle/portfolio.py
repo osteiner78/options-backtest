@@ -219,8 +219,11 @@ def run_portfolio_backtest(
         trade_num = 0
         comm_per_leg = params.get("commission_per_leg", 1.0)
 
-        cash_yield_annual = params.get("cash_yield_annual", 0.04)  # 4% risk-free rate
-        daily_cash_rate = cash_yield_annual / 252.0
+        cash_yield_annual = params.get("cash_yield_annual", 0.04)
+        daily_rf_rate = cash_yield_annual / 252.0
+        cash_investment_mode = params.get("cash_investment_mode", "risk_free")
+        spy_allocation_pct = params.get("spy_allocation_pct", 0.40)
+        prev_spy_close: Optional[float] = None
 
         # ── Main daily loop ─────────────────────────────────────────────────
         for eval_date in tqdm(sim_dates, desc="Simulating portfolio", unit="day"):
@@ -345,10 +348,23 @@ def run_portfolio_backtest(
                         + 2.0 * comm_per_leg
                     )
 
-            # ── Step 4: Cash yield ───────────────────────────────────────────
+            # ── Step 4: Cash return (risk-free / SPY / blend) ───────────────
             if portfolio.available_cash > 0:
-                daily_interest = portfolio.available_cash * daily_cash_rate
-                portfolio.available_cash += daily_interest
+                spy_daily_ret = (
+                    (spy_close / prev_spy_close - 1.0) if prev_spy_close is not None else 0.0
+                )
+                if cash_investment_mode == "spy":
+                    cash_daily_return = spy_daily_ret
+                elif cash_investment_mode == "blend":
+                    cash_daily_return = (
+                        spy_allocation_pct * spy_daily_ret
+                        + (1.0 - spy_allocation_pct) * daily_rf_rate
+                    )
+                else:  # "risk_free"
+                    cash_daily_return = daily_rf_rate
+                portfolio.available_cash *= (1.0 + cash_daily_return)
+
+            prev_spy_close = spy_close
 
             # ── Step 5: Record daily state ───────────────────────────────────
             portfolio.record_daily_state(eval_date, portfolio.total_unrealized_liability)

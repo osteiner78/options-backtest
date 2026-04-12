@@ -97,18 +97,38 @@ if is_portfolio:
         step=5, format="%d%%",
         help="Maximum percentage of starting capital used as margin.",
     )
-    cash_yield_annual = st.sidebar.number_input(
-        "Cash Yield Annual (%)",
-        value=float(PARAMS.get("cash_yield_annual", 4.0) * 100),
-        min_value=0.0, max_value=10.0, step=0.25, format="%.2f",
-        help="Annual risk-free rate earned on uninvested cash.",
-    )
     entry_cooldown_days = st.sidebar.number_input(
         "Entry Cooldown (days)",
         value=int(PARAMS.get("entry_cooldown_days", 3)),
         min_value=1, max_value=10,
         help="Minimum trading days between new entries.",
     )
+    cash_investment_mode = st.sidebar.radio(
+        "Uninvested Cash",
+        options=["risk_free", "spy", "blend"],
+        format_func=lambda x: {"risk_free": "Risk-Free", "spy": "100 % SPY", "blend": "SPY + Risk-Free"}[x],
+        index=["risk_free", "spy", "blend"].index(PARAMS.get("cash_investment_mode", "risk_free")),
+        horizontal=True,
+        help="How the cash not deployed in straddles is invested.",
+    )
+    if cash_investment_mode in ("risk_free", "blend"):
+        cash_yield_annual = st.sidebar.number_input(
+            "Risk-Free Rate (%)",
+            value=float(PARAMS.get("cash_yield_annual", 0.04) * 100),
+            min_value=0.0, max_value=10.0, step=0.25, format="%.2f",
+        )
+    else:
+        cash_yield_annual = float(PARAMS.get("cash_yield_annual", 0.04) * 100)
+    if cash_investment_mode == "blend":
+        spy_allocation_pct = st.sidebar.slider(
+            "SPY allocation (%)",
+            min_value=10, max_value=90,
+            value=int(PARAMS.get("spy_allocation_pct", 0.40) * 100),
+            step=5, format="%d%%",
+            help="Fraction of uninvested cash allocated to SPY; remainder earns the risk-free rate.",
+        )
+    else:
+        spy_allocation_pct = int(PARAMS.get("spy_allocation_pct", 0.40) * 100)
 
 st.sidebar.divider()
 
@@ -237,6 +257,8 @@ def build_params() -> dict:
             "max_bpr_allocation": float(max_bpr_allocation) / 100.0,
             "cash_yield_annual": float(cash_yield_annual) / 100.0,
             "entry_cooldown_days": int(entry_cooldown_days),
+            "cash_investment_mode": cash_investment_mode,
+            "spy_allocation_pct": float(spy_allocation_pct) / 100.0,
         })
     return p
 
