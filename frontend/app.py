@@ -471,9 +471,7 @@ if "last_result" in st.session_state:
             chart_data["Cash"] = equity_df["available_cash"]
         st.line_chart(chart_data, width='stretch')
     else:
-        eq_dates = [pd.Timestamp(params["start_date"])] + list(equity_curve.index)
-        eq_vals = [params["initial_balance"]] + list(equity_curve.values)
-        eq_df = pd.DataFrame({"Date": eq_dates, "Strangle": eq_vals})
+        eq_df = pd.DataFrame({"Date": equity_curve.index, "Strangle": equity_curve.values})
 
         # SPY B&H for comparison
         spy_eq = data.loc[

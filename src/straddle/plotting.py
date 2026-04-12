@@ -77,8 +77,8 @@ def plot_backtest(
         y=0.99,
     )
 
-    eq_dates = [pd.Timestamp(params["start_date"])] + list(equity_curve.index)
-    eq_vals = [params["initial_balance"]] + list(equity_curve.values)
+    eq_dates = list(equity_curve.index)
+    eq_vals = list(equity_curve.values)
     eq_arr = np.array(eq_vals)
     pk_arr = np.maximum.accumulate(eq_arr)
 

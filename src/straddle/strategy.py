@@ -746,7 +746,27 @@ def run_backtest(
             # until this chain (including any rolls) has fully exited.
             latest_open_exit = closed.exit_date
 
-        return trades, pd.Series(equity).sort_index(), skipped_entries, skipped_vix
+        # Build a daily equity series from each trade's daily_marks.
+        # This replaces the sparse exit-date dict and gives metrics and plotting
+        # a single canonical source they can use directly.
+        all_days = data.loc[
+            pd.Timestamp(params["start_date"]) : pd.Timestamp(params["end_date"])
+        ].index
+        daily_pnl = pd.Series(0.0, index=all_days)
+        for t in trades:
+            marks = t.daily_marks
+            if not marks or len(marks) < 2:
+                if t.exit_date is not None and t.exit_date in daily_pnl.index:
+                    daily_pnl[t.exit_date] += t.pnl or 0.0
+                continue
+            for i in range(1, len(marks)):
+                _, prev_val = marks[i - 1]
+                this_date, this_val = marks[i]
+                if this_date in daily_pnl.index:
+                    daily_pnl[this_date] += this_val - prev_val
+
+        equity_curve = daily_pnl.cumsum() + params["initial_balance"]
+        return trades, equity_curve, skipped_entries, skipped_vix
     finally:
         if created_engine and hasattr(engine, "close"):
             engine.close()

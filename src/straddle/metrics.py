@@ -136,27 +136,8 @@ def compute_metrics(trades, equity_curve, params, data) -> dict:
         max_streak = max(max_streak, streak)
     results["max_streak"] = max_streak
 
-    # Mark-to-market Sharpe
-    all_days = data.loc[
-        pd.Timestamp(params["start_date"]) : pd.Timestamp(params["end_date"])
-    ].index
-    daily_pnl = pd.Series(0.0, index=all_days)
-    for t in trades:
-        marks = t.daily_marks
-        if not marks or len(marks) < 2:
-            if t.exit_date in daily_pnl.index:
-                daily_pnl[t.exit_date] += (t.pnl or 0.0)
-            continue
-        for i in range(1, len(marks)):
-            prev_date, prev_val = marks[i - 1]
-            this_date, this_val = marks[i]
-            day_change = this_val - prev_val
-            if this_date in daily_pnl.index:
-                daily_pnl[this_date] += day_change
-    
-    # We use the MTM series to build a synthetic equity curve for _compute_equity_stats
-    mtm_equity = daily_pnl.cumsum() + params.get("initial_balance", 50_000)
-    eq_stats = _compute_equity_stats(mtm_equity, params)
+    # equity_curve is the daily MTM series built by run_backtest from daily_marks
+    eq_stats = _compute_equity_stats(equity_curve, params)
     results.update(eq_stats)
 
     # ── Chain-collapsed win/loss (root trades only) ───────────────────────
