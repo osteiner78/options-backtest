@@ -668,7 +668,7 @@ if "last_result" in st.session_state:
         {
             "#": t.trade_num,
             "Entry": t.entry_date.strftime("%Y-%m-%d"),
-            "Expiry": t.expiry_date.strftime("%Y-%m-%d") if hasattr(t, 'expiry_date') and t.expiry_date else "—",
+            "Expiry": t.expiration.strftime("%Y-%m-%d") if t.expiration else "—",
             "Exit": t.exit_date.strftime("%Y-%m-%d") if t.exit_date else "Open",
             "DTE": t.entry_dte,
             "Put Strike": t.put_strike,
