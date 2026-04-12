@@ -500,7 +500,7 @@ def evaluate_trade_step(
             _roll_dte_max = params.get("roll_dte_max", 60)
             new_exp = get_monthly_expiration(eval_date, params.get("dte_min", 30), _roll_dte_max)
             if new_exp is not None:
-                close_cost_old = mid_d * (1.0 + eff_c_adj) * 100.0 + 2.0 * comm
+                close_cost_old = close_cost  # already: engine.apply_fill_adj(mid_d, "close") * 100.0 + 2.0 * comm
                 old_pnl = trade.net_credit - close_cost_old
                 T_new = (new_exp - eval_date).days / 365.0
                 roll_ctx = PricingContext(eval_date=eval_date, expiration=new_exp)
