@@ -285,6 +285,7 @@ def run_portfolio_backtest(
                     put_ask = engine.apply_fill_adj(res.put_mid_d, "close")
                     call_ask = engine.apply_fill_adj(res.call_mid_d, "close")
 
+                    portfolio.utilized_bpr -= pos.current_bpr  # remove stale value
                     pos.current_bpr = calculate_reg_t_strangle_margin(
                         spy_close,
                         t.active_put_strike,
@@ -292,7 +293,7 @@ def run_portfolio_backtest(
                         put_ask,
                         call_ask,
                     )
-                    portfolio.utilized_bpr += pos.current_bpr
+                    portfolio.utilized_bpr += pos.current_bpr  # add updated value
 
             # ── Step 3: Process entries (laddering) ─────────────────────────
             # Estimate BPR for a new 45-DTE strangle at 16-delta
