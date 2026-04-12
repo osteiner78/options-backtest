@@ -112,15 +112,19 @@ class PortfolioManager:
     # Runtime state
     available_cash: float = field(init=False)
     utilized_bpr: float = field(init=False, default=0.0)
+    total_unrealized_liability: float = field(init=False, default=0.0)
     open_positions: Dict[int, PortfolioPosition] = field(init=False, default_factory=dict)
     equity_curve: List[Dict[str, Any]] = field(init=False, default_factory=list)
     next_trade_num: int = field(init=False, default=1)
     last_entry_date: Optional[pd.Timestamp] = field(init=False, default=None)
     entry_cooldown_days: int = 3  # minimum trading days between new entries
-    last_unrealized_pnl: float = field(init=False, default=0.0)  # cached from daily loop
 
     def __post_init__(self) -> None:
         self.available_cash = self.starting_capital
+
+    def reset_daily_aggregates(self) -> None:
+        """Reset per-day accumulators before processing positions."""
+        self.total_unrealized_liability = 0.0
 
     def get_total_equity(self) -> float:
         """Return available_cash + last computed unrealized liability from open positions."""
@@ -373,7 +377,7 @@ def run_portfolio_backtest(
                 portfolio.available_cash += daily_interest
 
             # ── Step 5: Record daily state ───────────────────────────────────
-            portfolio.record_daily_state(eval_date)
+            portfolio.record_daily_state(eval_date, portfolio.total_unrealized_liability)
 
         # ── Phase 4: Final reporting ─────────────────────────────────────────
         equity_df = pd.DataFrame(portfolio.equity_curve)
