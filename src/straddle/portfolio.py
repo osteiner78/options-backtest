@@ -296,81 +296,56 @@ def run_portfolio_backtest(
                     portfolio.utilized_bpr += pos.current_bpr  # add updated value
 
             # ── Step 3: Process entries (laddering) ─────────────────────────
-            # Estimate BPR for a new 45-DTE strangle at 16-delta
-            T_est = 45 / 365.0
-            (est_put_k, est_call_k, est_put_mid, est_call_mid, _) = (
-                engine.get_entry_marks(
-                    spy_close,
-                    T_est,
-                    r_d,
-                    vix_d,
-                    ctx=PricingContext(eval_date=eval_date),
+            # Find the expiration first, then price it once — avoids calling
+            # get_entry_marks twice (once with T_est=45/365 for a BPR guess,
+            # then again with the real expiration). We price with the real
+            # expiration from the start and use those marks for both the BPR
+            # capacity check and the actual trade entry.
+            new_exp = get_monthly_expiration(eval_date, params["dte_min"], params["dte_max"])
+            if new_exp is not None:
+                entry_dte = (new_exp - eval_date).days
+                T_new = entry_dte / 365.0
+                entry_ctx = PricingContext(eval_date=eval_date, expiration=new_exp)
+                (new_put_k, new_call_k, new_put_mid, new_call_mid, _used_db) = (
+                    engine.get_entry_marks(spy_close, T_new, r_d, vix_d, ctx=entry_ctx)
                 )
-            )
-            est_bpr = calculate_reg_t_strangle_margin(
-                spy_close,
-                est_put_k,
-                est_call_k,
-                engine.apply_fill_adj(est_put_mid, "close"),
-                engine.apply_fill_adj(est_call_mid, "close"),
-            )
+                actual_bpr = calculate_reg_t_strangle_margin(
+                    spy_close,
+                    new_put_k,
+                    new_call_k,
+                    engine.apply_fill_adj(new_put_mid, "close"),
+                    engine.apply_fill_adj(new_call_mid, "close"),
+                )
+                new_net_credit = engine.apply_fill_adj(new_put_mid + new_call_mid, "open") * 100.0 - 2.0 * comm_per_leg
 
-            if portfolio.can_enter_new_trade(est_bpr, eval_date, all_trading_dates):
-                # Find expiration closest to target DTE using strategy window
-                new_exp = get_monthly_expiration(eval_date, params["dte_min"], params["dte_max"])
-                if new_exp is not None:
-                    entry_dte = (new_exp - eval_date).days
-                    T_new = entry_dte / 365.0
-
-                    entry_ctx = PricingContext(eval_date=eval_date, expiration=new_exp)
-                    (new_put_k, new_call_k, new_put_mid, new_call_mid, _used_db) = (
-                        engine.get_entry_marks(
-                            spy_close,
-                            T_new,
-                            r_d,
-                            vix_d,
-                            ctx=entry_ctx,
-                        )
+                if portfolio.can_enter_new_trade(actual_bpr, eval_date, all_trading_dates) and new_net_credit > 0:
+                    trade_num += 1
+                    new_trade = Trade(
+                        trade_num=trade_num,
+                        entry_date=eval_date,
+                        expiration=new_exp,
+                        entry_dte=entry_dte,
+                        put_strike=new_put_k,
+                        call_strike=new_call_k,
+                        put_mid_ps=new_put_mid,
+                        call_mid_ps=new_call_mid,
+                        net_credit=new_net_credit,
+                        entry_vix=vix_d,
+                        used_market_data=_used_db,
                     )
-                    new_net_credit = engine.apply_fill_adj(new_put_mid + new_call_mid, "open") * 100.0 - 2.0 * comm_per_leg
+                    new_trade.max_vix = vix_d
+                    new_trade.daily_marks = [(eval_date, 0.0)]
 
-                    if new_net_credit > 0:
-                        trade_num += 1
-                        new_trade = Trade(
-                            trade_num=trade_num,
-                            entry_date=eval_date,
-                            expiration=new_exp,
-                            entry_dte=entry_dte,
-                            put_strike=new_put_k,
-                            call_strike=new_call_k,
-                            put_mid_ps=new_put_mid,
-                            call_mid_ps=new_call_mid,
-                            net_credit=new_net_credit,
-                            entry_vix=vix_d,
-                            used_market_data=_used_db,
-                        )
-                        new_trade.max_vix = vix_d
-                        new_trade.daily_marks = [(eval_date, 0.0)]
+                    # Add new credit to cash and register position
+                    portfolio.available_cash += new_net_credit
+                    portfolio.add_position(new_trade, actual_bpr, spy_close)
+                    portfolio.last_entry_date = eval_date
 
-                        # Calculate actual BPR
-                        actual_bpr = calculate_reg_t_strangle_margin(
-                            spy_close,
-                            new_put_k,
-                            new_call_k,
-                            engine.apply_fill_adj(new_put_mid, "close"),
-                            engine.apply_fill_adj(new_call_mid, "close"),
-                        )
-
-                        # Add new credit to cash and register position
-                        portfolio.available_cash += new_net_credit
-                        portfolio.add_position(new_trade, actual_bpr, spy_close)
-                        portfolio.last_entry_date = eval_date
-
-                        # Update totals for daily state
-                        portfolio.total_unrealized_liability -= (
-                            engine.apply_fill_adj(new_put_mid + new_call_mid, "close") * 100.0
-                            + 2.0 * comm_per_leg
-                        )
+                    # Update totals for daily state
+                    portfolio.total_unrealized_liability -= (
+                        engine.apply_fill_adj(new_put_mid + new_call_mid, "close") * 100.0
+                        + 2.0 * comm_per_leg
+                    )
 
             # ── Step 4: Cash yield ───────────────────────────────────────────
             if portfolio.available_cash > 0:
