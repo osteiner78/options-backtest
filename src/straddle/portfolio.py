@@ -96,7 +96,6 @@ class PortfolioPosition:
     trade: Trade
     entry_bpr: float  # margin requirement at entry (for reference)
     current_bpr: float = 0.0  # dynamically recalculated daily
-    entry_spy_price: float = 0.0  # SPY price at entry (for margin recalc)
 
 
 @dataclass
@@ -147,13 +146,12 @@ class PortfolioManager:
             "open_positions": len(self.open_positions),
         })
 
-    def add_position(self, trade: Trade, bpr: float, spy_price: float) -> None:
+    def add_position(self, trade: Trade, bpr: float) -> None:
         """Add a new trade to open_positions and deduct its BPR."""
         pos = PortfolioPosition(
             trade=trade,
             entry_bpr=bpr,
             current_bpr=bpr,
-            entry_spy_price=spy_price,
         )
         self.open_positions[trade.trade_num] = pos
         self.utilized_bpr += bpr
@@ -269,7 +267,7 @@ def run_portfolio_backtest(
                             engine.apply_fill_adj(nt.call_mid_ps, "close"),
                         )
                         portfolio.available_cash += nt.net_credit
-                        portfolio.add_position(nt, new_bpr, spy_close)
+                        portfolio.add_position(nt, new_bpr)
                         portfolio.last_entry_date = eval_date
 
                         # Add new liability to daily total
@@ -338,7 +336,7 @@ def run_portfolio_backtest(
 
                     # Add new credit to cash and register position
                     portfolio.available_cash += new_net_credit
-                    portfolio.add_position(new_trade, actual_bpr, spy_close)
+                    portfolio.add_position(new_trade, actual_bpr)
                     portfolio.last_entry_date = eval_date
 
                     # Update totals for daily state

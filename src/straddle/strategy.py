@@ -495,7 +495,13 @@ def evaluate_trade_step(
 
     # C. 21-DTE / Roll
     elif dte_rem <= manage_at_dte:
-        if roll_for_credit and trade.roll_count < max_rolls:
+        # VIX filter applies to rolls too: if VIX is above the entry threshold,
+        # close flat instead of rolling into a new position.
+        _vix_blocks_roll = (
+            params.get("vix_entry_filter_enabled", False)
+            and vix_d > params.get("vix_entry_max", 30.0)
+        )
+        if roll_for_credit and trade.roll_count < max_rolls and not _vix_blocks_roll:
             _roll_dte_max = params.get("roll_dte_max", 60)
             new_exp = get_monthly_expiration(eval_date, params.get("dte_min", 30), _roll_dte_max)
             if new_exp is not None:

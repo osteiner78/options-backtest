@@ -151,13 +151,16 @@ if is_portfolio:
     )
 
 # VIX entry filter
-st.sidebar.header("🌡️ VIX Entry Filter")
+st.sidebar.header("🌡️ VIX Filter")
 vix_filter_enabled = st.sidebar.checkbox(
-    "Enable VIX entry filter",
+    "Enable VIX filter",
     value=PARAMS["vix_entry_filter_enabled"],
+    help="Applies to both new monthly entries and 21-DTE roll continuations. "
+         "When VIX exceeds the threshold, new entries are skipped and rolls "
+         "are closed flat instead of being rolled into a new position.",
 )
 vix_entry_max = st.sidebar.number_input(
-    "Max VIX for entry",
+    "Max VIX for entry / roll",
     value=PARAMS["vix_entry_max"],
     min_value=10.0,
     max_value=80.0,

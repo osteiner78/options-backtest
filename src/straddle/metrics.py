@@ -111,7 +111,7 @@ def _compute_equity_stats(equity_series: pd.Series, params: dict) -> Dict:
         "ann": ann,
         "sharpe": sharpe,
         "mdd": mdd,
-        "calmar": ann / abs(mdd) if mdd and mdd != 0 else float("nan"),
+        "calmar": ann / abs(mdd) if mdd and mdd != 0 else 0.0,
     }
 
 

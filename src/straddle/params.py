@@ -101,9 +101,11 @@ STRATEGY: StrategyParams = {
     "max_rolls": 3,  # maximum consecutive rolls per original position
     "roll_dte_max": 60,  # wider DTE window for roll target (at 21 DTE the next 3rd Friday is ~49 DTE)
     "single_position": True,  # True = skip new monthly entry while a prior chain is still open
-    # VIX-conditional entry filter
-    "vix_entry_filter_enabled": True,  # False = current behavior (no filter)
-    "vix_entry_max": 35.0,  # skip entries when entry-day VIX close exceeds this
+    # VIX-conditional entry filter — applies to both new monthly entries AND
+    # 21-DTE roll continuations. When VIX > vix_entry_max at the 21-DTE
+    # management date, the position is closed flat instead of rolled.
+    "vix_entry_filter_enabled": True,
+    "vix_entry_max": 35.0,  # skip entries/rolls when entry-day VIX close exceeds this
     # Defensive leg roll
     # WARNING: 0.30 trigger is too aggressive for systematic use. Backtesting 2010-2024 shows
     # it fires ~13x/year and HURTS returns (-17% vs +15%) because rolling the untested leg
