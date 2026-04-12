@@ -590,12 +590,15 @@ def evaluate_trade(
     data: pd.DataFrame,
     engine,
     params: dict,
-    balance: float,
 ) -> tuple:
     """Run the daily eval loop for a single open trade.
 
     Iterates from the trade's entry_date to its expiration, checking exit
     conditions each day via ``evaluate_trade_step``.
+
+    Returns:
+        (closed_trade, new_trade_or_None)
+        new_trade is populated when exit_type == "ROLLED".
     """
     expiration = trade.expiration
 
@@ -608,20 +611,15 @@ def evaluate_trade(
             trade.exit_type = res.exit_type
             trade.pnl = res.pnl
             trade.pnl_pct = res.pnl_pct
-            balance += res.pnl
-            return trade, res.new_trade, balance
+            return trade, res.new_trade
 
-    # Fallback to manual expiry if loop finishes without exit_type
+    # Fallback: loop ended without an intra-period exit — price at expiration
     last = data.index[data.index <= expiration][-1]
     S_e = float(data.loc[last, "spy_close"])
     intr = max(trade.active_put_strike - S_e, 0.0) + max(
         S_e - trade.active_call_strike, 0.0
     )
     comm = params["commission_per_leg"]
-    c_adj = params["close_fill_adj"]
-    _real = getattr(engine, "uses_real_fills", False)
-    eff_c_adj = 0.0 if _real else c_adj
-
     cc = engine.apply_fill_adj(intr, "close") * 100.0 + 2.0 * comm
     pnl = trade.net_credit - cc
     trade.exit_date = expiration
@@ -629,9 +627,8 @@ def evaluate_trade(
     trade.exit_type = "EXPIRY"
     trade.pnl = round(pnl, 2)
     trade.pnl_pct = pnl / trade.net_credit
-    balance += pnl
 
-    return trade, None, balance
+    return trade, None
 
 
 # ── Backtest runner ──────────────────────────────────────────────────────
@@ -649,7 +646,7 @@ def run_backtest(
     Returns:
         (trades, equity_curve, skipped_entries, skipped_vix)
         - trades: list of Trade objects (one per chain leg, including ROLLED descendants)
-        - equity_curve: pd.Series of balance at each trade exit date
+        - equity_curve: daily pd.Series of mark-to-market account equity
         - skipped_entries: count of skipped entries due to single_position barrier
         - skipped_vix: count of skipped entries due to VIX filter
     """
@@ -663,7 +660,6 @@ def run_backtest(
     try:
         r_default = params.get("risk_free_rate", RISK_FREE_RATE_DEFAULT)
         comm = params["commission_per_leg"]
-        balance = params["initial_balance"]
         single_position = params.get("single_position", True)
         # latest_open_exit tracks when the current chain finishes.
         # Used to skip new monthly entries while a prior position is open.
@@ -673,7 +669,6 @@ def run_backtest(
         vix_entry_max = params.get("vix_entry_max", 30.0)
 
         trades: List[Trade] = []
-        equity: dict = {}
         trade_num: int = 0
         skipped_entries: int = 0
         skipped_vix: int = 0
@@ -736,10 +731,7 @@ def run_backtest(
             # Iterative roll continuation -- follows the chain until a terminal exit
             active = trade
             while active is not None:
-                closed, new_active, balance = evaluate_trade(
-                    active, data, engine, params, balance
-                )
-                equity[closed.exit_date] = round(balance, 2)
+                closed, new_active = evaluate_trade(active, data, engine, params)
                 trades.append(closed)
                 if new_active is not None:
                     trade_num += 1
