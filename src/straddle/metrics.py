@@ -90,12 +90,12 @@ def _compute_equity_stats(equity_series: pd.Series, params: dict) -> Dict:
     ann = (final / init) ** (1.0 / years) - 1.0 if years > 0 else 0.0
     tot_ret = (final - init) / init
 
-    # Sharpe from daily changes
-    daily_changes = equity_series.diff().dropna()
+    # Sharpe from daily percentage returns (correct for a compounding account)
+    daily_pct = equity_series.pct_change().dropna()
     rf_daily = params.get("risk_free_rate", 0.045) / 252
-    
-    if len(daily_changes) > 1 and daily_changes.std() > 0:
-        sharpe = float((daily_changes.mean() - rf_daily) / daily_changes.std(ddof=1) * np.sqrt(252))
+
+    if len(daily_pct) > 1 and daily_pct.std() > 0:
+        sharpe = float((daily_pct.mean() - rf_daily) / daily_pct.std(ddof=1) * np.sqrt(252))
     else:
         sharpe = float("nan")
 
