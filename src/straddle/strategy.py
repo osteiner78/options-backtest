@@ -404,7 +404,7 @@ def evaluate_trade_step(
     # A. Optional Price Stop
     if use_price_stop and pnl_pct <= -stop:
         exit_type = "STOP"
-        entry_mid_total = (trade.put_mid_ps + trade.call_mid_ps) * 100.0
+        entry_mid_total = trade.active_baseline_mid * 100.0
         eod_mid_dollar = mid_d * 100.0
         mid_pnl_raw = entry_mid_total - eod_mid_dollar
         stop_loss_dollar_mid = -stop * entry_mid_total
