@@ -128,17 +128,27 @@ _DB_LAST = pd.Timestamp("2025-12-12")
 
 
 def validate_market_mode_dates(start_date: str, end_date: str) -> None:
-    """Raise ValueError if the requested date range is outside DB coverage."""
+    """Validate date range against DB coverage for market mode.
+
+    Raises ValueError if start_date predates the DB (no data at all for that
+    period). Prints a warning — but does NOT raise — if end_date exceeds DB
+    coverage: MarketEngine already falls back to SyntheticEngine per-leg for
+    missing rows, so the backtest continues with synthetic pricing for those
+    dates.
+    """
     _start = pd.Timestamp(start_date)
     _end = pd.Timestamp(end_date)
-    errors = []
+
     if _start < _DB_FIRST:
-        errors.append(f"start_date {_start.date()} is before DB coverage ({_DB_FIRST.date()})")
-    if _end > _DB_LAST:
-        errors.append(f"end_date {_end.date()} is after DB coverage ({_DB_LAST.date()})")
-    if errors:
         raise ValueError(
-            "Market mode date range out of bounds:\n"
-            + "\n".join(f"  - {e}" for e in errors)
-            + "\nSwitch to mode='synthetic' or adjust start_date / end_date."
+            f"Market mode: start_date {_start.date()} is before DB coverage "
+            f"({_DB_FIRST.date()}). Use mode='synthetic' or set start_date >= "
+            f"{_DB_FIRST.date()}."
+        )
+
+    if _end > _DB_LAST:
+        print(
+            f"[MarketEngine] WARNING: end_date {_end.date()} is after DB coverage "
+            f"({_DB_LAST.date()}). Pricing will fall back to synthetic (Black-Scholes) "
+            f"for all dates beyond {_DB_LAST.date()}."
         )
