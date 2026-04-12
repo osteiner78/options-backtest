@@ -165,7 +165,13 @@ def _run_backtest_task(run_id: str, params: dict):
             max_consecutive_losses=metrics.get("max_streak", 0),
             spy_total_return=metrics.get("spy_total_return", 0),
             spy_sharpe=metrics.get("spy_sharpe", 0),
-            exit_breakdown={et: metrics.get(f"n_{et.lower()[0]}", 0) for et in ["PROFIT", "STOP", "21DTE", "EXPIRY", "ROLLED"]},
+            exit_breakdown={
+                "PROFIT": metrics.get("n_p", 0),
+                "STOP":   metrics.get("n_s", 0),
+                "21DTE":  metrics.get("n_d", 0),
+                "EXPIRY": metrics.get("n_e", 0),
+                "ROLLED": metrics.get("n_r", 0),
+            },
         )
 
         _results[run_id].update({
