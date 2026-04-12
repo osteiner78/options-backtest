@@ -25,6 +25,7 @@ from straddle import (
     make_engine,
     run_backtest,
     run_portfolio_backtest,
+    plot_portfolio_backtest,
 )
 
 # ── Page config ──────────────────────────────────────────────────────────
@@ -256,7 +257,7 @@ def build_params() -> dict:
         "dte_min": int(dte_min),
         "dte_max": int(dte_max),
         "profit_target_pct": float(profit_target_pct) / 100.0,
-        "stop_loss_enabled": bool(stop_loss_enabled),
+        "use_price_stop": bool(stop_loss_enabled),
         "stop_loss_pct": float(stop_loss_pct) / 100.0,
         "roll_for_credit": bool(roll_for_credit),
         "manage_at_dte": int(manage_at_dte),

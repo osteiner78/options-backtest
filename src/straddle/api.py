@@ -50,6 +50,7 @@ class BacktestRequest(BaseModel):
     dte_max: Optional[int] = Field(default=None, description="Maximum DTE")
     profit_target_pct: Optional[float] = Field(default=None, description="Profit target as fraction of premium")
     stop_loss_pct: Optional[float] = Field(default=None, description="Stop loss as fraction of premium")
+    use_price_stop: Optional[bool] = Field(default=None, description="Enable price-based stop loss")
     initial_balance: Optional[float] = Field(default=None, description="Starting account balance")
     single_position: Optional[bool] = Field(default=None, description="Skip new entries while position is open")
     vix_entry_filter_enabled: Optional[bool] = Field(default=None, description="Enable VIX entry filter")
