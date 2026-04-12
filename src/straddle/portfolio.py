@@ -127,8 +127,8 @@ class PortfolioManager:
         self.total_unrealized_liability = 0.0
 
     def get_total_equity(self) -> float:
-        """Return available_cash + last computed unrealized liability from open positions."""
-        return self.available_cash + self.last_unrealized_pnl
+        """Return available_cash + current unrealized mark-to-market on open positions."""
+        return self.available_cash + self.total_unrealized_liability
 
     def get_available_bpr_capacity(self) -> float:
         """Return remaining BPR capacity: (starting_capital × max_bpr_allocation) − utilized_bpr."""
