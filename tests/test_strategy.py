@@ -73,10 +73,10 @@ class TestGetEntryDates:
         assert len(dates) == 3
 
     def test_no_duplicate_months(self, sample_data):
-        dates = get_entry_dates(
+        pairs = get_entry_dates(
             sample_data, "2024-01-02", "2024-03-29", dte_min=30, dte_max=45
         )
-        months = [(d.year, d.month) for d in dates]
+        months = [(entry.year, entry.month) for entry, _ in pairs]
         assert len(months) == len(set(months))
 
 

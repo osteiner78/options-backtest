@@ -41,7 +41,7 @@ def get_monthly_expiration(
 
 def get_entry_dates(
     data: pd.DataFrame, start_date: str, end_date: str, dte_min: int, dte_max: int
-) -> List[pd.Timestamp]:
+) -> List[Tuple[pd.Timestamp, pd.Timestamp]]:
     """One trade per calendar month: earliest trading day where a 3rd-Friday
     expiration falls in [dte_min, dte_max] (inclusive, calendar days).
 
@@ -49,6 +49,10 @@ def get_entry_dates(
     1st of the month is almost never a valid entry by itself. A short forward
     scan (up to 15 calendar days) finds the day where DTE first enters the
     window. Entry date shifts by at most ~7 days from the 1st.
+
+    Returns:
+        List of (entry_date, expiration) pairs. Returning the expiration here
+        avoids calling get_monthly_expiration a second time in run_backtest.
     """
     result = []
     seen_month = None
@@ -66,8 +70,9 @@ def get_entry_dates(
         for candidate in trading_days:
             if candidate < start_ts or candidate > end_ts:
                 continue
-            if get_monthly_expiration(candidate, dte_min, dte_max) is not None:
-                result.append(candidate)
+            exp = get_monthly_expiration(candidate, dte_min, dte_max)
+            if exp is not None:
+                result.append((candidate, exp))
                 break
         # If no valid entry found in 15 days, month is skipped (edge case only)
     return result
@@ -680,7 +685,7 @@ def run_backtest(
             params["dte_min"],
             params["dte_max"],
         )
-        for entry_date in tqdm(entries, desc="Running backtest", unit="trade"):
+        for entry_date, expiration in tqdm(entries, desc="Running backtest", unit="trade"):
             if entry_date not in data.index:
                 continue
             if single_position and entry_date < latest_open_exit:
@@ -693,11 +698,6 @@ def run_backtest(
                 skipped_vix += 1
                 continue  # VIX too high; skip this entry
 
-            expiration = get_monthly_expiration(
-                entry_date, params["dte_min"], params["dte_max"]
-            )
-            if expiration is None:
-                continue
             entry_dte = (expiration - entry_date).days
             T = entry_dte / 365.0
             r = float(row.get("risk_free_rate", r_default))
