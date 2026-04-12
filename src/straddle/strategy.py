@@ -300,8 +300,7 @@ def attempt_defensive_leg_roll(
         vix_d,
         r_d,
         tested_side,
-        eval_date=eval_date,
-        expiration=trade.expiration,
+        ctx=ctx,
     )
     trade.current_baseline_mid = tested_mark + new_open_mark
 
