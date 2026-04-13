@@ -59,13 +59,19 @@ def load_market_data(
         cache_min = master_df.index.min()
         cache_max = master_df.index.max()
 
-        # If the requested range is fully within the cache, just slice it
+        # If the requested range is fully within the cache bounds, check that
+        # the slice is actually contiguous — disjointed runs (e.g. 2020 + 2022
+        # cached separately) produce a false "within bounds" hit with a silent
+        # data hole in the middle.
         if req_start >= cache_min and req_end <= cache_max:
-            return master_df.loc[req_start:req_end].copy()
+            candidate = master_df.loc[req_start:req_end]
+            if not candidate.empty:
+                max_gap = candidate.index.to_series().diff().max()
+                if pd.isna(max_gap) or max_gap <= pd.Timedelta(days=7):
+                    return candidate.copy()
+            # Gap detected — fall through to re-download the full range.
 
-        # Otherwise, determine the expanded range we need to fetch
-        # To keep it simple, if we need anything outside, we fetch from the 
-        # required start to the required end, and merge.
+        # Determine the expanded range needed, merging with whatever is cached.
         needs_download = True
         download_start = min(req_start, cache_min)
         download_end = max(req_end, cache_max)

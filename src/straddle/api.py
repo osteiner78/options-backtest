@@ -19,9 +19,11 @@ from pydantic import BaseModel, Field
 from straddle import (
     PARAMS,
     compute_metrics,
+    compute_portfolio_metrics,
     load_market_data,
     make_engine,
     run_backtest,
+    run_portfolio_backtest,
 )
 
 # ── Logging Setup ────────────────────────────────────────────────────────
@@ -59,6 +61,11 @@ class BacktestRequest(BaseModel):
     roll_for_credit: Optional[bool] = Field(default=None, description="Roll at 21 DTE for credit")
     manage_at_dte: Optional[int] = Field(default=None, description="DTE threshold for management")
     max_rolls: Optional[int] = Field(default=None, description="Max consecutive rolls")
+    # Portfolio mode
+    portfolio_mode: Optional[bool] = Field(default=None, description="Enable multi-position portfolio mode")
+    max_bpr_allocation: Optional[float] = Field(default=None, description="Max fraction of capital used as BPR (e.g. 0.30)")
+    cash_yield_annual: Optional[float] = Field(default=None, description="Annual yield on uninvested cash (e.g. 0.04)")
+    cash_investment_mode: Optional[str] = Field(default=None, description="Cash investment: 'risk_free', 'spy', or 'blend'")
 
 
 class TradeSummary(BaseModel):
@@ -93,6 +100,11 @@ class MetricsResponse(BaseModel):
     spy_total_return: float
     spy_sharpe: float
     exit_breakdown: Dict[str, int]
+    # Portfolio-mode only (omitted for single-position runs)
+    peak_positions: Optional[int] = None
+    avg_positions: Optional[float] = None
+    avg_bpr_util_pct: Optional[float] = None
+    peak_bpr_util_pct: Optional[float] = None
 
 
 class BacktestResponse(BaseModel):
@@ -108,77 +120,90 @@ class BacktestResponse(BaseModel):
 
 # ── Internal Worker ──────────────────────────────────────────────────────
 
+def _serialize_trades(trades) -> List[TradeSummary]:
+    return [
+        TradeSummary(
+            trade_num=t.trade_num,
+            entry_date=t.entry_date.strftime("%Y-%m-%d"),
+            exit_date=t.exit_date.strftime("%Y-%m-%d") if t.exit_date else None,
+            expiration=t.expiration.strftime("%Y-%m-%d"),
+            put_strike=t.put_strike,
+            call_strike=t.call_strike,
+            net_credit=t.net_credit,
+            pnl=t.pnl,
+            pnl_pct=t.pnl_pct,
+            exit_type=t.exit_type,
+            entry_vix=t.entry_vix,
+        )
+        for t in trades
+    ]
+
+
+def _build_metrics_response(metrics: dict, portfolio_metrics: bool = False) -> MetricsResponse:
+    resp = MetricsResponse(
+        n_trades=metrics.get("n", 0),
+        initial_balance=metrics.get("init", 0),
+        final_balance=metrics.get("final", 0),
+        total_return=metrics.get("tot", 0),
+        annualized_return=metrics.get("ann", 0),
+        sharpe=metrics.get("sharpe", 0),
+        max_drawdown=metrics.get("mdd", 0),
+        calmar=metrics.get("calmar", 0),
+        win_rate=metrics.get("wr", 0),
+        win_rate_chain=metrics.get("wr_chain", 0),
+        avg_pnl=metrics.get("avg_pnl", 0),
+        max_consecutive_losses=metrics.get("max_streak", 0),
+        spy_total_return=metrics.get("spy_total_return", 0),
+        spy_sharpe=metrics.get("spy_sharpe", 0),
+        exit_breakdown={
+            "PROFIT": metrics.get("n_p", 0),
+            "STOP":   metrics.get("n_s", 0),
+            "21DTE":  metrics.get("n_d", 0),
+            "EXPIRY": metrics.get("n_e", 0),
+            "ROLLED": metrics.get("n_r", 0),
+        },
+    )
+    if portfolio_metrics:
+        resp.peak_positions = metrics.get("peak_positions")
+        resp.avg_positions = metrics.get("avg_positions")
+        resp.avg_bpr_util_pct = metrics.get("avg_bpr_util")
+        resp.peak_bpr_util_pct = metrics.get("peak_bpr_util")
+    return resp
+
+
 def _run_backtest_task(run_id: str, params: dict):
     """Worker function to run backtest in the background."""
     _results[run_id]["status"] = "running"
-    
+    is_portfolio = params.get("portfolio_mode", False)
+
     try:
         data = load_market_data(
             start_date=params["start_date"],
             end_date=params["end_date"],
         )
         engine = make_engine(params)
-        
+
         try:
-            trades, equity_curve, skipped_entries, skipped_vix = run_backtest(
-                data, params, engine
-            )
+            if is_portfolio:
+                trades, equity_df, _portfolio, _n_vix = run_portfolio_backtest(
+                    data, params, engine
+                )
+                metrics = compute_portfolio_metrics(trades, equity_df, params, data)
+                eq_curve = {str(k.date()): v for k, v in equity_df["total_equity"].items()}
+            else:
+                trades, equity_curve, _skipped, _skipped_vix = run_backtest(
+                    data, params, engine
+                )
+                metrics = compute_metrics(trades, equity_curve, params, data)
+                eq_curve = {str(k.date()): v for k, v in equity_curve.items()}
         finally:
             if hasattr(engine, "close"):
                 engine.close()
 
-        metrics = compute_metrics(trades, equity_curve, params, data)
-
-        # Serialize trades
-        trade_summaries = [
-            TradeSummary(
-                trade_num=t.trade_num,
-                entry_date=t.entry_date.strftime("%Y-%m-%d"),
-                exit_date=t.exit_date.strftime("%Y-%m-%d") if t.exit_date else None,
-                expiration=t.expiration.strftime("%Y-%m-%d"),
-                put_strike=t.put_strike,
-                call_strike=t.call_strike,
-                net_credit=t.net_credit,
-                pnl=t.pnl,
-                pnl_pct=t.pnl_pct,
-                exit_type=t.exit_type,
-                entry_vix=t.entry_vix,
-            )
-            for t in trades
-        ]
-
-        # Serialize equity curve
-        eq_curve = {str(k.date()): v for k, v in equity_curve.items()}
-
-        # Metrics mapping
-        metrics_resp = MetricsResponse(
-            n_trades=metrics.get("n", 0),
-            initial_balance=metrics.get("init", 0),
-            final_balance=metrics.get("final", 0),
-            total_return=metrics.get("tot", 0),
-            annualized_return=metrics.get("ann", 0),
-            sharpe=metrics.get("sharpe", 0),
-            max_drawdown=metrics.get("mdd", 0),
-            calmar=metrics.get("calmar", 0),
-            win_rate=metrics.get("wr", 0),
-            win_rate_chain=metrics.get("wr_chain", 0),
-            avg_pnl=metrics.get("avg_pnl", 0),
-            max_consecutive_losses=metrics.get("max_streak", 0),
-            spy_total_return=metrics.get("spy_total_return", 0),
-            spy_sharpe=metrics.get("spy_sharpe", 0),
-            exit_breakdown={
-                "PROFIT": metrics.get("n_p", 0),
-                "STOP":   metrics.get("n_s", 0),
-                "21DTE":  metrics.get("n_d", 0),
-                "EXPIRY": metrics.get("n_e", 0),
-                "ROLLED": metrics.get("n_r", 0),
-            },
-        )
-
         _results[run_id].update({
             "status": "completed",
-            "metrics": metrics_resp,
-            "trades": trade_summaries,
+            "metrics": _build_metrics_response(metrics, portfolio_metrics=is_portfolio),
+            "trades": _serialize_trades(trades),
             "equity_curve": eq_curve,
         })
         logger.info(f"Backtest {run_id} completed successfully.")

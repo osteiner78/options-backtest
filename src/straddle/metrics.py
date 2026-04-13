@@ -202,11 +202,8 @@ def compute_portfolio_metrics(
     # Equity stats from the provided total_equity column
     results = _compute_equity_stats(equity_df["total_equity"], params)
     
-    # Trade stats (only non-ROLLED exits for independent outcomes usually, 
-    # but _compute_trade_stats handles all; we'll filter here for clarity if needed)
-    # Portfolio mode often cares about realized independent outcomes
-    realized_trades = [t for t in trades if t.exit_type != "ROLLED"]
-    results.update(_compute_trade_stats(realized_trades))
+    # Include all trades so exit breakdown counts (including ROLLED) are correct.
+    results.update(_compute_trade_stats(trades))
 
     # Portfolio-level specifics
     results["peak_positions"] = int(equity_df["open_positions"].max()) if "open_positions" in equity_df.columns else 0

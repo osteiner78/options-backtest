@@ -149,7 +149,7 @@ class SyntheticEngine:
         self, S: float, T: float, r: float, vix: float, ctx: PricingContext = None
     ) -> tuple:
         """Compute 16-delta strikes and per-share mids at trade entry."""
-        sigma = (vix / 100.0) * self.vix_iv_mult
+        sigma, _ = self._get_sigma_t(vix, int(T * 365))
         target_delta = (ctx.target_delta if ctx else None) or self.delta
         sigma_put = apply_skew(
             sigma, target_delta, "put", self.put_slope, self.call_slope
@@ -291,12 +291,18 @@ class SyntheticEngine:
         vix_open_sigma = (
             vix_prev_raw * (1.0 + self.gap_mult * gap_pct)
         ) * self.vix_iv_mult
-        target_delta = (ctx.target_delta if ctx else None) or self.delta
+
+        # Estimate actual current deltas at the gap-open price, mirroring
+        # get_daily_mark — using the static entry delta (0.16) is wrong when
+        # a leg has moved significantly (e.g. from 0.16Δ to 0.45Δ on a crash).
+        d_put_est = bs_delta(spy_open, put_k, T_d, r_open, vix_open_sigma, "put")
+        d_call_est = bs_delta(spy_open, call_k, T_d, r_open, vix_open_sigma, "call")
+
         sigma_put = apply_skew(
-            vix_open_sigma, target_delta, "put", self.put_slope, self.call_slope
+            vix_open_sigma, d_put_est, "put", self.put_slope, self.call_slope
         )
         sigma_call = apply_skew(
-            vix_open_sigma, target_delta, "call", self.put_slope, self.call_slope
+            vix_open_sigma, d_call_est, "call", self.put_slope, self.call_slope
         )
         return bs_price(spy_open, put_k, T_d, r_open, sigma_put, "put") + bs_price(
             spy_open, call_k, T_d, r_open, sigma_call, "call"
