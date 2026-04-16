@@ -117,6 +117,7 @@ class PortfolioManager:
     next_trade_num: int = field(init=False, default=1)
     last_entry_date: Optional[pd.Timestamp] = field(init=False, default=None)
     entry_cooldown_days: int = 3  # minimum trading days between new entries
+    vix_blocked_dates: List[Tuple[pd.Timestamp, float]] = field(init=False, default_factory=list)
 
     def __post_init__(self) -> None:
         self.available_cash = self.starting_capital
@@ -217,7 +218,11 @@ def run_portfolio_backtest(
 
         trades: List[Trade] = []
         trade_num = 0
+        _vix_blocked_exps: set = set()  # unique expiration dates blocked by VIX filter
         comm_per_leg = params.get("commission_per_leg", 1.0)
+
+        vix_filter_enabled = params.get("vix_entry_filter_enabled", False)
+        vix_entry_max = params.get("vix_entry_max", 30.0)
 
         cash_yield_annual = params.get("cash_yield_annual", 0.04)
         daily_rf_rate = cash_yield_annual / 252.0
@@ -260,6 +265,7 @@ def run_portfolio_backtest(
                         trade_num += 1
                         nt = res.new_trade
                         nt.trade_num = trade_num
+                        t.child_trade_num = trade_num
 
                         # Calculate BPR for new trade using engine adjustment
                         new_bpr = calculate_reg_t_strangle_margin(
@@ -302,8 +308,13 @@ def run_portfolio_backtest(
             # then again with the real expiration). We price with the real
             # expiration from the start and use those marks for both the BPR
             # capacity check and the actual trade entry.
+            vix_blocks_entry = vix_filter_enabled and vix_d > vix_entry_max
             new_exp = get_monthly_expiration(eval_date, params["dte_min"], params["dte_max"])
-            if new_exp is not None:
+            if new_exp is not None and vix_blocks_entry:
+                if new_exp not in _vix_blocked_exps:
+                    portfolio.vix_blocked_dates.append((eval_date, vix_d))
+                _vix_blocked_exps.add(new_exp)
+            if new_exp is not None and not vix_blocks_entry:
                 entry_dte = (new_exp - eval_date).days
                 T_new = entry_dte / 365.0
                 entry_ctx = PricingContext(eval_date=eval_date, expiration=new_exp)
@@ -369,12 +380,27 @@ def run_portfolio_backtest(
             # ── Step 5: Record daily state ───────────────────────────────────
             portfolio.record_daily_state(eval_date, portfolio.total_unrealized_liability)
 
+        # ── Force-close any positions still open at backtest end ────────────
+        if sim_dates.size > 0:
+            last_date = sim_dates[-1]
+            for trade_num_open, pos in list(portfolio.open_positions.items()):
+                t = pos.trade
+                res = evaluate_trade_step(t, last_date, data, engine, params)
+                t.exit_date = last_date
+                t.exit_dte = (t.expiration - last_date).days
+                t.exit_type = "EXPIRY"
+                t.pnl = res.pnl
+                t.pnl_pct = res.pnl_pct
+                portfolio.available_cash -= res.close_cost
+                portfolio.remove_position(t.trade_num)
+                trades.append(t)
+
         # ── Phase 4: Final reporting ─────────────────────────────────────────
         equity_df = pd.DataFrame(portfolio.equity_curve)
         if not equity_df.empty:
             equity_df.set_index("date", inplace=True)
 
-        return trades, equity_df, portfolio
+        return trades, equity_df, portfolio, len(_vix_blocked_exps)
     finally:
         if created_engine and hasattr(engine, "close"):
             engine.close()

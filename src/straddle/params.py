@@ -155,11 +155,9 @@ OVERSHOOT: OvershootParams = {
 # ── Portfolio / laddering ────────────────────────────────────────────────
 
 PORTFOLIO: PortfolioParams = {
-    "max_bpr_allocation": 0.30,       # max 30% of starting capital as margin usage
-    "cash_yield_annual": 0.04,         # 4% annual risk-free rate (used in risk_free and blend modes)
-    "entry_cooldown_days": 3,          # minimum trading days between new entries
-    "cash_investment_mode": "risk_free",  # how uninvested cash is deployed: "risk_free" | "spy" | "blend"
-    "spy_allocation_pct": 0.40,        # SPY fraction for blend mode (40% SPY + 60% risk-free)
+    "max_bpr_allocation": 0.30,  # max 30% of starting capital as margin usage
+    "cash_yield_annual": 0.04,  # 4% annual risk-free rate on uninvested cash
+    "entry_cooldown_days": 3,  # minimum trading days between new entries
 }
 
 # ── Merge into a single flat dict for backward compatibility ─────────────

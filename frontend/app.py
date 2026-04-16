@@ -25,7 +25,6 @@ from straddle import (
     make_engine,
     run_backtest,
     run_portfolio_backtest,
-    plot_portfolio_backtest,
 )
 
 # ── Page config ──────────────────────────────────────────────────────────
@@ -44,14 +43,24 @@ st.markdown("""
 [data-testid="stMetricValue"]   { font-size: 1.0rem  !important; }
 [data-testid="stMetricDelta"]   { font-size: 0.68rem !important; }
 
+/* Reduce top padding in main area */
+.main .block-container,
+div[data-testid="stAppViewBlockContainer"] { padding-top: 0.25rem !important; }
+header[data-testid="stHeader"] { height: 2rem !important; min-height: 2rem !important; }
+
+/* Reduce sidebar top padding */
+section[data-testid="stSidebar"] > div:first-child { padding-top: 0.25rem !important; }
+
 /* Tighten sidebar element spacing */
 section[data-testid="stSidebar"] .stSlider       { margin-bottom: 0 !important; padding-bottom: 0 !important; }
 section[data-testid="stSidebar"] .stNumberInput  { margin-bottom: 0 !important; }
 section[data-testid="stSidebar"] .stCheckbox     { margin-bottom: 0 !important; }
 section[data-testid="stSidebar"] .stRadio        { margin-bottom: 0 !important; }
-section[data-testid="stSidebar"] h2              { margin-top: 0.4rem !important; margin-bottom: 0.1rem !important; font-size: 0.85rem !important; }
+section[data-testid="stSidebar"] h2              { margin-top: 0.4rem !important; margin-bottom: 0.1rem !important; font-size: 1.1rem !important; }
 section[data-testid="stSidebar"] .stMarkdown p  { font-size: 0.78rem !important; }
 section[data-testid="stSidebar"] hr             { margin: 0.3rem 0 !important; }
+
+
 </style>
 """, unsafe_allow_html=True)
 
@@ -63,12 +72,12 @@ if "saved_runs" not in st.session_state:
 
 # ── Sidebar: Parameters ──────────────────────────────────────────────────
 
-st.sidebar.title("⚙️ Parameters")
-st.sidebar.info("📌 **Strategy:** Short Straddle")
+st.sidebar.title("Parameters")
+st.sidebar.info("**Strategy:** Short Straddle")
 
 # ── Backtest ─────────────────────────────────────────────────────────────
 
-st.sidebar.header("📅 Backtest")
+st.sidebar.header("Backtest")
 start_date = st.sidebar.date_input("Start Date", value=pd.to_datetime(PARAMS["start_date"]))
 end_date = st.sidebar.date_input("End Date", value=pd.to_datetime(PARAMS["end_date"]))
 initial_balance = st.sidebar.number_input(
@@ -79,7 +88,7 @@ st.sidebar.divider()
 
 # ── Portfolio Mode ────────────────────────────────────────────────────────
 
-st.sidebar.header("💼 Portfolio Mode")
+st.sidebar.header("Portfolio Mode")
 portfolio_mode = st.sidebar.radio(
     "Backtest Mode",
     options=["Single Position", "Portfolio (Laddering)"],
@@ -92,7 +101,7 @@ is_portfolio = portfolio_mode == "Portfolio (Laddering)"
 if is_portfolio:
     max_bpr_allocation = st.sidebar.slider(
         "Max BPR Allocation (%)",
-        min_value=10, max_value=80,
+        min_value=0, max_value=80,
         value=int(PARAMS.get("max_bpr_allocation", 0.30) * 100),
         step=5, format="%d%%",
         help="Maximum percentage of starting capital used as margin.",
@@ -107,7 +116,7 @@ if is_portfolio:
         "Uninvested Cash",
         options=["risk_free", "spy", "blend"],
         format_func=lambda x: {"risk_free": "Risk-Free", "spy": "100 % SPY", "blend": "SPY + Risk-Free"}[x],
-        index=["risk_free", "spy", "blend"].index(PARAMS.get("cash_investment_mode", "risk_free")),
+        index=["risk_free", "spy", "blend"].index(PARAMS.get("cash_investment_mode", "spy")),
         horizontal=True,
         help="How the cash not deployed in straddles is invested.",
     )
@@ -134,7 +143,7 @@ st.sidebar.divider()
 
 # ── Strategy ──────────────────────────────────────────────────────────────
 
-st.sidebar.header("📐 Strategy")
+st.sidebar.header("Strategy")
 target_delta = st.sidebar.slider(
     "Target Delta", min_value=0.05, max_value=0.30,
     value=PARAMS["target_delta"], step=0.01, format="%.2f",
@@ -157,16 +166,32 @@ stop_loss_pct = st.sidebar.slider(
 )
 single_position = st.sidebar.checkbox(
     "Single position (no overlap)", value=PARAMS["single_position"],
+    help=(
+        "Skip new monthly entries while a prior trade or roll chain is still open. "
+        "Disable for portfolio/laddering mode where concurrent positions are allowed."
+    ),
 )
 
 st.sidebar.divider()
 
 # ── Roll Management ───────────────────────────────────────────────────────
 
-st.sidebar.header("🔄 Roll Management")
-manage_at_dte = st.sidebar.number_input("Manage at DTE", value=PARAMS["manage_at_dte"], min_value=7, max_value=45)
-roll_for_credit = st.sidebar.checkbox("Roll at 21 DTE for credit", value=PARAMS["roll_for_credit"])
-max_rolls = st.sidebar.number_input("Max Rolls", value=PARAMS["max_rolls"], min_value=0, max_value=10)
+st.sidebar.header("Roll Management")
+manage_at_dte = st.sidebar.number_input(
+    "Manage at DTE", value=PARAMS["manage_at_dte"], min_value=7, max_value=45,
+    help="Close or roll the position when this many calendar days remain until expiration. Tastytrade standard: 21 DTE.",
+)
+roll_for_credit = st.sidebar.checkbox(
+    "Roll at 21 DTE for credit", value=PARAMS["roll_for_credit"],
+    help=(
+        "When checked, roll the strangle at manage_at_dte into a new 45-DTE expiration, "
+        "collecting net credit. When unchecked, close the position flat."
+    ),
+)
+max_rolls = st.sidebar.number_input(
+    "Max Rolls", value=PARAMS["max_rolls"], min_value=0, max_value=10,
+    help="Maximum consecutive rolls per original position chain. After this limit, the position is closed flat at the next manage_at_dte.",
+)
 
 st.sidebar.divider()
 
@@ -192,7 +217,7 @@ st.sidebar.divider()
 
 # ── VIX Filter ────────────────────────────────────────────────────────────
 
-st.sidebar.header("🌡️ VIX Filter")
+st.sidebar.header("VIX Filter")
 vix_filter_enabled = st.sidebar.checkbox(
     "Enable VIX filter", value=PARAMS["vix_entry_filter_enabled"],
     help="Applies to both new monthly entries and 21-DTE roll continuations. "
@@ -204,7 +229,6 @@ vix_entry_max = st.sidebar.number_input(
     min_value=10.0, max_value=80.0, step=1.0, disabled=not vix_filter_enabled,
 )
 
-st.sidebar.divider()
 
 # ── Advanced (collapsed) ──────────────────────────────────────────────────
 
@@ -285,12 +309,11 @@ if run_clicked:
     with st.spinner(f"Running backtest ({params['mode']} mode)..."):
         engine = make_engine(params)
         if is_portfolio:
-            trades, equity_df, portfolio = run_portfolio_backtest(
+            trades, equity_df, portfolio, skipped_vix = run_portfolio_backtest(
                 data, params, engine
             )
             equity_curve = equity_df["total_equity"] if not equity_df.empty else pd.Series(dtype=float)
             skipped_entries = 0
-            skipped_vix = 0
         else:
             trades, equity_curve, skipped_entries, skipped_vix = run_backtest(
                 data, params, engine
@@ -375,25 +398,7 @@ if "last_result" in st.session_state:
         spy_mdd = 0.0
         spy_calmar = float("nan")
 
-    # ── 1. Performance Summary ───────────────────────────────────────────
-    st.header("📈 Performance Summary")
-
-    perf_df = pd.DataFrame(
-        {
-            "Total Return":  [f"{metrics.get('tot', 0)*100:.1f}%",  f"{metrics.get('spy_total_return', 0)*100:.1f}%"],
-            "Annual Return": [f"{ann_return*100:.1f}%",              f"{spy_cagr*100:.1f}%"],
-            "Sharpe":        [f"{metrics.get('sharpe', 0):.2f}",     f"{metrics.get('spy_sharpe', 0):.2f}"],
-            "Max Drawdown":  [f"{mdd*100:.1f}%",                     f"{spy_mdd*100:.1f}%"],
-            "Calmar":        [
-                f"{calmar:.2f}" if not np.isnan(calmar) else "—",
-                f"{spy_calmar:.2f}" if not np.isnan(spy_calmar) else "—",
-            ],
-        },
-        index=["Portfolio", "SPY B&H"],
-    )
-    st.dataframe(perf_df, use_container_width=True)
-
-    # ── 2. Account & Portfolio Stats ─────────────────────────────────────
+    # ── 1. Account & Portfolio ───────────────────────────────────────────
     st.header("💼 Account & Portfolio")
 
     col1, col2, col3 = st.columns(3)
@@ -404,72 +409,281 @@ if "last_result" in st.session_state:
                 delta=f"{metrics.get('spy_total_return', 0)*100:.1f}%")
 
     if is_portfolio:
-        col1, col2, col3, col4 = st.columns(4)
-        col1.metric("Peak Positions", metrics.get("peak_positions", 0))
-        col2.metric("Avg Positions", f"{metrics.get('avg_positions', 0):.1f}")
-        col3.metric("Avg BPR Util", f"{metrics.get('avg_bpr_util', 0):.1f}%")
-        col4.metric("Peak BPR Util", f"{metrics.get('peak_bpr_util', 0):.1f}%")
-        st.caption(
-            "Peak BPR can exceed 100 % of the cap: existing positions' margin requirements "
-            "grow as the market moves against them. The cap only gates new entries."
+        col1, col2, col3 = st.columns(3)
+        col1.metric("Avg BPR Util", f"{metrics.get('avg_bpr_util', 0):.1f}%")
+        col2.metric(
+            "Peak BPR Util",
+            f"{metrics.get('peak_bpr_util', 0):.1f}%",
+            help=(
+                "Peak BPR can exceed 100% of the cap: existing positions' margin requirements "
+                "grow as the market moves against them. The cap only gates new entries."
+            ),
         )
-        col1, _ = st.columns([1, 3])
-        col1.metric("Cash Yield Earned", f"${metrics.get('cash_yield_earned', 0):,.0f}")
+        col3.metric("Cash Yield Earned", f"${metrics.get('cash_yield_earned', 0):,.0f}")
+
+    # ── 2. Performance Summary ───────────────────────────────────────────
+    st.header("📈 Performance Summary")
+
+    def _fmt_calmar(v):
+        return f"{v:.2f}" if not np.isnan(v) else "—"
+
+    _blank_row = {"Total Return": "", "Annual Return": "", "Sharpe": "", "Max Drawdown": "", "Calmar": ""}
+
+    perf_rows = {"Portfolio": {
+        "Total Return": f"{metrics.get('tot', 0)*100:.1f}%",
+        "Annual Return": f"{ann_return*100:.1f}%",
+        "Sharpe": f"{metrics.get('sharpe', 0):.2f}",
+        "Max Drawdown": f"{mdd*100:.1f}%",
+        "Calmar": _fmt_calmar(calmar),
+    }}
+
+    if is_portfolio:
+        _init = params["initial_balance"]
+        _straddle_pnl = sum(t.pnl for t in trades if t.pnl is not None)
+        _cash_yield_total = metrics.get("cash_yield_earned", 0.0)
+        _cash_mode = params.get("cash_investment_mode", "risk_free")
+        _spy_alloc = params.get("spy_allocation_pct", 0.0)
+
+        if _cash_mode == "spy":
+            _spy_cash = _cash_yield_total
+            _rf_cash = 0.0
+        elif _cash_mode == "risk_free":
+            _spy_cash = 0.0
+            _rf_cash = _cash_yield_total
+        else:  # blend
+            _spy_cash = _cash_yield_total * _spy_alloc
+            _rf_cash = _cash_yield_total * (1 - _spy_alloc)
+
+        def _tot(pnl):
+            return pnl / _init if _init else 0.0
+
+        def _ann(tot):
+            return (1 + tot) ** (1 / years) - 1 if years > 0 and tot > -1 else 0.0
+
+        perf_rows["  o/w short strangles"] = {
+            "Total Return": f"{_tot(_straddle_pnl)*100:.1f}%",
+            "Annual Return": f"{_ann(_tot(_straddle_pnl))*100:.1f}%",
+            "Sharpe": "—", "Max Drawdown": "—", "Calmar": "—",
+        }
+        perf_rows["  o/w SPY"] = {
+            "Total Return": f"{_tot(_spy_cash)*100:.1f}%",
+            "Annual Return": f"{_ann(_tot(_spy_cash))*100:.1f}%",
+            "Sharpe": "—", "Max Drawdown": "—", "Calmar": "—",
+        }
+        perf_rows["  o/w risk-free"] = {
+            "Total Return": f"{_tot(_rf_cash)*100:.1f}%",
+            "Annual Return": f"{_ann(_tot(_rf_cash))*100:.1f}%",
+            "Sharpe": "—", "Max Drawdown": "—", "Calmar": "—",
+        }
+
+    perf_rows["SPY B&H"] = {
+        "Total Return": f"{metrics.get('spy_total_return', 0)*100:.1f}%",
+        "Annual Return": f"{spy_cagr*100:.1f}%",
+        "Sharpe": f"{metrics.get('spy_sharpe', 0):.2f}",
+        "Max Drawdown": f"{spy_mdd*100:.1f}%",
+        "Calmar": _fmt_calmar(spy_calmar),
+    }
+
+    perf_df = pd.DataFrame(perf_rows).T.reset_index().rename(columns={"index": ""})
+
+    _bold_labels = {"Portfolio", "SPY B&H"}
+
+    def _bold_perf(row):
+        return ["font-weight: bold"] * len(row) if row[""] in _bold_labels else [""] * len(row)
+
+    st.dataframe(
+        perf_df.style.apply(_bold_perf, axis=1).hide(axis="index"),
+        width='stretch',
+    )
 
     # ── 3. Trade Statistics ───────────────────────────────────────────────
     st.header("📋 Trade Statistics")
+
+    _primary_trades = [t for t in trades if t.parent_trade_num is None]
+    _rolled_trades = [t for t in trades if t.parent_trade_num is not None]
+
+    def _trade_row(label, subset):
+        pnls = [t.pnl for t in subset if t.pnl is not None]
+        n = len(subset)
+        wr = f"{sum(1 for p in pnls if p > 0) / len(pnls) * 100:.1f}%" if pnls else "—"
+        avg = f"${sum(pnls) / len(pnls):,.0f}" if pnls else "—"
+        return {"": label, "# Trades": n, "Win Rate": wr, "Avg P&L": avg}
+
+    stats_rows = [
+        _trade_row("All Executed", trades),
+        _trade_row("  Primary", _primary_trades),
+        _trade_row("  Rolled", _rolled_trades),
+    ]
+
+    def _bold_all_executed(row):
+        return ["font-weight: bold"] * len(row) if row[""] == "All Executed" else [""] * len(row)
+
+    st.dataframe(
+        pd.DataFrame(stats_rows).style.apply(_bold_all_executed, axis=1),
+        hide_index=True, width='stretch',
+    )
+
     if is_portfolio:
         col1, col2, col3, col4 = st.columns(4)
-        col1.metric("Trades Executed", len(trades))
-        col2.metric("Win Rate", f"{metrics.get('wr', 0)*100:.1f}%")
-        col3.metric("Avg P&L", f"${metrics.get('avg_pnl', 0):,.0f}")
-        col4.metric("Max Consec. Losses", metrics.get("max_streak", 0))
+        col1.metric("Peak Positions", metrics.get("peak_positions", 0))
+        col2.metric("Avg Positions", f"{metrics.get('avg_positions', 0):.1f}")
+        col3.metric("Max Consec. Losses", metrics.get("max_streak", 0))
+        col4.metric("Skipped — VIX filter", skipped_vix)
     else:
-        col1, col2, col3, col4, col5 = st.columns(5)
-        col1.metric("Trades Executed", len(trades))
-        col2.metric("Skipped (Single Pos)", skipped_entries)
-        col3.metric("Skipped (VIX High)", skipped_vix)
-        col4.metric("Win Rate (Chain)", f"{metrics.get('wr_chain', 0)*100:.1f}%")
-        col5.metric("Avg P&L", f"${metrics.get('avg_pnl', 0):,.0f}")
+        col1, col2, col3 = st.columns(3)
+        col1.metric("Skipped — single position", skipped_entries)
+        col2.metric("Skipped — VIX filter", skipped_vix)
+        col3.metric("Max Consec. Losses", metrics.get("max_streak", 0))
 
     # ── Charts ───────────────────────────────────────────────────────────
     st.header("📉 Charts")
 
+    def _add_year_separators(fig, start, end):
+        """Add subtle vertical year-boundary lines to a Plotly figure."""
+        s_year = pd.Timestamp(start).year + 1
+        e_year = pd.Timestamp(end).year + 1
+        for yr in range(s_year, e_year):
+            fig.add_vline(
+                x=f"{yr}-01-01",
+                line=dict(color="rgba(150,150,150,0.25)", width=1, dash="dot"),
+            )
+        return fig
+
     # Equity curve
     st.subheader("Equity Curve")
     if is_portfolio and equity_df is not None and not equity_df.empty:
-        # Embed the multi-panel portfolio dashboard directly in the page
-        report_path = plot_portfolio_backtest(trades, equity_df, portfolio, params, data=data)
-        if report_path:
-            import streamlit.components.v1 as _components
-            from pathlib import Path as _Path
-            _components.html(_Path(report_path).read_text(encoding="utf-8"), height=1050, scrolling=True)
+        _total_dates = equity_df.index
+        _total_equity = equity_df["total_equity"].values
+        _pk_eq = np.maximum.accumulate(_total_equity)
+        _drawdown = (_total_equity - _pk_eq) / _pk_eq * 100.0
 
-        # Portfolio chart: Total Equity, Cash, SPY B&H
-        chart_data = equity_df[["total_equity"]].copy()
-        chart_data.columns = ["Total Portfolio"]
+        # Chart 1: Equity vs SPY B&H
+        fig_eq = go.Figure()
+        fig_eq.add_trace(go.Scatter(
+            x=_total_dates, y=_total_equity, name="Portfolio Equity",
+            line=dict(color="#2c3e50", width=2),
+        ))
         if "available_cash" in equity_df.columns:
-            chart_data["Cash (uninvested)"] = equity_df["available_cash"]
-        spy_eq = data.loc[equity_df.index[0] : equity_df.index[-1], "spy_close"]
-        if not spy_eq.empty:
-            chart_data["SPY B&H"] = spy_eq / float(spy_eq.iloc[0]) * params["initial_balance"]
-        st.caption(
-            "**Total Portfolio** = cash + mark-to-market value of open positions. "
-            "**Cash (uninvested)** = portion not tied up in margin — grows with cash yield and shrinks as positions open. "
-            "**SPY B&H** = price-only benchmark (excludes ~1.3 %/yr dividends)."
+            fig_eq.add_trace(go.Scatter(
+                x=_total_dates, y=equity_df["available_cash"].values, name="Available Cash",
+                line=dict(color="#95a5a6", width=1, dash="dot"),
+                visible="legendonly",
+            ))
+        _spy_eq = data.loc[_total_dates[0]:_total_dates[-1], "spy_close"]
+        if not _spy_eq.empty:
+            _spy_norm = _spy_eq / float(_spy_eq.iloc[0]) * params["initial_balance"]
+            fig_eq.add_trace(go.Scatter(
+                x=_spy_norm.index, y=_spy_norm.values, name="SPY B&H",
+                line=dict(color="#e67e22", width=1.5, dash="dash"), opacity=0.7,
+            ))
+        _add_year_separators(fig_eq, params["start_date"], params["end_date"])
+        fig_eq.update_layout(
+            title="Equity Curve vs SPY Benchmark",
+            yaxis=dict(title="Equity ($)", tickprefix="$", hoverformat="$,.0f"),
+            hovermode="x unified", template="plotly_white",
+            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
         )
-        st.line_chart(chart_data, width='stretch')
+        st.plotly_chart(fig_eq, width='stretch')
+
+        # Chart 2: Drawdown
+        fig_dd = go.Figure()
+        fig_dd.add_trace(go.Scatter(
+            x=_total_dates, y=_drawdown, name="Drawdown %",
+            fill="tozeroy", line=dict(color="#e74c3c", width=1),
+        ))
+        _add_year_separators(fig_dd, params["start_date"], params["end_date"])
+        fig_dd.update_layout(
+            title="Drawdown (%)",
+            yaxis=dict(title="DD %", ticksuffix="%", hoverformat=".2f"),
+            hovermode="x unified", template="plotly_white",
+        )
+        st.plotly_chart(fig_dd, width='stretch')
+
+        # Chart 3: BPR Utilization
+        if "utilized_bpr" in equity_df.columns:
+            _max_bpr_cap = params.get("initial_balance", 50_000) * params.get("max_bpr_allocation", 0.30)
+            fig_bpr = go.Figure()
+            fig_bpr.add_trace(go.Scatter(
+                x=_total_dates, y=equity_df["utilized_bpr"].values, name="Utilized BPR",
+                fill="tozeroy", line=dict(color="#3498db", width=1),
+            ))
+            fig_bpr.add_trace(go.Scatter(
+                x=[_total_dates[0], _total_dates[-1]], y=[_max_bpr_cap, _max_bpr_cap],
+                name="Max BPR Cap", line=dict(color="#e74c3c", width=1, dash="dash"),
+            ))
+            _add_year_separators(fig_bpr, params["start_date"], params["end_date"])
+            fig_bpr.update_layout(
+                title="BPR Utilization (Margin Usage)",
+                yaxis=dict(title="BPR ($)", tickprefix="$", hoverformat="$,.0f"),
+                hovermode="x unified", template="plotly_white",
+            )
+            st.plotly_chart(fig_bpr, width='stretch')
+
+        # Chart 4: Open Positions
+        if "open_positions" in equity_df.columns:
+            fig_pos = go.Figure()
+            fig_pos.add_trace(go.Scatter(
+                x=_total_dates, y=equity_df["open_positions"].values, name="Open Positions",
+                line=dict(color="#27ae60", width=2), mode="lines+markers", marker=dict(size=4),
+            ))
+            _add_year_separators(fig_pos, params["start_date"], params["end_date"])
+            fig_pos.update_layout(
+                title="Open Positions Count",
+                yaxis=dict(title="Count", hoverformat=",.0f"),
+                hovermode="x unified", template="plotly_white",
+            )
+            st.plotly_chart(fig_pos, width='stretch')
+
+        # Portfolio Allocation (100% stacked area)
+        st.subheader("Portfolio Allocation")
+        _alloc_dates = equity_df.index
+        _avail_cash = equity_df["available_cash"].values
+        _util_bpr = equity_df["utilized_bpr"].values if "utilized_bpr" in equity_df.columns else np.zeros(len(_alloc_dates))
+
+        _cash_mode = params.get("cash_investment_mode", "risk_free")
+        _spy_alloc_pct = params.get("spy_allocation_pct", 0.0)
+        if _cash_mode == "spy":
+            _spy_alloc_vals = _avail_cash
+            _rf_alloc_vals = np.zeros(len(_alloc_dates))
+        elif _cash_mode == "risk_free":
+            _spy_alloc_vals = np.zeros(len(_alloc_dates))
+            _rf_alloc_vals = _avail_cash
+        else:  # blend
+            _spy_alloc_vals = _avail_cash * _spy_alloc_pct
+            _rf_alloc_vals = _avail_cash * (1 - _spy_alloc_pct)
+
+        fig_alloc = go.Figure()
+        fig_alloc.add_trace(go.Scatter(
+            x=_alloc_dates, y=_util_bpr,
+            name="Short Strangles (BPR)", stackgroup="one", groupnorm="percent",
+            line=dict(width=0), fillcolor="rgba(155,89,182,0.75)",
+        ))
+        fig_alloc.add_trace(go.Scatter(
+            x=_alloc_dates, y=_spy_alloc_vals,
+            name="SPY", stackgroup="one", groupnorm="percent",
+            line=dict(width=0), fillcolor="rgba(231,76,60,0.65)",
+        ))
+        fig_alloc.add_trace(go.Scatter(
+            x=_alloc_dates, y=_rf_alloc_vals,
+            name="Risk-Free", stackgroup="one", groupnorm="percent",
+            line=dict(width=0), fillcolor="rgba(52,152,219,0.65)",
+        ))
+        _add_year_separators(fig_alloc, params["start_date"], params["end_date"])
+        fig_alloc.update_layout(
+            yaxis=dict(title="Allocation (%)", ticksuffix="%", hoverformat=".1f"),
+            hovermode="x unified", template="plotly_white",
+            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+        )
+        st.plotly_chart(fig_alloc, width='stretch')
+
     else:
         eq_df = pd.DataFrame({"Date": equity_curve.index, "Strangle": equity_curve.values})
-
-        # SPY B&H for comparison
         spy_eq = data.loc[
             pd.Timestamp(params["start_date"]) : pd.Timestamp(params["end_date"]),
             "spy_close",
         ]
         spy_eq = spy_eq / float(spy_eq.iloc[0]) * params["initial_balance"]
         spy_df = pd.DataFrame({"Date": spy_eq.index, "SPY B&H": spy_eq.values})
-
         chart_df = eq_df.merge(spy_df, on="Date", how="outer").sort_values("Date").ffill()
         st.line_chart(chart_df.set_index("Date"), width='stretch')
 
@@ -485,7 +699,6 @@ if "last_result" in st.session_state:
             })
         pnl_df = pd.DataFrame(pnl_data)
 
-        # Color mapping for exit types
         exit_colors = {
             "PROFIT": "#2ecc71",
             "STOP": "#e74c3c",
@@ -506,41 +719,68 @@ if "last_result" in st.session_state:
                     marker_color=color,
                 ))
 
+        _add_year_separators(fig, params["start_date"], params["end_date"])
         fig.update_layout(
             barmode="overlay",
-            xaxis_title="Date",
-            yaxis_title="P&L ($)",
+            xaxis=dict(title="Date", tickformat="%b %Y", tickmode="auto", nticks=20),
+            yaxis=dict(title="P&L ($)", hoverformat="$,.0f"),
             legend_title="Exit Type",
             hovermode="x unified",
-            xaxis=dict(
-                tickformat="%b %Y",
-                tickmode="auto",
-                nticks=20,
-            ),
         )
         st.plotly_chart(fig, width='stretch')
 
-    # Exit breakdown (subsection of P&L per Trade)
+    # Exit breakdown
     st.subheader("Exit Breakdown")
     exit_types = {}
     total_trades_for_pct = len(trades) if trades else 1
     for t in trades:
         et = t.exit_type or "UNKNOWN"
         if et not in exit_types:
-            exit_types[et] = {"count": 0, "total_pnl": 0.0}
+            exit_types[et] = {"count": 0, "wins": 0, "total_pnl": 0.0}
         exit_types[et]["count"] += 1
-        exit_types[et]["total_pnl"] += t.pnl or 0.0
-    exit_df = pd.DataFrame([
-        {
+        _pnl = t.pnl or 0.0
+        exit_types[et]["total_pnl"] += _pnl
+        if _pnl > 0:
+            exit_types[et]["wins"] += 1
+
+    _exit_order = ["PROFIT", "ROLLED", "21DTE"]
+    _sorted_keys = _exit_order + [k for k in exit_types if k not in _exit_order]
+
+    exit_rows = []
+    for k in _sorted_keys:
+        if k not in exit_types:
+            continue
+        v = exit_types[k]
+        c = v["count"]
+        wr = f"{v['wins']/c*100:.1f}%" if c else "—"
+        exit_rows.append({
             "Exit Type": k,
-            "Count": v["count"],
-            "% of Trades": f"{v['count']/total_trades_for_pct*100:.1f}%",
+            "Count": c,
+            "% of Trades": f"{c/total_trades_for_pct*100:.1f}%",
+            "Win Rate": wr,
             "Total P&L": f"${v['total_pnl']:,.0f}",
-            "Avg P&L": f"${v['total_pnl']/v['count']:,.0f}",
-        }
-        for k, v in exit_types.items()
-    ])
-    st.dataframe(exit_df, use_container_width=True, hide_index=True)
+            "Avg P&L": f"${v['total_pnl']/c:,.0f}" if c else "—",
+        })
+
+    _total_count = sum(v["count"] for v in exit_types.values())
+    _total_wins = sum(v["wins"] for v in exit_types.values())
+    _total_pnl_all = sum(v["total_pnl"] for v in exit_types.values())
+    exit_rows.append({
+        "Exit Type": "Total",
+        "Count": _total_count,
+        "% of Trades": "100.0%",
+        "Win Rate": f"{_total_wins/_total_count*100:.1f}%" if _total_count else "—",
+        "Total P&L": f"${_total_pnl_all:,.0f}",
+        "Avg P&L": f"${_total_pnl_all/_total_count:,.0f}" if _total_count else "—",
+    })
+
+    exit_df = pd.DataFrame(exit_rows)
+
+    def _bold_total(row):
+        weight = "font-weight: bold" if row["Exit Type"] == "Total" else ""
+        return [weight] * len(row)
+
+    st.dataframe(exit_df.style.apply(_bold_total, axis=1), width='stretch', hide_index=True)
 
     # Cumulative P&L chart
     st.subheader("Cumulative P&L")
@@ -562,17 +802,107 @@ if "last_result" in st.session_state:
             fill="tozeroy",
             fillcolor="rgba(52,152,219,0.15)",
         ))
+        _add_year_separators(fig_cum, params["start_date"], params["end_date"])
         fig_cum.update_layout(
-            xaxis_title="Date",
-            yaxis_title="Cumulative P&L ($)",
+            xaxis=dict(title="Date", tickformat="%b %Y", tickmode="auto", nticks=20),
+            yaxis=dict(title="Cumulative P&L ($)", hoverformat="$,.0f"),
             hovermode="x unified",
-            xaxis=dict(
-                tickformat="%b %Y",
-                tickmode="auto",
-                nticks=20,
-            ),
         )
         st.plotly_chart(fig_cum, width='stretch')
+
+    # VIX with entry points
+    st.subheader("VIX with Entry Points")
+    # Extend VIX series to cover all entry dates (trades near end_date may extend beyond)
+    _all_entry_dates = [t.entry_date for t in trades]
+    _vix_end = max(
+        pd.Timestamp(params["end_date"]),
+        max(_all_entry_dates) if _all_entry_dates else pd.Timestamp(params["end_date"]),
+    )
+    _vix_series = data.loc[pd.Timestamp(params["start_date"]) : _vix_end, "vix_close"]
+    fig_vix = go.Figure()
+    fig_vix.add_trace(go.Scatter(
+        x=_vix_series.index, y=_vix_series.values,
+        name="VIX", line=dict(color="#95a5a6", width=0.8), opacity=0.8,
+    ))
+    # Regime threshold lines — boundaries for the VIX Regime table
+    _vix_low = params.get("vix_low", 15)
+    _vix_high = params.get("vix_high", 25)
+    fig_vix.add_hline(
+        y=_vix_low, line=dict(color="#3498db", width=1, dash="dash"),
+        annotation_text="Regime: Low / Normal", annotation_position="bottom right",
+    )
+    fig_vix.add_hline(
+        y=_vix_high, line=dict(color="#e67e22", width=1, dash="dash"),
+        annotation_text="Regime: Normal / Elevated", annotation_position="top right",
+    )
+    # VIX entry filter line (if enabled)
+    if params.get("vix_entry_filter_enabled", False):
+        _vix_filter_max = params.get("vix_entry_max", 30.0)
+        fig_vix.add_hline(
+            y=_vix_filter_max, line=dict(color="#e74c3c", width=1.5, dash="dot"),
+            annotation_text=f"VIX filter ({_vix_filter_max:.0f})",
+            annotation_position="top left",
+        )
+    # All entry dots (blue, filled) — show every trade entry including rolled continuations
+    if trades:
+        fig_vix.add_trace(go.Scatter(
+            x=[t.entry_date for t in trades],
+            y=[t.entry_vix for t in trades],
+            mode="markers", name="Entry",
+            marker=dict(color="#2980b9", size=10, symbol="circle",
+                        line=dict(color="#1a5276", width=1)),
+            customdata=[t.trade_num for t in trades],
+            hovertemplate="Trade #%{customdata}<br>%{x|%b %d, %Y}<br>VIX: %{y:.1f}<extra></extra>",
+        ))
+    # Skipped entries (open red circles) — portfolio mode only
+    if is_portfolio and portfolio is not None and portfolio.vix_blocked_dates:
+        _skip_dates = [d for d, v in portfolio.vix_blocked_dates]
+        _skip_vix = [v for d, v in portfolio.vix_blocked_dates]
+        fig_vix.add_trace(go.Scatter(
+            x=_skip_dates, y=_skip_vix,
+            mode="markers", name="Skipped (VIX filter)",
+            marker=dict(color="rgba(0,0,0,0)", size=10, symbol="circle",
+                        line=dict(color="#e74c3c", width=2)),
+            hovertemplate="%{x|%b %d, %Y}<br>VIX: %{y:.1f} — skipped<extra></extra>",
+        ))
+    _add_year_separators(fig_vix, params["start_date"], _vix_end)
+    fig_vix.update_layout(
+        yaxis=dict(title="VIX", hoverformat=".1f"),
+        hovermode="closest", template="plotly_white",
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+    )
+    st.plotly_chart(fig_vix, width='stretch')
+
+    # Returns distribution
+    st.subheader("Returns Distribution")
+    _pct_vals = [t.pnl_pct * 100 for t in trades if t.pnl_pct is not None]
+    if _pct_vals:
+        _mean_pct = float(np.mean(_pct_vals))
+        _exit_hist_colors = {
+            "PROFIT": "#2ecc71", "STOP": "#e74c3c", "21DTE": "#3498db",
+            "EXPIRY": "#f39c12", "ROLLED": "#9b59b6", "UNKNOWN": "#95a5a6",
+        }
+        fig_hist = go.Figure()
+        for etype, color in _exit_hist_colors.items():
+            _vals = [t.pnl_pct * 100 for t in trades if t.pnl_pct is not None and t.exit_type == etype]
+            if _vals:
+                fig_hist.add_trace(go.Histogram(
+                    x=_vals, name=etype, marker_color=color, opacity=0.75,
+                    nbinsx=max(10, len(_pct_vals) // 4),
+                ))
+        fig_hist.add_vline(x=0, line=dict(color="white", width=1.5))
+        fig_hist.add_vline(
+            x=_mean_pct, line=dict(color="#fabd2f", width=1.5, dash="dash"),
+            annotation_text=f"Mean {_mean_pct:.1f}%", annotation_position="top right",
+        )
+        fig_hist.update_layout(
+            barmode="stack",
+            xaxis=dict(title="P&L (% of premium)", hoverformat=".1f"),
+            yaxis=dict(title="# Trades"),
+            hovermode="x unified", template="plotly_white",
+            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+        )
+        st.plotly_chart(fig_hist, width='stretch')
 
     # ── VIX Regime Table ─────────────────────────────────────────────────
     st.header("🌡️ VIX Regime")
@@ -646,7 +976,7 @@ if "last_result" in st.session_state:
     # ── Trade Log ────────────────────────────────────────────────────────
     st.header("📋 Trade Log")
 
-    # Filter controls
+    # Filter controls (outside expander so they're always visible)
     col1, col2 = st.columns(2)
     with col1:
         filter_exit = st.multiselect(
@@ -706,8 +1036,16 @@ if "last_result" in st.session_state:
         color = exit_color_map.get(val, "")
         return f"color: {color}; font-weight: bold" if color else ""
 
-    styled_df = trade_df.style.map(color_exit_type, subset=["Exit Type"])
-    st.dataframe(styled_df, width='stretch', hide_index=True)
+    with st.expander(f"Show all {len(trade_df)} trades", expanded=False):
+        if not trade_df.empty and "Exit Type" in trade_df.columns:
+            styled_df = (
+                trade_df.style
+                .map(color_exit_type, subset=["Exit Type"])
+                .hide(axis="index")
+            )
+            st.table(styled_df)
+        else:
+            st.table(trade_df)
 
     # ── Saved Runs ───────────────────────────────────────────────────────
     if st.session_state.saved_runs:
