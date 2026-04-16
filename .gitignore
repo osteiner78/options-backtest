@@ -29,3 +29,9 @@ data/*.parquet
 
 # Backtest output
 backtest_results.png
+
+# history
+.history/
+
+# Reports
+reports/
