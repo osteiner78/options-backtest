@@ -21,6 +21,8 @@ class BacktestParams(TypedDict, total=False):
 
 
 class StrategyParams(TypedDict, total=False):
+    strategy_mode: str          # "short_strangle" | "iron_condor"
+    wing_delta: float           # long-leg delta for iron condor wings (e.g. 0.05)
     target_delta: float
     dte_min: int
     dte_max: int
@@ -87,6 +89,11 @@ BACKTEST: BacktestParams = {
 # ── Strategy rules ───────────────────────────────────────────────────────
 
 STRATEGY: StrategyParams = {
+    # Strategy variant: "short_strangle" sells a naked put + call.
+    # "iron_condor" additionally buys long wings at wing_delta to cap tail risk,
+    # turning the trade into a defined-risk spread.
+    "strategy_mode": "short_strangle",
+    "wing_delta": 0.05,  # long-leg delta for iron condor wings (5Δ default)
     "target_delta": 0.16,  # sell 16Δ put + 16Δ call
     "dte_min": 30,  # acceptable DTE window for expiry selection
     "dte_max": 45,

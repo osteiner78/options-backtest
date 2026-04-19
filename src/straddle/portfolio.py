@@ -21,10 +21,11 @@ from tqdm import tqdm
 from straddle.params import RISK_FREE_RATE_DEFAULT
 
 from straddle.strategy import (
-    Trade, 
-    get_monthly_expiration, 
-    evaluate_trade_step, 
-    TradeStepResult
+    Trade,
+    get_monthly_expiration,
+    evaluate_trade_step,
+    TradeStepResult,
+    build_entry,
 )
 
 
@@ -85,6 +86,31 @@ def calculate_reg_t_strangle_margin(
     min_floor = (0.10 * underlying_price * 100.0) + put_premium + call_premium
 
     return max(total_bpr, min_floor)
+
+
+def calculate_iron_condor_margin(
+    put_strike: float,
+    long_put_strike: float,
+    call_strike: float,
+    long_call_strike: float,
+    net_credit: float,
+) -> float:
+    """Defined-risk margin for a short iron condor.
+
+    Max loss = widest vertical width × 100 − net credit received. Because the
+    two verticals can never both be in the money at expiration, brokers charge
+    margin on the wider side only.
+
+    Args:
+        put_strike:       Short put strike (higher of the two put strikes).
+        long_put_strike:  Long put wing strike (lower — further OTM).
+        call_strike:      Short call strike (lower of the two call strikes).
+        long_call_strike: Long call wing strike (higher — further OTM).
+        net_credit:       Dollar credit received at entry (already net of commissions).
+    """
+    put_width = max(put_strike - long_put_strike, 0.0)
+    call_width = max(long_call_strike - call_strike, 0.0)
+    return max(put_width, call_width) * 100.0 - net_credit
 
 
 # ── Phase 1: Portfolio State Manager ─────────────────────────────────────
@@ -267,39 +293,65 @@ def run_portfolio_backtest(
                         nt.trade_num = trade_num
                         t.child_trade_num = trade_num
 
-                        # Calculate BPR for new trade using engine adjustment
-                        new_bpr = calculate_reg_t_strangle_margin(
-                            spy_close,
-                            nt.put_strike,
-                            nt.call_strike,
-                            engine.apply_fill_adj(nt.put_mid_ps, "close"),
-                            engine.apply_fill_adj(nt.call_mid_ps, "close"),
-                        )
+                        # Calculate BPR for the new trade; dispatch on wings.
+                        if nt.is_iron_condor:
+                            new_bpr = calculate_iron_condor_margin(
+                                nt.put_strike,
+                                nt.long_put_strike,
+                                nt.call_strike,
+                                nt.long_call_strike,
+                                nt.net_credit,
+                            )
+                            new_n_comm = 4
+                            new_mid_close_ps = (
+                                nt.put_mid_ps + nt.call_mid_ps
+                                - (nt.long_put_mid_ps or 0.0)
+                                - (nt.long_call_mid_ps or 0.0)
+                            )
+                        else:
+                            new_bpr = calculate_reg_t_strangle_margin(
+                                spy_close,
+                                nt.put_strike,
+                                nt.call_strike,
+                                engine.apply_fill_adj(nt.put_mid_ps, "close"),
+                                engine.apply_fill_adj(nt.call_mid_ps, "close"),
+                            )
+                            new_n_comm = 2
+                            new_mid_close_ps = nt.put_mid_ps + nt.call_mid_ps
                         portfolio.available_cash += nt.net_credit
                         portfolio.add_position(nt, new_bpr)
                         portfolio.last_entry_date = eval_date
 
                         # Add new liability to daily total
                         portfolio.total_unrealized_liability -= (
-                            engine.apply_fill_adj(nt.put_mid_ps + nt.call_mid_ps, "close") * 100.0
-                            + 2.0 * comm_per_leg
+                            engine.apply_fill_adj(new_mid_close_ps, "close") * 100.0
+                            + new_n_comm * comm_per_leg
                         )
                 else:
                     # Still open: update liability and recalculate margin
                     portfolio.total_unrealized_liability -= res.close_cost
 
-                    # Update BPR for margin utilization tracking
-                    put_ask = engine.apply_fill_adj(res.put_mid_d, "close")
-                    call_ask = engine.apply_fill_adj(res.call_mid_d, "close")
-
                     portfolio.utilized_bpr -= pos.current_bpr  # remove stale value
-                    pos.current_bpr = calculate_reg_t_strangle_margin(
-                        spy_close,
-                        t.active_put_strike,
-                        t.active_call_strike,
-                        put_ask,
-                        call_ask,
-                    )
+                    if t.is_iron_condor:
+                        # Defined-risk margin is fixed at entry by strike widths;
+                        # it does not change as marks fluctuate.
+                        pos.current_bpr = calculate_iron_condor_margin(
+                            t.put_strike,
+                            t.long_put_strike,
+                            t.call_strike,
+                            t.long_call_strike,
+                            t.net_credit,
+                        )
+                    else:
+                        put_ask = engine.apply_fill_adj(res.put_mid_d, "close")
+                        call_ask = engine.apply_fill_adj(res.call_mid_d, "close")
+                        pos.current_bpr = calculate_reg_t_strangle_margin(
+                            spy_close,
+                            t.active_put_strike,
+                            t.active_call_strike,
+                            put_ask,
+                            call_ask,
+                        )
                     portfolio.utilized_bpr += pos.current_bpr  # add updated value
 
             # ── Step 3: Process entries (laddering) ─────────────────────────
@@ -318,46 +370,60 @@ def run_portfolio_backtest(
                 entry_dte = (new_exp - eval_date).days
                 T_new = entry_dte / 365.0
                 entry_ctx = PricingContext(eval_date=eval_date, expiration=new_exp)
-                (new_put_k, new_call_k, new_put_mid, new_call_mid, _used_db) = (
-                    engine.get_entry_marks(spy_close, T_new, r_d, vix_d, ctx=entry_ctx)
+                kw = build_entry(
+                    engine, spy_close, T_new, r_d, vix_d, entry_dte, entry_ctx, params
                 )
-                actual_bpr = calculate_reg_t_strangle_margin(
-                    spy_close,
-                    new_put_k,
-                    new_call_k,
-                    engine.apply_fill_adj(new_put_mid, "close"),
-                    engine.apply_fill_adj(new_call_mid, "close"),
-                )
-                new_net_credit = engine.apply_fill_adj(new_put_mid + new_call_mid, "open") * 100.0 - 2.0 * comm_per_leg
+                if kw is None:
+                    # build_entry returns None on non-positive credit; cash-only day.
+                    pass
+                else:
+                    if kw.get("long_put_strike") is not None:
+                        actual_bpr = calculate_iron_condor_margin(
+                            kw["put_strike"],
+                            kw["long_put_strike"],
+                            kw["call_strike"],
+                            kw["long_call_strike"],
+                            kw["net_credit"],
+                        )
+                        n_comm = 4
+                        mid_close_ps = (
+                            kw["put_mid_ps"] + kw["call_mid_ps"]
+                            - kw["long_put_mid_ps"] - kw["long_call_mid_ps"]
+                        )
+                    else:
+                        actual_bpr = calculate_reg_t_strangle_margin(
+                            spy_close,
+                            kw["put_strike"],
+                            kw["call_strike"],
+                            engine.apply_fill_adj(kw["put_mid_ps"], "close"),
+                            engine.apply_fill_adj(kw["call_mid_ps"], "close"),
+                        )
+                        n_comm = 2
+                        mid_close_ps = kw["put_mid_ps"] + kw["call_mid_ps"]
 
-                if portfolio.can_enter_new_trade(actual_bpr, eval_date, all_trading_dates) and new_net_credit > 0:
-                    trade_num += 1
-                    new_trade = Trade(
-                        trade_num=trade_num,
-                        entry_date=eval_date,
-                        expiration=new_exp,
-                        entry_dte=entry_dte,
-                        put_strike=new_put_k,
-                        call_strike=new_call_k,
-                        put_mid_ps=new_put_mid,
-                        call_mid_ps=new_call_mid,
-                        net_credit=new_net_credit,
-                        entry_vix=vix_d,
-                        used_market_data=_used_db,
-                    )
-                    new_trade.max_vix = vix_d
-                    new_trade.daily_marks = [(eval_date, 0.0)]
+                    if portfolio.can_enter_new_trade(actual_bpr, eval_date, all_trading_dates):
+                        trade_num += 1
+                        new_trade = Trade(
+                            trade_num=trade_num,
+                            entry_date=eval_date,
+                            expiration=new_exp,
+                            entry_dte=entry_dte,
+                            entry_vix=vix_d,
+                            **kw,
+                        )
+                        new_trade.max_vix = vix_d
+                        new_trade.daily_marks = [(eval_date, 0.0)]
 
-                    # Add new credit to cash and register position
-                    portfolio.available_cash += new_net_credit
-                    portfolio.add_position(new_trade, actual_bpr)
-                    portfolio.last_entry_date = eval_date
+                        # Add new credit to cash and register position
+                        portfolio.available_cash += kw["net_credit"]
+                        portfolio.add_position(new_trade, actual_bpr)
+                        portfolio.last_entry_date = eval_date
 
-                    # Update totals for daily state
-                    portfolio.total_unrealized_liability -= (
-                        engine.apply_fill_adj(new_put_mid + new_call_mid, "close") * 100.0
-                        + 2.0 * comm_per_leg
-                    )
+                        # Update totals for daily state
+                        portfolio.total_unrealized_liability -= (
+                            engine.apply_fill_adj(mid_close_ps, "close") * 100.0
+                            + n_comm * comm_per_leg
+                        )
 
             # ── Step 4: Cash return (risk-free / SPY / blend) ───────────────
             if portfolio.available_cash > 0:

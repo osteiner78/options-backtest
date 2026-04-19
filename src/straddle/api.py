@@ -61,6 +61,9 @@ class BacktestRequest(BaseModel):
     roll_for_credit: Optional[bool] = Field(default=None, description="Roll at 21 DTE for credit")
     manage_at_dte: Optional[int] = Field(default=None, description="DTE threshold for management")
     max_rolls: Optional[int] = Field(default=None, description="Max consecutive rolls")
+    # Strategy variant
+    strategy_mode: Optional[str] = Field(default=None, description="Strategy: 'short_strangle' or 'iron_condor'")
+    wing_delta: Optional[float] = Field(default=None, description="Long-leg delta for iron-condor wings (e.g. 0.05)")
     # Portfolio mode
     portfolio_mode: Optional[bool] = Field(default=None, description="Enable multi-position portfolio mode")
     max_bpr_allocation: Optional[float] = Field(default=None, description="Max fraction of capital used as BPR (e.g. 0.30)")

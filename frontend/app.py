@@ -73,7 +73,6 @@ if "saved_runs" not in st.session_state:
 # ── Sidebar: Parameters ──────────────────────────────────────────────────
 
 st.sidebar.title("Parameters")
-st.sidebar.info("**Strategy:** Short Straddle")
 
 # ── Backtest ─────────────────────────────────────────────────────────────
 
@@ -118,7 +117,7 @@ if is_portfolio:
         format_func=lambda x: {"risk_free": "Risk-Free", "spy": "100 % SPY", "blend": "SPY + Risk-Free"}[x],
         index=["risk_free", "spy", "blend"].index(PARAMS.get("cash_investment_mode", "spy")),
         horizontal=True,
-        help="How the cash not deployed in straddles is invested.",
+        help="How the cash not deployed in short positions is invested.",
     )
     if cash_investment_mode in ("risk_free", "blend"):
         cash_yield_annual = st.sidebar.number_input(
@@ -144,10 +143,36 @@ st.sidebar.divider()
 # ── Strategy ──────────────────────────────────────────────────────────────
 
 st.sidebar.header("Strategy")
+_strategy_labels = {
+    "short_strangle": "Short Strangle",
+    "iron_condor": "Iron Condor",
+}
+_mode_options = list(_strategy_labels.keys())
+_default_mode = PARAMS.get("strategy_mode", "short_strangle")
+strategy_mode = st.sidebar.radio(
+    "Variant",
+    options=_mode_options,
+    format_func=lambda k: _strategy_labels[k],
+    index=_mode_options.index(_default_mode) if _default_mode in _mode_options else 0,
+    horizontal=True,
+    help=(
+        "Short Strangle: naked short put + short call (undefined risk). "
+        "Iron Condor: adds long wings at `wing_delta` — defined risk, lower credit."
+    ),
+)
+is_iron_condor = strategy_mode == "iron_condor"
 target_delta = st.sidebar.slider(
     "Target Delta", min_value=0.05, max_value=0.30,
     value=PARAMS["target_delta"], step=0.01, format="%.2f",
 )
+if is_iron_condor:
+    wing_delta = st.sidebar.slider(
+        "Wing Delta (long legs)", min_value=0.02, max_value=0.10,
+        value=float(PARAMS.get("wing_delta", 0.05)), step=0.01, format="%.2f",
+        help="Delta for the long put/call wings that cap tail risk.",
+    )
+else:
+    wing_delta = float(PARAMS.get("wing_delta", 0.05))
 dte_min = st.sidebar.number_input("Min DTE", value=PARAMS["dte_min"], min_value=14, max_value=60)
 dte_max = st.sidebar.number_input("Max DTE", value=PARAMS["dte_max"], min_value=21, max_value=90)
 profit_target_pct = st.sidebar.slider(
@@ -156,13 +181,21 @@ profit_target_pct = st.sidebar.slider(
     value=int(PARAMS["profit_target_pct"] * 100),
     step=5, format="%d%%",
 )
-stop_loss_enabled = st.sidebar.checkbox("Enable Stop Loss", value=PARAMS.get("use_price_stop", False))
+stop_loss_enabled = st.sidebar.checkbox(
+    "Enable Stop Loss",
+    value=PARAMS.get("use_price_stop", False) and not is_iron_condor,
+    disabled=is_iron_condor,
+    help=(
+        "Disabled for iron condors — the long wings already cap maximum loss."
+        if is_iron_condor else None
+    ),
+)
 stop_loss_pct = st.sidebar.slider(
     "Stop Loss (% of premium)",
     min_value=50, max_value=500,
     value=int(PARAMS["stop_loss_pct"] * 100),
     step=25, format="%d%%",
-    disabled=not stop_loss_enabled,
+    disabled=not stop_loss_enabled or is_iron_condor,
 )
 single_position = st.sidebar.checkbox(
     "Single position (no overlap)", value=PARAMS["single_position"],
@@ -256,11 +289,13 @@ def build_params() -> dict:
         "start_date": str(start_date),
         "end_date": str(end_date),
         "initial_balance": float(initial_balance),
+        "strategy_mode": strategy_mode,
+        "wing_delta": float(wing_delta),
         "target_delta": float(target_delta),
         "dte_min": int(dte_min),
         "dte_max": int(dte_max),
         "profit_target_pct": float(profit_target_pct) / 100.0,
-        "use_price_stop": bool(stop_loss_enabled),
+        "use_price_stop": bool(stop_loss_enabled) and not is_iron_condor,
         "stop_loss_pct": float(stop_loss_pct) / 100.0,
         "roll_for_credit": bool(roll_for_credit),
         "manage_at_dte": int(manage_at_dte),
@@ -296,6 +331,12 @@ st.caption("Monthly short strangle · 30–45 DTE · configurable profit target 
 col1, col2 = st.columns([1, 4])
 with col1:
     run_clicked = st.button("🚀 Run Backtest", type="primary", width='stretch')
+with col2:
+    _wing_txt = f" · wings @ {wing_delta:.2f}Δ" if is_iron_condor else ""
+    st.caption(
+        f"Next run: **{_strategy_labels[strategy_mode]}**{_wing_txt} · "
+        f"{'portfolio' if is_portfolio else 'single position'} · {mode} pricing"
+    )
 
 if run_clicked:
     params = build_params()
@@ -439,7 +480,7 @@ if "last_result" in st.session_state:
 
     if is_portfolio:
         _init = params["initial_balance"]
-        _straddle_pnl = sum(t.pnl for t in trades if t.pnl is not None)
+        _short_pnl = sum(t.pnl for t in trades if t.pnl is not None)
         _cash_yield_total = metrics.get("cash_yield_earned", 0.0)
         _cash_mode = params.get("cash_investment_mode", "risk_free")
         _spy_alloc = params.get("spy_allocation_pct", 0.0)
@@ -460,9 +501,14 @@ if "last_result" in st.session_state:
         def _ann(tot):
             return (1 + tot) ** (1 / years) - 1 if years > 0 and tot > -1 else 0.0
 
-        perf_rows["  o/w short strangles"] = {
-            "Total Return": f"{_tot(_straddle_pnl)*100:.1f}%",
-            "Annual Return": f"{_ann(_tot(_straddle_pnl))*100:.1f}%",
+        _short_label = (
+            "  o/w iron condors"
+            if params.get("strategy_mode") == "iron_condor"
+            else "  o/w short strangles"
+        )
+        perf_rows[_short_label] = {
+            "Total Return": f"{_tot(_short_pnl)*100:.1f}%",
+            "Annual Return": f"{_ann(_tot(_short_pnl))*100:.1f}%",
             "Sharpe": "—", "Max Drawdown": "—", "Calmar": "—",
         }
         perf_rows["  o/w SPY"] = {

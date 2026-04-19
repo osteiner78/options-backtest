@@ -230,8 +230,14 @@ class SyntheticEngine:
         r_d: float,
         opt: str,
         ctx: PricingContext = None,
+        buy_or_sell: str = "buy",
     ) -> float:
-        """Per-share BS mid for a single leg (no fill adj, no commission)."""
+        """Per-share BS mid for a single leg (no fill adj, no commission).
+
+        ``buy_or_sell`` is accepted for API parity with MarketEngine but ignored
+        here — synthetic mode returns the raw BS mid and the caller applies the
+        fill adjustment in the correct direction.
+        """
         sigma_d, T_d = self._get_sigma_t(vix_d, dte_rem)
         d_est = bs_delta(S_d, strike, T_d, r_d, sigma_d, opt)
         sigma_skewed = apply_skew(
@@ -469,21 +475,30 @@ class MarketEngine:
         r_d: float,
         opt: str,
         ctx: PricingContext = None,
+        buy_or_sell: str = "buy",
     ) -> float:
-        """Ask price for one leg from DB (buy-to-close fill); falls back to synthetic."""
+        """Close-side mark for one leg from the DB.
+
+        ``buy_or_sell`` selects which side of the book to quote:
+          * "buy"  → ask  (cost to buy the leg — use when buying back a short or opening a long)
+          * "sell" → bid  (credit received when selling — use when selling a long or opening a short)
+
+        Falls back to the synthetic BS mid if no DB row is found.
+        """
         if ctx is None or ctx.eval_date is None or ctx.eval_date < self._DB_START or ctx.expiration is None:
             return self._synth.get_leg_mark(strike, S_d, dte_rem, vix_d, r_d, opt, ctx)
         date_str = ctx.eval_date.strftime("%Y-%m-%d")
         exp_str = ctx.expiration.strftime("%Y-%m-%d")
+        col = "bid" if buy_or_sell == "sell" else "ask"
         cur = self._con.execute(
-            """SELECT ask FROM options_data
+            f"""SELECT {col} FROM options_data
                WHERE date = ? AND expiration = ? AND type = ? AND strike = ?
                AND mark > 0 AND ask >= bid LIMIT 1""",
             (date_str, exp_str, opt, strike),
         )
         row = cur.fetchone()
-        if row and row["ask"] is not None and row["ask"] > 0:
-            return float(row["ask"])
+        if row and row[col] is not None and row[col] > 0:
+            return float(row[col])
         return self._synth.get_leg_mark(strike, S_d, dte_rem, vix_d, r_d, opt, ctx)
 
     def find_strike_at_delta(

@@ -78,6 +78,74 @@ def get_entry_dates(
     return result
 
 
+# ── Entry helper (short strangle + iron condor) ──────────────────────────
+
+def build_entry(
+    engine,
+    S: float,
+    T: float,
+    r: float,
+    vix: float,
+    entry_dte: int,
+    ctx: "PricingContext",
+    params: dict,
+) -> Optional[dict]:
+    """Price the entry legs and return Trade(**kwargs), or None on non-positive credit.
+
+    Short strangle: 2 legs (short put + short call at target_delta).
+    Iron condor: 4 legs (+ long put + long call at wing_delta) — defined risk.
+
+    Wing pricing note: ``find_strike_at_delta`` is used only to select the wing
+    strike. The entry mark is then fetched via ``get_leg_mark`` so that market
+    mode returns the ask (cost to buy) rather than the bid. Synthetic mode
+    returns the BS mid; the "close"-side fill adjustment then models buyer
+    slippage (pay ~5% above mid).
+    """
+    comm = params["commission_per_leg"]
+    put_k, call_k, put_mid, call_mid, used_db = engine.get_entry_marks(
+        S, T, r, vix, ctx=ctx
+    )
+    short_credit_ps = engine.apply_fill_adj(put_mid + call_mid, "open")
+
+    kw = dict(
+        put_strike=put_k,
+        call_strike=call_k,
+        put_mid_ps=put_mid,
+        call_mid_ps=call_mid,
+        used_market_data=used_db,
+    )
+
+    if params.get("strategy_mode", "short_strangle") == "iron_condor":
+        wing_delta = params.get("wing_delta", 0.05)
+        long_put_k, _ = engine.find_strike_at_delta(
+            S, T, r, vix, wing_delta, "put", ctx=ctx
+        )
+        long_call_k, _ = engine.find_strike_at_delta(
+            S, T, r, vix, wing_delta, "call", ctx=ctx
+        )
+        long_put_mid = engine.get_leg_mark(
+            long_put_k, S, entry_dte, vix, r, "put", ctx=ctx
+        )
+        long_call_mid = engine.get_leg_mark(
+            long_call_k, S, entry_dte, vix, r, "call", ctx=ctx
+        )
+        long_debit_ps = engine.apply_fill_adj(
+            long_put_mid + long_call_mid, "close"
+        )
+        net_credit = (short_credit_ps - long_debit_ps) * 100.0 - 4.0 * comm
+        kw["long_put_strike"] = long_put_k
+        kw["long_call_strike"] = long_call_k
+        kw["long_put_mid_ps"] = long_put_mid
+        kw["long_call_mid_ps"] = long_call_mid
+    else:
+        net_credit = short_credit_ps * 100.0 - 2.0 * comm
+
+    if net_credit <= 0.0:
+        return None
+    kw["net_credit"] = net_credit
+    return kw
+
+
 # ── Dataclasses ──────────────────────────────────────────────────────────
 
 @dataclass
@@ -139,6 +207,16 @@ class Trade:
     current_call_strike: Optional[float] = None
     # Baseline mid for profit-target after leg roll(s) (None = put_mid_ps + call_mid_ps)
     current_baseline_mid: Optional[float] = None
+    # Iron-condor wings — None for a plain short strangle.
+    # When populated, all four legs are priced and risk is defined.
+    long_put_strike: Optional[float] = None
+    long_call_strike: Optional[float] = None
+    long_put_mid_ps: Optional[float] = None
+    long_call_mid_ps: Optional[float] = None
+
+    @property
+    def is_iron_condor(self) -> bool:
+        return self.long_put_strike is not None
 
     @property
     def active_put_strike(self) -> float:
@@ -160,7 +238,10 @@ class Trade:
     def active_baseline_mid(self) -> float:
         if self.current_baseline_mid is not None:
             return self.current_baseline_mid
-        return self.put_mid_ps + self.call_mid_ps
+        base = self.put_mid_ps + self.call_mid_ps
+        if self.is_iron_condor:
+            base -= (self.long_put_mid_ps or 0.0) + (self.long_call_mid_ps or 0.0)
+        return base
 
 
 # ── Defensive leg roll ───────────────────────────────────────────────────
@@ -188,6 +269,11 @@ def attempt_defensive_leg_roll(
     recompute mid_d for this iteration). Returns False if no roll.
     """
     if not params.get("defensive_leg_roll_enabled", False):
+        return False
+    # Defensive leg rolls are not supported in iron-condor mode: rolling only the
+    # short leg without adjusting its matching wing creates a variable-width
+    # vertical whose risk characteristics differ from the original spread.
+    if trade.is_iron_condor:
         return False
     if len(trade.leg_rolls) >= params.get("max_leg_rolls_per_trade", 2):
         return False
@@ -392,9 +478,34 @@ def evaluate_trade_step(
         "call",
         ctx=ctx,
     )
-    mid_d = put_mid_d + call_mid_d
+    short_mid_d = put_mid_d + call_mid_d
 
-    close_cost = engine.apply_fill_adj(mid_d, "close") * 100.0 + 2.0 * comm
+    if trade.is_iron_condor:
+        # Long wings are SOLD to close → quote sell-side (bid in market mode;
+        # BS mid in synthetic mode, with sell-side fill adjustment applied below).
+        long_put_mid_d = engine.get_leg_mark(
+            trade.long_put_strike, S_d, dte_rem, vix_d, r_d, "put",
+            ctx=ctx, buy_or_sell="sell",
+        )
+        long_call_mid_d = engine.get_leg_mark(
+            trade.long_call_strike, S_d, dte_rem, vix_d, r_d, "call",
+            ctx=ctx, buy_or_sell="sell",
+        )
+        long_mid_d = long_put_mid_d + long_call_mid_d
+        mid_d = short_mid_d - long_mid_d
+        # Per-leg fill adjustment: shorts pay ask on buy-back (+c_adj),
+        # longs receive bid on sale (+o_adj, which is negative). Applying a
+        # single "close" adjustment to the net mid incorrectly pushed both
+        # directions the same way, under-stating the close cost in synthetic
+        # mode. Market mode apply_fill_adj is a no-op — bid/ask is already
+        # baked into the marks above.
+        close_cost = (
+            engine.apply_fill_adj(short_mid_d, "close")
+            - engine.apply_fill_adj(long_mid_d, "open")
+        ) * 100.0 + 4.0 * comm
+    else:
+        mid_d = short_mid_d
+        close_cost = engine.apply_fill_adj(mid_d, "close") * 100.0 + 2.0 * comm
     pnl = trade.net_credit - close_cost
     pnl_pct = pnl / trade.net_credit
 
@@ -407,7 +518,9 @@ def evaluate_trade_step(
     mid_pct = mid_d / entry_mid_ps
 
     # A. Optional Price Stop
-    if use_price_stop and pnl_pct <= -stop:
+    # Disabled in iron-condor mode — the long wings already cap max loss, so an
+    # extra price stop would only introduce slippage with no risk benefit.
+    if use_price_stop and not trade.is_iron_condor and pnl_pct <= -stop:
         exit_type = "STOP"
         entry_mid_total = trade.active_baseline_mid * 100.0
         eod_mid_dollar = mid_d * 100.0
@@ -510,24 +623,18 @@ def evaluate_trade_step(
             _roll_dte_max = params.get("roll_dte_max", 60)
             new_exp = get_monthly_expiration(eval_date, params.get("dte_min", 30), _roll_dte_max)
             if new_exp is not None:
-                close_cost_old = close_cost  # already: engine.apply_fill_adj(mid_d, "close") * 100.0 + 2.0 * comm
+                close_cost_old = close_cost
                 old_pnl = trade.net_credit - close_cost_old
                 T_new = (new_exp - eval_date).days / 365.0
                 roll_ctx = PricingContext(eval_date=eval_date, expiration=new_exp)
-                (new_put_k, new_call_k, new_put_mid, new_call_mid, _new_used_db) = (
-                    engine.get_entry_marks(
-                        S_d,
-                        T_new,
-                        r_d,
-                        vix_d,
-                        ctx=roll_ctx,
-                    )
+                new_entry_dte = (new_exp - eval_date).days
+                kw = build_entry(
+                    engine, S_d, T_new, r_d, vix_d, new_entry_dte, roll_ctx, params
                 )
-                new_net_credit = engine.apply_fill_adj(new_put_mid + new_call_mid, "open") * 100.0 - 2.0 * comm
 
-                roll_credit_val = new_net_credit - close_cost_old
+                roll_credit_val = (kw["net_credit"] - close_cost_old) if kw else 0.0
 
-                if roll_credit_val > 0 and new_net_credit > 0:
+                if kw is not None and roll_credit_val > 0:
                     trade.exit_date = eval_date
                     trade.exit_dte = dte_rem
                     trade.exit_type = "ROLLED"
@@ -539,16 +646,11 @@ def evaluate_trade_step(
                         trade_num=None,
                         entry_date=eval_date,
                         expiration=new_exp,
-                        entry_dte=(new_exp - eval_date).days,
-                        put_strike=new_put_k,
-                        call_strike=new_call_k,
-                        put_mid_ps=new_put_mid,
-                        call_mid_ps=new_call_mid,
-                        net_credit=new_net_credit,
+                        entry_dte=new_entry_dte,
                         entry_vix=vix_d,
-                        used_market_data=_new_used_db,
                         parent_trade_num=trade.trade_num,
                         roll_count=trade.roll_count + 1,
+                        **kw,
                     )
                     new_trade.max_vix = vix_d
                     new_trade.daily_marks = [(eval_date, 0.0)]
@@ -624,8 +726,15 @@ def evaluate_trade(
     intr = max(trade.active_put_strike - S_e, 0.0) + max(
         S_e - trade.active_call_strike, 0.0
     )
+    if trade.is_iron_condor:
+        intr -= max(trade.long_put_strike - S_e, 0.0) + max(
+            S_e - trade.long_call_strike, 0.0
+        )
+        n_comm = 4
+    else:
+        n_comm = 2
     comm = params["commission_per_leg"]
-    cc = engine.apply_fill_adj(intr, "close") * 100.0 + 2.0 * comm
+    cc = engine.apply_fill_adj(intr, "close") * 100.0 + n_comm * comm
     pnl = trade.net_credit - cc
     trade.exit_date = expiration
     trade.exit_dte = 0
@@ -703,12 +812,8 @@ def run_backtest(
             r = float(row.get("risk_free_rate", r_default))
 
             entry_ctx = PricingContext(eval_date=entry_date, expiration=expiration)
-            put_k, call_k, put_mid, cal_mid, _used_db = engine.get_entry_marks(
-                S, T, r, vix, ctx=entry_ctx
-            )
-
-            net_credit = engine.apply_fill_adj(put_mid + cal_mid, "open") * 100.0 - 2.0 * comm
-            if net_credit <= 0.0:
+            kw = build_entry(engine, S, T, r, vix, entry_dte, entry_ctx, params)
+            if kw is None:
                 continue
 
             trade_num += 1
@@ -717,13 +822,8 @@ def run_backtest(
                 entry_date=entry_date,
                 expiration=expiration,
                 entry_dte=entry_dte,
-                put_strike=put_k,
-                call_strike=call_k,
-                put_mid_ps=put_mid,
-                call_mid_ps=cal_mid,
-                net_credit=net_credit,
                 entry_vix=vix,
-                used_market_data=_used_db,
+                **kw,
             )
             trade.max_vix = vix  # initialised; updated daily in evaluate_trade
             trade.daily_marks = [(entry_date, 0.0)]  # entry day: MTM value = 0
