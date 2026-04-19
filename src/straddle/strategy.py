@@ -514,17 +514,21 @@ def evaluate_trade_step(
 
     # 3. Check Exits
     exit_type = None
-    entry_mid_ps = trade.active_baseline_mid
 
     # A. Optional Price Stop
     # Disabled in iron-condor mode — the long wings already cap max loss, so an
     # extra price stop would only introduce slippage with no risk benefit.
     if use_price_stop and not trade.is_iron_condor and pnl_pct <= -stop:
         exit_type = "STOP"
-        entry_mid_total = trade.active_baseline_mid * 100.0
-        eod_mid_dollar = mid_d * 100.0
-        mid_pnl_raw = entry_mid_total - eod_mid_dollar
-        stop_loss_dollar_mid = -stop * entry_mid_total
+
+        # Trigger level and EOD/gap references are all expressed in execution
+        # dollars (net_credit is a real fill; close_cost uses apply_fill_adj +
+        # commissions). The previous formulation mixed bid (entry mid × 100)
+        # with ask (EOD mid × 100), which in market mode systematically
+        # over-stated the loss by one bid-ask spread. Working in pnl dollars
+        # throughout is apples-to-apples in both modes.
+        trigger_pnl_dollar = -stop * trade.net_credit
+        eod_pnl_dollar = pnl
 
         prev_idx = data.index.get_loc(eval_date)
         spy_hi = float(row_d.get("spy_high", S_d))
@@ -559,51 +563,31 @@ def evaluate_trade_step(
             r_open,
             ctx=ctx,
         )
+        gap_close_cost = engine.apply_fill_adj(open_mid, "close") * 100.0 + 2.0 * comm
+        gap_pnl_dollar = trade.net_credit - gap_close_cost
 
-        open_mid_dollar = open_mid * 100.0
-        open_mid_pnl_raw = entry_mid_total - open_mid_dollar
-        open_pnl_pct_mid = open_mid_pnl_raw / entry_mid_total
-
-        if open_pnl_pct_mid <= -stop:
+        if gap_pnl_dollar <= trigger_pnl_dollar:
             overshoot_frac = 1.0
             regime = "GAP"
-            reference_loss = open_mid_pnl_raw
-            close_mid_for_slip = open_mid_dollar
-        elif daily_range_pct >= rng_violent:
-            overshoot_frac = ov_violent
-            regime = "VIOLENT"
-            reference_loss = mid_pnl_raw
-            close_mid_for_slip = eod_mid_dollar
-        elif daily_range_pct >= rng_orderly:
-            overshoot_frac = ov_normal
-            regime = "NORMAL"
-            reference_loss = mid_pnl_raw
-            close_mid_for_slip = eod_mid_dollar
+            fill_pnl = gap_pnl_dollar
         else:
-            overshoot_frac = ov_orderly
-            regime = "ORDERLY"
-            reference_loss = mid_pnl_raw
-            close_mid_for_slip = eod_mid_dollar
+            if daily_range_pct >= rng_violent:
+                overshoot_frac = ov_violent
+                regime = "VIOLENT"
+            elif daily_range_pct >= rng_orderly:
+                overshoot_frac = ov_normal
+                regime = "NORMAL"
+            else:
+                overshoot_frac = ov_orderly
+                regime = "ORDERLY"
+            fill_pnl = trigger_pnl_dollar + overshoot_frac * (
+                eod_pnl_dollar - trigger_pnl_dollar
+            )
 
-        fill_pnl_mid = stop_loss_dollar_mid + overshoot_frac * (
-            reference_loss - stop_loss_dollar_mid
-        )
-        
-        # Round-trip cost: (open_fill_adj + close_fill_adj) * marks + commissions
-        # We use apply_fill_adj to get the delta vs mid
-        open_slip = abs(engine.apply_fill_adj(entry_mid_ps, "open") - entry_mid_ps)
-        close_slip = abs(engine.apply_fill_adj(close_mid_for_slip/100.0, "close") - close_mid_for_slip/100.0)
-        
-        rt_cost = (
-            open_slip * 100.0
-            + close_slip * 100.0
-            + 4.0 * comm
-        )
-        pnl = fill_pnl_mid - rt_cost
+        pnl = fill_pnl
         pnl_pct = pnl / trade.net_credit
         trade.stop_regime = regime
         trade.overshoot_used = overshoot_frac
-        # Update close_cost based on the overshoot logic
         close_cost = trade.net_credit - pnl
 
     # B. Profit Target — "captured ≥ prof of net premium".
