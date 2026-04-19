@@ -342,11 +342,11 @@ class MarketEngine:
     def __init__(self, params: dict) -> None:
         import sqlite3 as _sqlite3
 
+        db_path = params.get("db_path", "data/Spy Options Database.db")
         # Validate date range early to avoid silent synthetic fallback
-        validate_market_mode_dates(params["start_date"], params["end_date"])
+        validate_market_mode_dates(params["start_date"], params["end_date"], db_path)
 
         self._synth = SyntheticEngine(params)
-        db_path = params.get("db_path", "data/Spy Options Database.db")
         self._con = _sqlite3.connect(db_path, check_same_thread=False)
         self._con.row_factory = _sqlite3.Row
         self.delta = params["target_delta"]

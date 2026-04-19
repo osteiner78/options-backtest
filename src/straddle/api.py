@@ -69,6 +69,8 @@ class BacktestRequest(BaseModel):
     max_bpr_allocation: Optional[float] = Field(default=None, description="Max fraction of capital used as BPR (e.g. 0.30)")
     cash_yield_annual: Optional[float] = Field(default=None, description="Annual yield on uninvested cash (e.g. 0.04)")
     cash_investment_mode: Optional[str] = Field(default=None, description="Cash investment: 'risk_free', 'spy', or 'blend'")
+    spy_allocation_pct: Optional[float] = Field(default=None, description="SPY fraction for 'blend' cash mode (0.0–1.0)")
+    entry_cooldown_days: Optional[int] = Field(default=None, description="Minimum trading days between new entries")
 
 
 class TradeSummary(BaseModel):
@@ -79,6 +81,9 @@ class TradeSummary(BaseModel):
     expiration: str
     put_strike: float
     call_strike: float
+    # Iron-condor wings — None for a short strangle
+    long_put_strike: Optional[float] = None
+    long_call_strike: Optional[float] = None
     net_credit: float
     pnl: Optional[float]
     pnl_pct: Optional[float]
@@ -132,6 +137,8 @@ def _serialize_trades(trades) -> List[TradeSummary]:
             expiration=t.expiration.strftime("%Y-%m-%d"),
             put_strike=t.put_strike,
             call_strike=t.call_strike,
+            long_put_strike=t.long_put_strike,
+            long_call_strike=t.long_call_strike,
             net_credit=t.net_credit,
             pnl=t.pnl,
             pnl_pct=t.pnl_pct,
@@ -159,11 +166,12 @@ def _build_metrics_response(metrics: dict, portfolio_metrics: bool = False) -> M
         spy_total_return=metrics.get("spy_total_return", 0),
         spy_sharpe=metrics.get("spy_sharpe", 0),
         exit_breakdown={
-            "PROFIT": metrics.get("n_p", 0),
-            "STOP":   metrics.get("n_s", 0),
-            "21DTE":  metrics.get("n_d", 0),
-            "EXPIRY": metrics.get("n_e", 0),
-            "ROLLED": metrics.get("n_r", 0),
+            "PROFIT":      metrics.get("n_p", 0),
+            "STOP":        metrics.get("n_s", 0),
+            "21DTE":       metrics.get("n_d", 0),
+            "EXPIRY":      metrics.get("n_e", 0),
+            "ROLLED":      metrics.get("n_r", 0),
+            "FORCE_CLOSE": metrics.get("n_f", 0),
         },
     )
     if portfolio_metrics:

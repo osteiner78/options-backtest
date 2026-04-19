@@ -130,10 +130,51 @@ def load_market_data(
 # ── Market-mode date guardrail ───────────────────────────────────────────
 
 _DB_FIRST = pd.Timestamp("2008-01-02")
-_DB_LAST = pd.Timestamp("2025-12-12")
+_DB_LAST_FALLBACK = pd.Timestamp("2025-12-12")
+_DB_LAST_CACHE: dict[str, pd.Timestamp] = {}
 
 
-def validate_market_mode_dates(start_date: str, end_date: str) -> None:
+def _db_coverage_end(db_path: Optional[str] = None) -> pd.Timestamp:
+    """Return the latest ``date`` present in the options DB.
+
+    Queries ``MAX(date) FROM options_data`` on first call per ``db_path`` and
+    caches the result. Falls back to the hardcoded sentinel if the DB file is
+    missing (e.g. running synthetic-only with no DB on disk) or the query
+    fails for any reason.
+    """
+    if db_path is None:
+        db_path = str(
+            Path(__file__).resolve().parent.parent.parent
+            / "data" / "Spy Options Database.db"
+        )
+    if db_path in _DB_LAST_CACHE:
+        return _DB_LAST_CACHE[db_path]
+
+    last = _DB_LAST_FALLBACK
+    try:
+        import sqlite3
+        if Path(db_path).exists():
+            con = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+            try:
+                cur = con.execute("SELECT MAX(date) FROM options_data")
+                row = cur.fetchone()
+            finally:
+                con.close()
+            if row and row[0]:
+                last = pd.Timestamp(row[0])
+    except Exception:
+        # Any DB error (corrupt, locked, schema mismatch) → fall back to hardcode
+        pass
+
+    _DB_LAST_CACHE[db_path] = last
+    return last
+
+
+def validate_market_mode_dates(
+    start_date: str,
+    end_date: str,
+    db_path: Optional[str] = None,
+) -> None:
     """Validate date range against DB coverage for market mode.
 
     Raises ValueError if start_date predates the DB (no data at all for that
@@ -144,6 +185,7 @@ def validate_market_mode_dates(start_date: str, end_date: str) -> None:
     """
     _start = pd.Timestamp(start_date)
     _end = pd.Timestamp(end_date)
+    db_last = _db_coverage_end(db_path)
 
     if _start < _DB_FIRST:
         raise ValueError(
@@ -152,9 +194,9 @@ def validate_market_mode_dates(start_date: str, end_date: str) -> None:
             f"{_DB_FIRST.date()}."
         )
 
-    if _end > _DB_LAST:
+    if _end > db_last:
         print(
             f"[MarketEngine] WARNING: end_date {_end.date()} is after DB coverage "
-            f"({_DB_LAST.date()}). Pricing will fall back to synthetic (Black-Scholes) "
-            f"for all dates beyond {_DB_LAST.date()}."
+            f"({db_last.date()}). Pricing will fall back to synthetic (Black-Scholes) "
+            f"for all dates beyond {db_last.date()}."
         )

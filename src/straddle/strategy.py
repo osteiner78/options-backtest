@@ -731,7 +731,7 @@ def evaluate_trade(
         if trade.entry_date >= force_close_at:
             trade.exit_date = force_close_at
             trade.exit_dte = (expiration - force_close_at).days
-            trade.exit_type = "EXPIRY"
+            trade.exit_type = "FORCE_CLOSE"
             trade.pnl = 0.0
             trade.pnl_pct = 0.0
             return trade, None
@@ -754,7 +754,7 @@ def evaluate_trade(
             # at mid using the marks already computed this step.
             trade.exit_date = eval_date
             trade.exit_dte = (expiration - eval_date).days
-            trade.exit_type = "EXPIRY"
+            trade.exit_type = "FORCE_CLOSE"
             trade.pnl = res.pnl
             trade.pnl_pct = res.pnl_pct
             return trade, None

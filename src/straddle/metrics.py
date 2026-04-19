@@ -9,6 +9,8 @@ from typing import Dict, List, Tuple
 import numpy as np
 import pandas as pd
 
+from straddle.params import RISK_FREE_RATE_DEFAULT
+
 
 # ── Internal Helpers ─────────────────────────────────────────────────────
 
@@ -63,6 +65,7 @@ def _compute_trade_stats(trades: List) -> Dict:
     n_d, wr_d, avg_d = _get_stats("21DTE")
     n_e, wr_e, avg_e = _get_stats("EXPIRY")
     n_r, wr_r, avg_r = _get_stats("ROLLED")
+    n_f, wr_f, avg_f = _get_stats("FORCE_CLOSE")
 
     return {
         "n": n,
@@ -73,6 +76,52 @@ def _compute_trade_stats(trades: List) -> Dict:
         "n_d": n_d, "wr_d": wr_d, "avg_d": avg_d,
         "n_e": n_e, "wr_e": wr_e, "avg_e": avg_e,
         "n_r": n_r, "wr_r": wr_r, "avg_r": avg_r,
+        "n_f": n_f, "wr_f": wr_f, "avg_f": avg_f,
+    }
+
+
+def _compute_chain_stats(trades: List) -> Dict:
+    """Chain-collapsed win/loss stats (roll chains treated as single positions).
+
+    A "chain" is a root trade plus all its ROLLED descendants, with the P&L
+    summed across the chain. This gives the strategic view — "how often does
+    a monthly entry, rolls included, end profitable?" — which is usually what
+    the user cares about more than per-leg win rate.
+    """
+    if not trades:
+        return {
+            "n_chains": 0,
+            "wr_chain": float("nan"),
+            "avg_chain": float("nan"),
+            "max_streak_chain": 0,
+        }
+
+    by_num = {t.trade_num: t for t in trades}
+    chain_pnls = []
+    for t in trades:
+        if t.parent_trade_num is not None:
+            continue
+        chain_pnl = t.pnl or 0.0
+        cur = t
+        while cur.child_trade_num is not None:
+            cur = by_num.get(cur.child_trade_num)
+            if not cur:
+                break
+            chain_pnl += (cur.pnl or 0.0)
+        chain_pnls.append(chain_pnl)
+
+    chain_pnls = np.array(chain_pnls)
+
+    streak = max_streak = 0
+    for cp in chain_pnls:
+        streak = streak + 1 if cp < 0 else 0
+        max_streak = max(max_streak, streak)
+
+    return {
+        "n_chains": len(chain_pnls),
+        "wr_chain": float((chain_pnls > 0).mean()) if len(chain_pnls) else float("nan"),
+        "avg_chain": float(chain_pnls.mean()) if len(chain_pnls) else float("nan"),
+        "max_streak_chain": max_streak,
     }
 
 
@@ -92,7 +141,7 @@ def _compute_equity_stats(equity_series: pd.Series, params: dict) -> Dict:
 
     # Sharpe from daily percentage returns (correct for a compounding account)
     daily_pct = equity_series.pct_change().dropna()
-    rf_daily = params.get("risk_free_rate", 0.045) / 252
+    rf_daily = params.get("risk_free_rate", RISK_FREE_RATE_DEFAULT) / 252
 
     if len(daily_pct) > 1 and daily_pct.std() > 0:
         sharpe = float((daily_pct.mean() - rf_daily) / daily_pct.std(ddof=1) * np.sqrt(252))
@@ -140,30 +189,7 @@ def compute_metrics(trades, equity_curve, params, data) -> dict:
     eq_stats = _compute_equity_stats(equity_curve, params)
     results.update(eq_stats)
 
-    # ── Chain-collapsed win/loss (root trades only) ───────────────────────
-    by_num = {t.trade_num: t for t in trades}
-    chain_pnls = []
-    for t in trades:
-        if t.parent_trade_num is not None:
-            continue
-        chain_pnl = t.pnl or 0.0
-        cur = t
-        while cur.child_trade_num is not None:
-            cur = by_num.get(cur.child_trade_num)
-            if not cur: break
-            chain_pnl += (cur.pnl or 0.0)
-        chain_pnls.append(chain_pnl)
-    
-    chain_pnls = np.array(chain_pnls)
-    results["n_chains"] = len(chain_pnls)
-    results["wr_chain"] = float((chain_pnls > 0).mean()) if len(chain_pnls) else float("nan")
-    results["avg_chain"] = float(chain_pnls.mean()) if len(chain_pnls) else float("nan")
-
-    streak_chain = max_streak_chain = 0
-    for cp in chain_pnls:
-        streak_chain = streak_chain + 1 if cp < 0 else 0
-        max_streak_chain = max(max_streak_chain, streak_chain)
-    results["max_streak_chain"] = max_streak_chain
+    results.update(_compute_chain_stats(trades))
 
     # Stop regime breakdown
     def _regime_stats(regime):
@@ -204,6 +230,7 @@ def compute_portfolio_metrics(
     
     # Include all trades so exit breakdown counts (including ROLLED) are correct.
     results.update(_compute_trade_stats(trades))
+    results.update(_compute_chain_stats(trades))
 
     # Portfolio-level specifics
     results["peak_positions"] = int(equity_df["open_positions"].max()) if "open_positions" in equity_df.columns else 0

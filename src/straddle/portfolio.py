@@ -455,6 +455,8 @@ def run_portfolio_backtest(
             portfolio.record_daily_state(eval_date, portfolio.total_unrealized_liability)
 
         # ── Force-close any positions still open at backtest end ────────────
+        # Label "FORCE_CLOSE" distinguishes end-of-backtest closures from
+        # trades that actually reached their natural expiration (EXPIRY).
         if sim_dates.size > 0:
             last_date = sim_dates[-1]
             for trade_num_open, pos in list(portfolio.open_positions.items()):
@@ -462,7 +464,7 @@ def run_portfolio_backtest(
                 res = evaluate_trade_step(t, last_date, data, engine, params)
                 t.exit_date = last_date
                 t.exit_dte = (t.expiration - last_date).days
-                t.exit_type = "EXPIRY"
+                t.exit_type = "FORCE_CLOSE"
                 t.pnl = res.pnl
                 t.pnl_pct = res.pnl_pct
                 portfolio.available_cash -= res.close_cost

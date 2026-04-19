@@ -751,6 +751,7 @@ if "last_result" in st.session_state:
             "21DTE": "#3498db",
             "EXPIRY": "#f39c12",
             "ROLLED": "#9b59b6",
+            "FORCE_CLOSE": "#7f8c8d",
             "UNKNOWN": "#95a5a6",
         }
 
@@ -926,7 +927,8 @@ if "last_result" in st.session_state:
         _mean_pct = float(np.mean(_pct_vals))
         _exit_hist_colors = {
             "PROFIT": "#2ecc71", "STOP": "#e74c3c", "21DTE": "#3498db",
-            "EXPIRY": "#f39c12", "ROLLED": "#9b59b6", "UNKNOWN": "#95a5a6",
+            "EXPIRY": "#f39c12", "ROLLED": "#9b59b6", "FORCE_CLOSE": "#7f8c8d",
+            "UNKNOWN": "#95a5a6",
         }
         fig_hist = go.Figure()
         for etype, color in _exit_hist_colors.items():
@@ -1070,12 +1072,13 @@ if "last_result" in st.session_state:
 
     # Color the Exit Type cell by exit type; all other cells inherit theme default
     exit_color_map = {
-        "PROFIT": "#2ecc71",
-        "STOP":   "#e74c3c",
-        "21DTE":  "#3498db",
-        "EXPIRY": "#e67e22",
-        "ROLLED": "#9b59b6",
-        "UNKNOWN": "#95a5a6",
+        "PROFIT":      "#2ecc71",
+        "STOP":        "#e74c3c",
+        "21DTE":       "#3498db",
+        "EXPIRY":      "#e67e22",
+        "ROLLED":      "#9b59b6",
+        "FORCE_CLOSE": "#7f8c8d",
+        "UNKNOWN":     "#95a5a6",
     }
 
     def color_exit_type(val):
