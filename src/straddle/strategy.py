@@ -515,7 +515,6 @@ def evaluate_trade_step(
     # 3. Check Exits
     exit_type = None
     entry_mid_ps = trade.active_baseline_mid
-    mid_pct = mid_d / entry_mid_ps
 
     # A. Optional Price Stop
     # Disabled in iron-condor mode — the long wings already cap max loss, so an
@@ -607,8 +606,13 @@ def evaluate_trade_step(
         # Update close_cost based on the overshoot logic
         close_cost = trade.net_credit - pnl
 
-    # B. Profit Target
-    elif mid_pct <= (1.0 - prof) and pnl > 0:
+    # B. Profit Target — "captured ≥ prof of net premium".
+    # Uses pnl_pct directly (apples-to-apples: both net_credit and close_cost
+    # are execution-side prices in market mode — bid at entry, ask at close).
+    # The prior `mid_d / entry_mid_ps` ratio mixed sides (bid at entry, ask at
+    # close) and was biased upward by the bid-ask spread, under-triggering the
+    # target in market mode.
+    elif pnl_pct >= prof:
         exit_type = "PROFIT"
 
     # C. 21-DTE / Roll
@@ -697,11 +701,18 @@ def evaluate_trade(
     data: pd.DataFrame,
     engine,
     params: dict,
+    end_date: Optional[pd.Timestamp] = None,
 ) -> tuple:
     """Run the daily eval loop for a single open trade.
 
     Iterates from the trade's entry_date to its expiration, checking exit
     conditions each day via ``evaluate_trade_step``.
+
+    If ``end_date`` is provided and the trade's expiration falls beyond it,
+    the trade is force-closed at mid on the last in-range trading day (marked
+    as ``EXPIRY``). This matches the portfolio-mode behavior and prevents a
+    silent truncation of the equity curve when the backtest window ends while
+    a chain is still open.
 
     Returns:
         (closed_trade, new_trade_or_None)
@@ -709,7 +720,25 @@ def evaluate_trade(
     """
     expiration = trade.expiration
 
+    force_close_at: Optional[pd.Timestamp] = None
+    if end_date is not None and expiration > end_date:
+        in_range = data.index[data.index <= end_date]
+        if len(in_range) == 0:
+            return trade, None
+        force_close_at = in_range[-1]
+        # Edge case: trade was rolled onto (or started after) the force-close
+        # day. No time remains for profit/stop/roll to fire, so close flat.
+        if trade.entry_date >= force_close_at:
+            trade.exit_date = force_close_at
+            trade.exit_dte = (expiration - force_close_at).days
+            trade.exit_type = "EXPIRY"
+            trade.pnl = 0.0
+            trade.pnl_pct = 0.0
+            return trade, None
+
     for eval_date in data.loc[trade.entry_date : expiration].index[1:]:
+        if force_close_at is not None and eval_date > force_close_at:
+            break
         res = evaluate_trade_step(trade, eval_date, data, engine, params)
 
         if res.exited:
@@ -719,6 +748,16 @@ def evaluate_trade(
             trade.pnl = res.pnl
             trade.pnl_pct = res.pnl_pct
             return trade, res.new_trade
+
+        if force_close_at is not None and eval_date == force_close_at:
+            # Reached the last in-range day with no organic exit — force-close
+            # at mid using the marks already computed this step.
+            trade.exit_date = eval_date
+            trade.exit_dte = (expiration - eval_date).days
+            trade.exit_type = "EXPIRY"
+            trade.pnl = res.pnl
+            trade.pnl_pct = res.pnl_pct
+            return trade, None
 
     # Fallback: loop ended without an intra-period exit — price at expiration
     last = data.index[data.index <= expiration][-1]
@@ -782,6 +821,8 @@ def run_backtest(
         vix_filter_enabled = params.get("vix_entry_filter_enabled", False)
         vix_entry_max = params.get("vix_entry_max", 30.0)
 
+        end_ts = pd.Timestamp(params["end_date"])
+
         trades: List[Trade] = []
         trade_num: int = 0
         skipped_entries: int = 0
@@ -831,7 +872,9 @@ def run_backtest(
             # Iterative roll continuation -- follows the chain until a terminal exit
             active = trade
             while active is not None:
-                closed, new_active = evaluate_trade(active, data, engine, params)
+                closed, new_active = evaluate_trade(
+                    active, data, engine, params, end_date=end_ts
+                )
                 trades.append(closed)
                 if new_active is not None:
                     trade_num += 1

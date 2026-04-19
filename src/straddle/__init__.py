@@ -29,7 +29,9 @@ from straddle.metrics import compute_metrics, compute_portfolio_metrics
 from straddle.plotting import plot_backtest, plot_engine_comparison
 from straddle.portfolio import (
     PortfolioManager,
+    calculate_margin,
     calculate_reg_t_strangle_margin,
+    calculate_iron_condor_margin,
     run_portfolio_backtest,
     plot_portfolio_backtest,
 )
@@ -50,7 +52,9 @@ __all__ = [
     "plot_engine_comparison",
     # Portfolio mode
     "PortfolioManager",
+    "calculate_margin",
     "calculate_reg_t_strangle_margin",
+    "calculate_iron_condor_margin",
     "run_portfolio_backtest",
     "plot_portfolio_backtest",
 ]
