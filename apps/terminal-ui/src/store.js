@@ -2,7 +2,8 @@
  * Minimal reactive store using Proxy.
  */
 
-const STORAGE_KEY = 'straddle_params';
+const PARAMS_KEY = 'straddle_params';
+const THEME_KEY  = 'straddle_theme';
 
 const defaultParams = {
   start_date: '2021-01-01',
@@ -21,11 +22,11 @@ const defaultParams = {
   cash_investment_mode: 'spy',
   vix_entry_filter_enabled: false,
   vix_entry_max: 35.0,
-  mode: 'market'
+  mode: 'market',
 };
 
 function loadParams() {
-  const saved = localStorage.getItem(STORAGE_KEY);
+  const saved = localStorage.getItem(PARAMS_KEY);
   if (saved) {
     try {
       return { ...defaultParams, ...JSON.parse(saved) };
@@ -36,14 +37,21 @@ function loadParams() {
   return defaultParams;
 }
 
+function loadTheme() {
+  return localStorage.getItem(THEME_KEY) || 'gruvbox';
+}
+
 const initialState = {
   params: loadParams(),
   results: null,
-  status: 'idle', // 'idle', 'running', 'completed', 'failed'
+  status: 'idle', // 'idle' | 'running' | 'completed' | 'failed'
+  error: null,
   lastRun: null,
   activeTab: 'equity',
   tradeLogOpen: false,
+  tradeLogFilter: 'ALL', // 'ALL' | 'PROFIT' | 'ROLLED' | '21DTE' | 'STOP' | 'EXPIRY'
   themePanelOpen: false,
+  theme: loadTheme(), // 'gruvbox' | 'tokyo'
 };
 
 const listeners = new Set();
@@ -51,12 +59,11 @@ const listeners = new Set();
 export const store = new Proxy(initialState, {
   set(target, key, value) {
     target[key] = value;
-    if (key === 'params') {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(value));
-    }
+    if (key === 'params') localStorage.setItem(PARAMS_KEY, JSON.stringify(value));
+    if (key === 'theme')  localStorage.setItem(THEME_KEY, value);
     listeners.forEach(l => l(target));
     return true;
-  }
+  },
 });
 
 export function subscribe(listener) {
@@ -75,15 +82,34 @@ export function setStatus(status) {
 export function setResults(results) {
   store.results = results;
   store.status = 'completed';
+  store.error = null;
   store.lastRun = new Date();
+}
+
+export function setError(error) {
+  store.error = error;
+  store.status = 'failed';
+}
+
+export function clearError() {
+  store.error = null;
+  if (store.status === 'failed') store.status = 'idle';
 }
 
 export function toggleTradeLog() {
   store.tradeLogOpen = !store.tradeLogOpen;
 }
 
+export function setTradeLogFilter(filter) {
+  store.tradeLogFilter = filter;
+}
+
 export function toggleThemePanel() {
   store.themePanelOpen = !store.themePanelOpen;
+}
+
+export function setTheme(theme) {
+  store.theme = theme;
 }
 
 export function setActiveTab(tab) {

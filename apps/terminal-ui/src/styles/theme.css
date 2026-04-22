@@ -1,5 +1,6 @@
-/* ── Gruvbox Dark tokens ── */
-:root {
+/* ── Gruvbox Dark tokens (default) ── */
+:root,
+body.theme-gruvbox {
   --bg0:  #1d2021;
   --bg1:  #282828;
   --bg2:  #32302f;
@@ -19,4 +20,27 @@
   --pos:  #b8bb26;
   --neg:  #fb4934;
   --orange: #d65d0e;
+}
+
+/* ── Tokyo Night tokens ── */
+body.theme-tokyo {
+  --bg0:  #1a1b26;
+  --bg1:  #16161e;
+  --bg2:  #1f2335;
+  --bg3:  #292e42;
+  --bg4:  #3b4261;
+  --fg0:  #c0caf5;
+  --fg1:  #a9b1d6;
+  --fg2:  #9aa5ce;
+  --fg3:  #787c99;
+  --fg4:  #565f89;
+  --dim:  #414868;
+  --a1:   #e0af68;  /* yellow/orange */
+  --a2:   #7aa2f7;  /* blue          */
+  --a3:   #bb9af7;  /* purple        */
+  --a4:   #9ece6a;  /* green         */
+  --red:  #f7768e;
+  --pos:  #9ece6a;
+  --neg:  #f7768e;
+  --orange: #ff9e64;
 }

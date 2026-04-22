@@ -1,4 +1,4 @@
-import { store, toggleTradeLog } from '../../store.js';
+import { store, toggleTradeLog, setTradeLogFilter } from '../../store.js';
 import { formatPnl, formatPct, formatNum } from '../../utils/format.js';
 
 const EXIT_COLORS = {
@@ -6,16 +6,28 @@ const EXIT_COLORS = {
   STOP: 'c-neg', EXPIRY: 'c-amb', FORCE_CLOSE: 'c-dim',
 };
 
+const FILTERS = ['ALL', 'PROFIT', 'ROLLED', '21DTE', 'STOP', 'EXPIRY'];
+
+function filterTrades(trades, filter) {
+  if (filter === 'ALL') return trades;
+  return trades.filter(t => t.exit_type === filter);
+}
+
 export function renderTradeLog() {
-  const { results, tradeLogOpen } = store;
-  const trades = results ? results.trades : [];
+  const { results, tradeLogOpen, tradeLogFilter } = store;
+  const allTrades = results ? results.trades : [];
+  const trades = filterTrades(allTrades, tradeLogFilter);
+
+  const chips = FILTERS.map(f => `
+    <span class="tl-filter ${f === tradeLogFilter ? 'active' : ''}" data-filter="${f}">${f}</span>
+  `).join('');
 
   return `
     <div class="trade-log-overlay ${tradeLogOpen ? 'open' : ''}" id="trade-log">
       <div class="tl-header">
         <span class="tl-title">Trade Log</span>
-        <span class="tl-filter active">ALL</span>
-        <span style="font-size:9px;color:var(--dim);margin-left:4px;">${trades.length} trades shown</span>
+        ${chips}
+        <span style="font-size:9px;color:var(--dim);margin-left:4px;">${trades.length} of ${allTrades.length} trades</span>
         <span class="tl-close" id="btn-tl-close">▼ CLOSE</span>
       </div>
       <div class="tl-body">
@@ -54,6 +66,13 @@ export function initTradeLog() {
   if (bound) return;
   bound = true;
   document.addEventListener('click', (e) => {
-    if (e.target.id === 'btn-tl-close') toggleTradeLog();
+    if (e.target.id === 'btn-tl-close') {
+      toggleTradeLog();
+      return;
+    }
+    const filterEl = e.target.closest('#trade-log .tl-filter');
+    if (filterEl && filterEl.dataset.filter) {
+      setTradeLogFilter(filterEl.dataset.filter);
+    }
   });
 }
