@@ -77,5 +77,5 @@ export function coerceParamValue(rawString, originalValue) {
     if (['false', 'off', '0', 'no'].includes(v)) return false;
     return originalValue;
   }
-  return trimmed;
+  return trimmed.toLowerCase();
 }

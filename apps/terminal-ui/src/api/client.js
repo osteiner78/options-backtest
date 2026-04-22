@@ -16,11 +16,24 @@ export async function fetchConfig() {
   return response.json();
 }
 
+function normalizeParams(params) {
+  const p = { ...params };
+  // API expects 'pricing_mode', frontend store uses 'mode'
+  if ('mode' in p) { p.pricing_mode = String(p.mode).toLowerCase(); delete p.mode; }
+  // Lowercase all known enum string fields to prevent pattern mismatch from
+  // user-edited values (sidebar transforms show UPPERCASE but stores raw)
+  const enumFields = ['pricing_mode', 'cash_investment_mode', 'portfolio_mode', 'strategy_mode'];
+  for (const f of enumFields) {
+    if (typeof p[f] === 'string') p[f] = p[f].toLowerCase();
+  }
+  return p;
+}
+
 export async function triggerBacktest(params) {
   const response = await fetch(`${BASE_URL}/backtest`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(params),
+    body: JSON.stringify(normalizeParams(params)),
   });
   if (!response.ok) {
     const err = await response.json().catch(() => ({}));

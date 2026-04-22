@@ -25,11 +25,18 @@ const defaultParams = {
   mode: 'market',
 };
 
+const ENUM_FIELDS = ['mode', 'cash_investment_mode', 'portfolio_mode', 'strategy_mode'];
+
 function loadParams() {
   const saved = localStorage.getItem(PARAMS_KEY);
   if (saved) {
     try {
-      return { ...defaultParams, ...JSON.parse(saved) };
+      const stored = JSON.parse(saved);
+      // Lowercase enum strings in case user typed uppercase values via sidebar edit
+      for (const f of ENUM_FIELDS) {
+        if (typeof stored[f] === 'string') stored[f] = stored[f].toLowerCase();
+      }
+      return { ...defaultParams, ...stored };
     } catch (e) {
       console.error('Failed to parse saved params', e);
     }
