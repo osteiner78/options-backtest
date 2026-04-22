@@ -1,0 +1,22 @@
+/* ── Gruvbox Dark tokens ── */
+:root {
+  --bg0:  #1d2021;
+  --bg1:  #282828;
+  --bg2:  #32302f;
+  --bg3:  #3c3836;
+  --bg4:  #504945;
+  --fg0:  #fbf1c7;
+  --fg1:  #ebdbb2;
+  --fg2:  #d5c4a1;
+  --fg3:  #bdae93;
+  --fg4:  #a89984;
+  --dim:  #665c54;
+  --a1:   #d79921;  /* yellow  */
+  --a2:   #458588;  /* teal    */
+  --a3:   #b16286;  /* purple  */
+  --a4:   #98971a;  /* green   */
+  --red:  #cc241d;
+  --pos:  #b8bb26;
+  --neg:  #fb4934;
+  --orange: #d65d0e;
+}
