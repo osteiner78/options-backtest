@@ -56,13 +56,13 @@ export function renderPerformanceBar() {
             <td class="r">--</td><td class="r">--</td><td class="r">--</td><td class="r">--</td><td class="r">--</td><td class="r">--</td><td class="r">--</td>
           </tr>
           <tr class="pt-spy">
-            <td class="ptl c-blue fw6" style="font-size:12.5px;">SPY B&amp;H</td>
-            <td class="r c-blue fw6" style="font-size:12.5px;">${formatSignedPct(metrics.spy_total_return)}</td>
-            <td class="r c-blue fw6" style="font-size:12.5px;">${formatPct(metrics.spy_annualized_return)}</td>
-            <td class="r c-blue fw6" style="font-size:12.5px;">${formatNum(metrics.spy_sharpe)}</td>
-            <td class="r c-neg fw6" style="font-size:12.5px;">${formatPct(metrics.spy_max_drawdown)}</td>
-            <td class="r c-blue fw6" style="font-size:12.5px;">${formatNum(metrics.spy_calmar)}</td>
-            <td class="r c-blue fw6" style="font-size:12.5px;">${formatCurrency(metrics.initial_balance * (1 + metrics.spy_total_return))}</td>
+            <td class="ptl c-blue fw6">SPY B&amp;H</td>
+            <td class="r c-blue fw6">${formatSignedPct(metrics.spy_total_return)}</td>
+            <td class="r c-blue fw6">${formatPct(metrics.spy_annualized_return)}</td>
+            <td class="r c-blue fw6">${formatNum(metrics.spy_sharpe)}</td>
+            <td class="r c-neg fw6">${formatPct(metrics.spy_max_drawdown)}</td>
+            <td class="r c-blue fw6">${formatNum(metrics.spy_calmar)}</td>
+            <td class="r c-blue fw6">${formatCurrency(metrics.initial_balance * (1 + metrics.spy_total_return))}</td>
             <td class="r c-dim">--</td><td class="r c-dim">--</td><td class="r c-dim">--</td>
           </tr>
         </tbody>

@@ -1,5 +1,5 @@
 import { store, toggleTradeLog } from '../../store.js';
-import { getVar, rnd } from '../../utils/chartHelpers.js';
+import { getVar } from '../../utils/chartHelpers.js';
 
 export function renderPnLStrip() {
   const { tradeLogOpen } = store;
@@ -37,24 +37,21 @@ export function drawPnL() {
   const a1  = getVar('--a1') || '#d79921';
   const bg3 = getVar('--bg3') || '#3c3836';
 
-  const exits = ['PROFIT','PROFIT','PROFIT','PROFIT','PROFIT','ROLLED','ROLLED','21DTE','STOP','EXPIRY'];
   const colors = { PROFIT: pos, ROLLED: a3, '21DTE': a2, STOP: neg, EXPIRY: a1 };
 
   const N = 60;
   const pnls = [], types = [];
 
-  if (results) {
-    results.trades.slice(-N).forEach(t => {
-      pnls.push(t.pnl || 0);
-      types.push(t.exit_type || 'PROFIT');
-    });
-  } else {
-    for (let i = 0; i < N; i++) {
-      const t = exits[Math.floor(Math.random() * exits.length)];
-      types.push(t);
-      pnls.push(t === 'STOP' ? -rnd(500, 3000) : rnd(50, 800));
-    }
+  if (!results) {
+    // No data — render empty baseline
+    svg.innerHTML = `<line x1="0" y1="${h * 0.52}" x2="${svg.clientWidth}" y2="${h * 0.52}" stroke="${bg3}" stroke-width="0.5"/>`;
+    return;
   }
+
+  results.trades.slice(-N).forEach(t => {
+    pnls.push(t.pnl || 0);
+    types.push(t.exit_type || 'PROFIT');
+  });
 
   const maxAbs = Math.max(...pnls.map(Math.abs), 1);
   const mid = h * 0.52;

@@ -10,6 +10,18 @@ function renderSectionBody(section, params) {
       const displayValue = p.format
         ? p.format(val)
         : (p.transform ? p.transform(val) : val);
+
+      if (p.options) {
+        // Clickable cycling value — no free-text edit
+        const opts = JSON.stringify(p.options).replace(/'/g, '&#39;');
+        return `
+          <div class="pr">
+            <span class="pl">${p.label}</span>
+            <span class="pv-cycle ${p.color || ''}" data-key="${p.key}" data-options='${opts}'>${displayValue}</span>
+          </div>
+        `;
+      }
+
       return `
         <div class="pr">
           <span class="pl">${p.label}</span>
@@ -40,12 +52,22 @@ export function initSidebar() {
   if (bound) return;
   bound = true;
 
-  // Toggle collapsible sections anywhere in the sidebar.
   bindCollapsibleSections(document);
 
-  // Inline-edit any pv[data-key] inside the sidebar.
   bindEditableValues(document, (key, raw) => {
     const original = store.params[key];
     updateParams({ [key]: coerceParamValue(raw, original) });
+  });
+
+  // Cycle through fixed-option params on click
+  document.addEventListener('click', (e) => {
+    const el = e.target.closest('#sidebar-root .pv-cycle[data-key]');
+    if (!el) return;
+    const key = el.dataset.key;
+    const options = JSON.parse(el.dataset.options);
+    const current = store.params[key];
+    let idx = options.findIndex(o => String(o) === String(current));
+    if (idx === -1) idx = 0;
+    updateParams({ [key]: options[(idx + 1) % options.length] });
   });
 }

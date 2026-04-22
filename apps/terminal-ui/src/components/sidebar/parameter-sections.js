@@ -24,7 +24,7 @@ export const parameterSections = [
     id: 'STRATEGY',
     title: 'STRATEGY',
     params: [
-      { key: 'mode',              label: 'mode',       color: 'blue',  transform: v => String(v).toUpperCase() },
+      { key: 'mode',              label: 'mode',       color: 'blue',  transform: v => String(v).toUpperCase(), options: ['market', 'synthetic'] },
       { key: 'target_delta',      label: 'target Δ' },
       { key: 'dte_min',           label: 'DTE min' },
       { key: 'dte_max',           label: 'DTE max' },
@@ -38,7 +38,7 @@ export const parameterSections = [
     params: [
       { key: 'max_bpr_allocation',   label: 'max BPR',   format: v => (v * 100) + '%' },
       { key: 'entry_cooldown_days',  label: 'cooldown',  format: v => v + ' days' },
-      { key: 'cash_investment_mode', label: 'cash mode', color: 'amber', transform: v => String(v).toUpperCase() },
+      { key: 'cash_investment_mode', label: 'cash mode', color: 'amber', transform: v => String(v).toUpperCase(), options: ['spy', 'risk_free', 'blend'] },
     ],
   },
   {
@@ -46,7 +46,7 @@ export const parameterSections = [
     title: 'ROLL MGMT',
     params: [
       { key: 'manage_at_dte',   label: 'manage@DTE' },
-      { key: 'roll_for_credit', label: 'roll credit', color: 'green', transform: v => v ? 'ON' : 'OFF' },
+      { key: 'roll_for_credit', label: 'roll credit', color: 'green', transform: v => v ? 'ON' : 'OFF', options: [true, false] },
       { key: 'max_rolls',       label: 'max rolls' },
     ],
   },
@@ -54,7 +54,7 @@ export const parameterSections = [
     id: 'VIX_FILTER',
     title: 'VIX FILTER',
     params: [
-      { key: 'vix_entry_filter_enabled', label: 'enabled', color: 'dim', transform: v => v ? 'ON' : 'OFF' },
+      { key: 'vix_entry_filter_enabled', label: 'enabled', color: 'dim', transform: v => v ? 'ON' : 'OFF', options: [true, false] },
       { key: 'vix_entry_max',            label: 'max VIX' },
     ],
   },

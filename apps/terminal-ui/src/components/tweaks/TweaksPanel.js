@@ -1,9 +1,16 @@
 import { store, setTheme, toggleThemePanel } from '../../store.js';
 
 const THEMES = [
-  { id: 'gruvbox', label: 'Gruvbox Dark' },
-  { id: 'tokyo',   label: 'Tokyo Night' },
+  { id: 'gruvbox',    label: 'Gruvbox Dark' },
+  { id: 'tokyo',      label: 'Tokyo Night' },
+  { id: 'solarized',  label: 'Solarized Dark' },
+  { id: 'onedark',    label: 'One Dark' },
+  { id: 'nord',       label: 'Nord' },
+  { id: 'catppuccin', label: 'Catppuccin Macchiato' },
+  { id: 'bloomberg',  label: 'Bloomberg Terminal' },
 ];
+
+const ALL_THEME_CLASSES = THEMES.map(t => `theme-${t.id}`);
 
 export function renderTweaksPanel() {
   const { themePanelOpen, theme } = store;
@@ -24,8 +31,6 @@ export function renderTweaksPanel() {
       <div class="tw-theme-list">
         ${themeOptions}
       </div>
-      <div class="tw-section">Typography</div>
-      <div class="tw-row"><span class="tw-label">Font</span><span class="tw-val">IBM Plex Mono</span></div>
       <div class="tw-section">Architecture</div>
       <div class="tw-row"><span class="tw-label">Renderer</span><span class="tw-val">vanilla + uPlot</span></div>
       <div class="tw-row"><span class="tw-label">State</span><span class="tw-val">Proxy store</span></div>
@@ -33,8 +38,8 @@ export function renderTweaksPanel() {
   `;
 }
 
-function applyTheme(theme) {
-  document.body.classList.remove('theme-gruvbox', 'theme-tokyo');
+export function applyTheme(theme) {
+  document.body.classList.remove(...ALL_THEME_CLASSES);
   document.body.classList.add(`theme-${theme}`);
 }
 
