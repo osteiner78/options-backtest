@@ -164,6 +164,86 @@ def _compute_equity_stats(equity_series: pd.Series, params: dict) -> Dict:
     }
 
 
+def _compute_exit_stats(trades: List) -> List[Dict]:
+    """Per-exit-type breakdown: count, pct of total, win%, avg P&L, total P&L.
+
+    Returned as a list (not dict) so the frontend renders in a stable order.
+    TOTAL row is appended last.
+    """
+    if not trades:
+        return []
+
+    exit_types = ["PROFIT", "ROLLED", "21DTE", "STOP", "EXPIRY", "FORCE_CLOSE"]
+    total_n = len(trades)
+    rows: List[Dict] = []
+
+    for xt in exit_types:
+        ts = [t for t in trades if t.exit_type == xt]
+        pnls = np.array([t.pnl for t in ts if t.pnl is not None])
+        n = len(ts)
+        rows.append({
+            "type": xt,
+            "count": n,
+            "pct": float(n / total_n) if total_n else 0.0,
+            "win_pct": float((pnls > 0).mean()) if len(pnls) else None,
+            "avg_pnl": float(pnls.mean()) if len(pnls) else None,
+            "total_pnl": float(pnls.sum()) if len(pnls) else 0.0,
+        })
+
+    all_pnls = np.array([t.pnl for t in trades if t.pnl is not None])
+    rows.append({
+        "type": "TOTAL",
+        "count": total_n,
+        "pct": 1.0,
+        "win_pct": float((all_pnls > 0).mean()) if len(all_pnls) else None,
+        "avg_pnl": float(all_pnls.mean()) if len(all_pnls) else None,
+        "total_pnl": float(all_pnls.sum()) if len(all_pnls) else 0.0,
+    })
+    return rows
+
+
+def _compute_vix_regime_stats(trades: List) -> List[Dict]:
+    """VIX-regime breakdown: count, win%, avg P&L, total P&L per bucket.
+
+    Buckets match the frontend labels: LOW 0–15, NORMAL 15–25, ELEVATED 25–35,
+    HIGH >35. Classified by the trade's entry_vix.
+    """
+    if not trades:
+        return []
+
+    regimes = [
+        ("LOW",      0.0,   15.0,  "0-15"),
+        ("NORMAL",   15.0,  25.0,  "15-25"),
+        ("ELEVATED", 25.0,  35.0,  "25-35"),
+        ("HIGH",     35.0,  float("inf"), ">35"),
+    ]
+    rows: List[Dict] = []
+
+    for name, lo, hi, label in regimes:
+        ts = [t for t in trades if lo <= t.entry_vix < hi]
+        pnls = np.array([t.pnl for t in ts if t.pnl is not None])
+        n = len(ts)
+        rows.append({
+            "regime": name,
+            "range": label,
+            "count": n,
+            "win_pct": float((pnls > 0).mean()) if len(pnls) else None,
+            "avg_pnl": float(pnls.mean()) if len(pnls) else None,
+            "total_pnl": float(pnls.sum()) if len(pnls) else 0.0,
+        })
+
+    all_pnls = np.array([t.pnl for t in trades if t.pnl is not None])
+    rows.append({
+        "regime": "TOTAL",
+        "range": "",
+        "count": len(trades),
+        "win_pct": float((all_pnls > 0).mean()) if len(all_pnls) else None,
+        "avg_pnl": float(all_pnls.mean()) if len(all_pnls) else None,
+        "total_pnl": float(all_pnls.sum()) if len(all_pnls) else 0.0,
+    })
+    return rows
+
+
 # ── Public API ───────────────────────────────────────────────────────────
 
 def compute_metrics(trades, equity_curve, params, data) -> dict:
@@ -210,6 +290,10 @@ def compute_metrics(trades, equity_curve, params, data) -> dict:
     results["avg_lr_per_trade"] = float(len(all_lr_events) / len(trades)) if trades else 0.0
     results["lr_total_credit"] = float(sum(ev.net_credit_dollar for ev in all_lr_events))
 
+    # Structured stats for API consumers
+    results["exit_stats"] = _compute_exit_stats(trades)
+    results["vix_regime_stats"] = _compute_vix_regime_stats(trades)
+
     # Benchmark
     results.update(_compute_benchmark_stats(data, params))
     return results
@@ -247,6 +331,10 @@ def compute_portfolio_metrics(
 
     realized_pnl = sum(t.pnl for t in trades if t.pnl is not None)
     results["cash_yield_earned"] = results["final"] - results["init"] - realized_pnl
+
+    # Structured stats for API consumers
+    results["exit_stats"] = _compute_exit_stats(trades)
+    results["vix_regime_stats"] = _compute_vix_regime_stats(trades)
 
     # Benchmark
     results.update(_compute_benchmark_stats(data, params))

@@ -345,6 +345,17 @@ table.tl-table tbody tr { border-bottom: 1px solid var(--bg3); }
 table.tl-table tbody tr:hover { background: var(--bg2); }
 table.tl-table tbody td { padding: 2px 6px; color: var(--fg3); white-space: nowrap; }
 table.tl-table tbody td.r { text-align: right; }
+.tl-tag {
+  display: inline-block;
+  font-size: 8px;
+  font-weight: 700;
+  padding: 0 4px;
+  margin-left: 2px;
+  border: 1px solid currentColor;
+  border-radius: 2px;
+  vertical-align: middle;
+  line-height: 1.4;
+}
 
 /* ──────────────── Tweaks panel ──────────────── */
 .tw-head {

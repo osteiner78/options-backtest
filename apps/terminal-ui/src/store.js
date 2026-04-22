@@ -43,6 +43,7 @@ function loadTheme() {
 
 const initialState = {
   params: loadParams(),
+  config: null, // { defaults, ranges, enums, capabilities } — fetched from /config
   results: null,
   status: 'idle', // 'idle' | 'running' | 'completed' | 'failed'
   error: null,
@@ -114,4 +115,8 @@ export function setTheme(theme) {
 
 export function setActiveTab(tab) {
   store.activeTab = tab;
+}
+
+export function setConfig(config) {
+  store.config = config;
 }

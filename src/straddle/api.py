@@ -1,87 +1,63 @@
 """FastAPI backend for the SPY short strangle backtest.
-
 Exposes a REST API for running backtests and retrieving results.
-
-Usage:
-    pip install -e ".[api]"
-    uvicorn straddle.api:app --reload
 """
-
-import json
 import logging
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 from uuid import uuid4
-
+import pandas as pd
+import numpy as np
 from fastapi import FastAPI, HTTPException, BackgroundTasks
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
+from straddle import (PARAMS, compute_metrics, compute_portfolio_metrics, load_market_data, make_engine, run_backtest, run_portfolio_backtest)
+from straddle.data import _DB_FIRST, _db_coverage_end
 
-from straddle import (
-    PARAMS,
-    compute_metrics,
-    compute_portfolio_metrics,
-    load_market_data,
-    make_engine,
-    run_backtest,
-    run_portfolio_backtest,
-)
-
-# ── Logging Setup ────────────────────────────────────────────────────────
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-app = FastAPI(
-    title="SPY Short Strangle Backtest API",
-    description="REST API for running SPY short strangle backtests",
-    version="0.1.0",
-)
-
-# In-memory result store (In a production app, use Redis/Postgres)
+app = FastAPI(title="SPY Short Strangle Backtest API", version="0.1.4")
+app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
 _results: Dict[str, dict] = {}
 
-
-# ── Pydantic Models ──────────────────────────────────────────────────────
-
 class BacktestRequest(BaseModel):
-    """Optional parameter overrides for a backtest run."""
-    start_date: Optional[str] = Field(default=None, description="Start date (YYYY-MM-DD)")
-    end_date: Optional[str] = Field(default=None, description="End date (YYYY-MM-DD)")
-    mode: Optional[str] = Field(default=None, description="Pricing mode: 'synthetic' or 'market'")
-    target_delta: Optional[float] = Field(default=None, description="Strike selection delta (e.g. 0.16)")
-    dte_min: Optional[int] = Field(default=None, description="Minimum DTE")
-    dte_max: Optional[int] = Field(default=None, description="Maximum DTE")
-    profit_target_pct: Optional[float] = Field(default=None, description="Profit target as fraction of premium")
-    stop_loss_pct: Optional[float] = Field(default=None, description="Stop loss as fraction of premium")
-    use_price_stop: Optional[bool] = Field(default=None, description="Enable price-based stop loss")
-    initial_balance: Optional[float] = Field(default=None, description="Starting account balance")
-    single_position: Optional[bool] = Field(default=None, description="Skip new entries while position is open")
-    vix_entry_filter_enabled: Optional[bool] = Field(default=None, description="Enable VIX entry filter")
-    vix_entry_max: Optional[float] = Field(default=None, description="Max VIX for entry")
-    defensive_leg_roll_enabled: Optional[bool] = Field(default=None, description="Enable defensive leg roll")
-    roll_for_credit: Optional[bool] = Field(default=None, description="Roll at 21 DTE for credit")
-    manage_at_dte: Optional[int] = Field(default=None, description="DTE threshold for management")
-    max_rolls: Optional[int] = Field(default=None, description="Max consecutive rolls")
-    # Strategy variant
-    strategy_mode: Optional[str] = Field(default=None, description="Strategy: 'short_strangle' or 'iron_condor'")
-    wing_delta: Optional[float] = Field(default=None, description="Long-leg delta for iron-condor wings (e.g. 0.05)")
-    # Portfolio mode
-    portfolio_mode: Optional[bool] = Field(default=None, description="Enable multi-position portfolio mode")
-    max_bpr_allocation: Optional[float] = Field(default=None, description="Max fraction of capital used as BPR (e.g. 0.30)")
-    cash_yield_annual: Optional[float] = Field(default=None, description="Annual yield on uninvested cash (e.g. 0.04)")
-    cash_investment_mode: Optional[str] = Field(default=None, description="Cash investment: 'risk_free', 'spy', or 'blend'")
-    spy_allocation_pct: Optional[float] = Field(default=None, description="SPY fraction for 'blend' cash mode (0.0–1.0)")
-    entry_cooldown_days: Optional[int] = Field(default=None, description="Minimum trading days between new entries")
-
+    """Per-field validators return 422 with structured field errors on bad input."""
+    start_date: Optional[str] = Field(default=None, pattern=r"^\d{4}-\d{2}-\d{2}$")
+    end_date: Optional[str] = Field(default=None, pattern=r"^\d{4}-\d{2}-\d{2}$")
+    initial_balance: Optional[float] = Field(default=None, gt=0)
+    strategy_mode: Optional[str] = Field(default=None, pattern=r"^(short_strangle|iron_condor)$")
+    wing_delta: Optional[float] = Field(default=None, ge=0.01, le=0.30)
+    target_delta: Optional[float] = Field(default=None, ge=0.05, le=0.45)
+    dte_min: Optional[int] = Field(default=None, ge=0, le=365)
+    dte_max: Optional[int] = Field(default=None, ge=0, le=365)
+    profit_target_pct: Optional[float] = Field(default=None, ge=0.01, le=1.0)
+    stop_loss_pct: Optional[float] = Field(default=None, ge=0.1, le=10.0)
+    single_position: Optional[bool] = None
+    portfolio_mode: Optional[str] = Field(default=None, pattern=r"^(laddering|single)$")
+    max_bpr_allocation: Optional[float] = Field(default=None, gt=0, le=1.0)
+    entry_cooldown_days: Optional[int] = Field(default=None, ge=0, le=30)
+    cash_investment_mode: Optional[str] = Field(default=None, pattern=r"^(risk_free|spy|blend)$")
+    risk_free_rate: Optional[float] = Field(default=None, ge=0, le=0.2)
+    manage_at_dte: Optional[int] = Field(default=None, ge=0, le=60)
+    roll_for_credit: Optional[bool] = None
+    max_rolls: Optional[int] = Field(default=None, ge=0, le=10)
+    vix_entry_filter_enabled: Optional[bool] = None
+    vix_entry_max: Optional[float] = Field(default=None, ge=5, le=100)
+    defensive_enabled: Optional[bool] = None
+    defensive_trigger_delta: Optional[float] = Field(default=None, ge=0.1, le=0.5)
+    defensive_target_delta: Optional[float] = Field(default=None, ge=0.05, le=0.3)
+    pricing_mode: Optional[str] = Field(default=None, pattern=r"^(synthetic|market)$")
+    pricing_risk_free: Optional[float] = Field(default=None, ge=0, le=0.2)
+    put_slope: Optional[float] = Field(default=None, ge=0, le=2.0)
+    call_slope: Optional[float] = Field(default=None, ge=0, le=2.0)
 
 class TradeSummary(BaseModel):
-    """Simplified trade representation for API responses."""
     trade_num: int
     entry_date: str
     exit_date: Optional[str]
     expiration: str
     put_strike: float
     call_strike: float
-    # Iron-condor wings — None for a short strangle
     long_put_strike: Optional[float] = None
     long_call_strike: Optional[float] = None
     net_credit: float
@@ -89,217 +65,203 @@ class TradeSummary(BaseModel):
     pnl_pct: Optional[float]
     exit_type: Optional[str]
     entry_vix: float
+    roll_count: int = 0
+    parent_trade_num: Optional[int] = None
+    n_leg_rolls: int = 0
+    used_market_data: bool = False
 
+
+class ExitStatRow(BaseModel):
+    type: str
+    count: int
+    pct: float
+    win_pct: Optional[float] = None
+    avg_pnl: Optional[float] = None
+    total_pnl: float
+
+
+class VixRegimeStatRow(BaseModel):
+    regime: str
+    range: str
+    count: int
+    win_pct: Optional[float] = None
+    avg_pnl: Optional[float] = None
+    total_pnl: float
 
 class MetricsResponse(BaseModel):
-    """Backtest metrics summary."""
-    n_trades: int
-    initial_balance: float
-    final_balance: float
-    total_return: float
-    annualized_return: float
-    sharpe: float
-    max_drawdown: float
-    calmar: float
-    win_rate: float
-    win_rate_chain: float
-    avg_pnl: float
-    max_consecutive_losses: int
-    spy_total_return: float
-    spy_sharpe: float
-    exit_breakdown: Dict[str, int]
-    # Portfolio-mode only (omitted for single-position runs)
-    peak_positions: Optional[int] = None
-    avg_positions: Optional[float] = None
-    avg_bpr_util_pct: Optional[float] = None
-    peak_bpr_util_pct: Optional[float] = None
-
+    n_trades: int; initial_balance: float; final_balance: float
+    total_return: float; annualized_return: float; sharpe: float; max_drawdown: float
+    calmar: float; win_rate: float; avg_pnl: float; spy_total_return: float
+    spy_annualized_return: float; spy_sharpe: float; spy_max_drawdown: float; spy_calmar: float
+    exit_breakdown: Dict[str, int]; ret_options: float; ret_cash_spy: float
+    ret_cash_rf: float; cagr_options: float; cagr_cash_spy: float; cagr_cash_rf: float
+    peak_positions: Optional[int] = None; avg_positions: Optional[float] = None
+    avg_bpr_util_pct: Optional[float] = None; peak_bpr_util_pct: Optional[float] = None
+    max_streak: Optional[int] = None
+    exit_stats: List[ExitStatRow] = Field(default_factory=list)
+    vix_regime_stats: List[VixRegimeStatRow] = Field(default_factory=list)
 
 class BacktestResponse(BaseModel):
-    """Full backtest response with metrics and trade summary."""
-    run_id: str
-    status: str
-    params: Dict[str, Any]
-    metrics: Optional[MetricsResponse] = None
-    trades: Optional[List[TradeSummary]] = None
-    equity_curve: Optional[Dict[str, float]] = None
-    error: Optional[str] = None
+    run_id: str; status: str; params: Dict[str, Any]; metrics: Optional[MetricsResponse] = None
+    trades: Optional[List[TradeSummary]] = None; equity_curve: Optional[Dict[str, float]] = None
+    spy_curve: Optional[Dict[str, float]] = None; bpr_curve: Optional[Dict[str, float]] = None
+    pos_count_curve: Optional[Dict[str, int]] = None; vix_curve: Optional[Dict[str, float]] = None
+    vix_blocked_dates: Optional[List[str]] = None; error: Optional[str] = None
 
-
-# ── Internal Worker ──────────────────────────────────────────────────────
-
-def _serialize_trades(trades) -> List[TradeSummary]:
-    return [
-        TradeSummary(
-            trade_num=t.trade_num,
-            entry_date=t.entry_date.strftime("%Y-%m-%d"),
-            exit_date=t.exit_date.strftime("%Y-%m-%d") if t.exit_date else None,
-            expiration=t.expiration.strftime("%Y-%m-%d"),
-            put_strike=t.put_strike,
-            call_strike=t.call_strike,
-            long_put_strike=t.long_put_strike,
-            long_call_strike=t.long_call_strike,
-            net_credit=t.net_credit,
-            pnl=t.pnl,
-            pnl_pct=t.pnl_pct,
-            exit_type=t.exit_type,
-            entry_vix=t.entry_vix,
-        )
-        for t in trades
-    ]
-
-
-def _build_metrics_response(metrics: dict, portfolio_metrics: bool = False) -> MetricsResponse:
-    resp = MetricsResponse(
-        n_trades=metrics.get("n", 0),
-        initial_balance=metrics.get("init", 0),
-        final_balance=metrics.get("final", 0),
-        total_return=metrics.get("tot", 0),
-        annualized_return=metrics.get("ann", 0),
-        sharpe=metrics.get("sharpe", 0),
-        max_drawdown=metrics.get("mdd", 0),
-        calmar=metrics.get("calmar", 0),
-        win_rate=metrics.get("wr", 0),
-        win_rate_chain=metrics.get("wr_chain", 0),
-        avg_pnl=metrics.get("avg_pnl", 0),
-        max_consecutive_losses=metrics.get("max_streak", 0),
-        spy_total_return=metrics.get("spy_total_return", 0),
-        spy_sharpe=metrics.get("spy_sharpe", 0),
-        exit_breakdown={
-            "PROFIT":      metrics.get("n_p", 0),
-            "STOP":        metrics.get("n_s", 0),
-            "21DTE":       metrics.get("n_d", 0),
-            "EXPIRY":      metrics.get("n_e", 0),
-            "ROLLED":      metrics.get("n_r", 0),
-            "FORCE_CLOSE": metrics.get("n_f", 0),
-        },
+def _build_metrics_response(metrics: dict, params: dict, trades: list, data: pd.DataFrame) -> MetricsResponse:
+    init = float(params.get("initial_balance", 50_000))
+    years = (pd.Timestamp(params["end_date"]) - pd.Timestamp(params["start_date"])).days / 365.25
+    if years <= 0: years = 0.01
+    def _ann(tot): return (1 + tot) ** (1 / years) - 1 if tot > -1 else -1.0
+    def _clean(v): return float(v) if v is not None and not np.isnan(v) and not np.isinf(v) else 0.0
+    short_pnl = sum(t.pnl for t in trades if t.pnl is not None)
+    cash_yield_total = metrics.get("cash_yield_earned", 0.0)
+    cash_mode = params.get("cash_investment_mode", "spy")
+    spy_alloc = params.get("spy_allocation_pct", 0.40)
+    if cash_mode == "spy": ret_cash_spy, ret_cash_rf = cash_yield_total / init, 0.0
+    elif cash_mode == "risk_free": ret_cash_spy, ret_cash_rf = 0.0, cash_yield_total / init
+    else: ret_cash_spy, ret_cash_rf = (cash_yield_total * spy_alloc) / init, (cash_yield_total * (1 - spy_alloc)) / init
+    spy_window = data.loc[pd.Timestamp(params["start_date"]) : pd.Timestamp(params["end_date"]), "spy_close"]
+    spy_ann, spy_mdd, spy_calmar = 0.0, 0.0, 0.0
+    if not spy_window.empty:
+        s_vals = spy_window.values; spy_tot = (s_vals[-1] - s_vals[0]) / s_vals[0]
+        spy_ann = _ann(spy_tot); pk = np.maximum.accumulate(s_vals)
+        spy_mdd = float(((s_vals - pk) / pk).min()); spy_calmar = spy_ann / abs(spy_mdd) if spy_mdd != 0 else 0.0
+    return MetricsResponse(
+        n_trades=metrics.get("n", 0), initial_balance=init, final_balance=metrics.get("final", init),
+        total_return=_clean(metrics.get("tot", 0)), annualized_return=_clean(metrics.get("ann", 0)),
+        sharpe=_clean(metrics.get("sharpe", 0)), max_drawdown=_clean(metrics.get("mdd", 0)), calmar=_clean(metrics.get("calmar", 0)),
+        win_rate=_clean(metrics.get("wr", 0)), avg_pnl=_clean(metrics.get("avg_pnl", 0)),
+        spy_total_return=_clean(metrics.get("spy_total_return", 0)), spy_annualized_return=_clean(spy_ann),
+        spy_sharpe=_clean(metrics.get("spy_sharpe", 0)), spy_max_drawdown=_clean(spy_mdd), spy_calmar=_clean(spy_calmar),
+        exit_breakdown={"PROFIT": metrics.get("n_p", 0), "STOP": metrics.get("n_s", 0), "21DTE": metrics.get("n_d", 0), "EXPIRY": metrics.get("n_e", 0), "ROLLED": metrics.get("n_r", 0), "FORCE_CLOSE": metrics.get("n_f", 0)},
+        ret_options=_clean(short_pnl/init), ret_cash_spy=_clean(ret_cash_spy), ret_cash_rf=_clean(ret_cash_rf),
+        cagr_options=_clean(_ann(short_pnl/init)), cagr_cash_spy=_clean(_ann(ret_cash_spy)), cagr_cash_rf=_clean(_ann(ret_cash_rf)),
+        peak_positions=metrics.get("peak_positions"), avg_positions=metrics.get("avg_positions"),
+        avg_bpr_util_pct=_clean(metrics.get("avg_bpr_util", 0) / 100.0) if "avg_bpr_util" in metrics else None,
+        peak_bpr_util_pct=_clean(metrics.get("peak_bpr_util", 0) / 100.0) if "peak_bpr_util" in metrics else None,
+        max_streak=metrics.get("max_streak"),
+        exit_stats=metrics.get("exit_stats", []),
+        vix_regime_stats=metrics.get("vix_regime_stats", []),
     )
-    if portfolio_metrics:
-        resp.peak_positions = metrics.get("peak_positions")
-        resp.avg_positions = metrics.get("avg_positions")
-        resp.avg_bpr_util_pct = metrics.get("avg_bpr_util")
-        resp.peak_bpr_util_pct = metrics.get("peak_bpr_util")
-    return resp
-
 
 def _run_backtest_task(run_id: str, params: dict):
-    """Worker function to run backtest in the background."""
     _results[run_id]["status"] = "running"
-    is_portfolio = params.get("portfolio_mode", False)
-
+    is_portfolio = params.get("portfolio_mode", "laddering") == "laddering"
     try:
-        data = load_market_data(
-            start_date=params["start_date"],
-            end_date=params["end_date"],
-        )
+        data = load_market_data(start_date=params["start_date"], end_date=params["end_date"])
         engine = make_engine(params)
-
         try:
+            vix_blocked_dates = []
             if is_portfolio:
-                trades, equity_df, _portfolio, _n_vix = run_portfolio_backtest(
-                    data, params, engine
-                )
+                trades, equity_df, portfolio, _ = run_portfolio_backtest(data, params, engine)
                 metrics = compute_portfolio_metrics(trades, equity_df, params, data)
                 eq_curve = {str(k.date()): v for k, v in equity_df["total_equity"].items()}
+                bpr_curve = {str(k.date()): v for k, v in equity_df["utilized_bpr"].items()}
+                pos_curve = {str(k.date()): int(v) for k, v in equity_df["open_positions"].items()}
+                vix_blocked_dates = [str(d.date()) for d, v in portfolio.vix_blocked_dates]
             else:
-                trades, equity_curve, _skipped, _skipped_vix = run_backtest(
-                    data, params, engine
-                )
+                trades, equity_curve, _, _ = run_backtest(data, params, engine)
                 metrics = compute_metrics(trades, equity_curve, params, data)
                 eq_curve = {str(k.date()): v for k, v in equity_curve.items()}
+                bpr_curve, pos_curve = {}, {}
+            spy_series = data.loc[pd.Timestamp(params["start_date"]) : pd.Timestamp(params["end_date"]), "spy_close"]
+            spy_curve = {str(k.date()): float(v / float(spy_series.iloc[0]) * params["initial_balance"]) for k, v in spy_series.items()} if not spy_series.empty else {}
+            _results[run_id].update({
+                "status": "completed", "metrics": _build_metrics_response(metrics, params, trades, data),
+                "trades": [{
+                    "trade_num": t.trade_num,
+                    "entry_date": t.entry_date.strftime("%Y-%m-%d"),
+                    "exit_date": t.exit_date.strftime("%Y-%m-%d") if t.exit_date else None,
+                    "expiration": t.expiration.strftime("%Y-%m-%d"),
+                    "put_strike": t.put_strike,
+                    "call_strike": t.call_strike,
+                    "long_put_strike": t.long_put_strike,
+                    "long_call_strike": t.long_call_strike,
+                    "net_credit": t.net_credit,
+                    "pnl": t.pnl,
+                    "pnl_pct": t.pnl_pct,
+                    "exit_type": t.exit_type,
+                    "entry_vix": t.entry_vix,
+                    "roll_count": t.roll_count,
+                    "parent_trade_num": t.parent_trade_num,
+                    "n_leg_rolls": len(t.leg_rolls),
+                    "used_market_data": t.used_market_data,
+                } for t in trades],
+                "equity_curve": eq_curve, "spy_curve": spy_curve, "bpr_curve": bpr_curve, "pos_count_curve": pos_curve, "vix_curve": {str(k.date()): float(v) for k, v in data["vix_close"].items()}, "vix_blocked_dates": vix_blocked_dates,
+            })
         finally:
-            if hasattr(engine, "close"):
-                engine.close()
-
-        _results[run_id].update({
-            "status": "completed",
-            "metrics": _build_metrics_response(metrics, portfolio_metrics=is_portfolio),
-            "trades": _serialize_trades(trades),
-            "equity_curve": eq_curve,
-        })
-        logger.info(f"Backtest {run_id} completed successfully.")
-
+            if hasattr(engine, "close"): engine.close()
     except Exception as e:
-        logger.error(f"Backtest {run_id} failed: {e}")
-        _results[run_id].update({
-            "status": "failed",
-            "error": str(e),
-        })
-
-
-# ── Helpers ──────────────────────────────────────────────────────────────
-
-def _build_params(req: BacktestRequest) -> dict:
-    """Merge request overrides with default PARAMS."""
-    params = dict(PARAMS)
-    overrides = req.model_dump(exclude_none=True)
-    params.update(overrides)
-    return params
-
-
-# ── Routes ───────────────────────────────────────────────────────────────
+        logger.error(f"Backtest {run_id} failed: {e}"); _results[run_id].update({"status": "failed", "error": str(e)})
 
 @app.get("/health")
 def health_check():
-    """Health check endpoint."""
     return {"status": "ok", "timestamp": datetime.utcnow().isoformat()}
 
 
-@app.post("/backtest", response_model=BacktestResponse)
-async def run_backtest_api(
-    background_tasks: BackgroundTasks, 
-    req: BacktestRequest = BacktestRequest()
-):
-    """Trigger a backtest in the background.
+@app.get("/config")
+def get_config():
+    """Return defaults, per-field ranges/enums, and capabilities.
 
-    Returns a run_id immediately. Poll /backtest/{run_id} for results.
+    Frontends should hydrate their parameter schema from this endpoint so
+    defaults don't drift between client and server.
     """
-    run_id = str(uuid4())[:8]
-    params = _build_params(req)
-    
-    # Initialize record
-    _results[run_id] = {
-        "run_id": run_id,
-        "status": "pending",
-        "params": params,
-    }
-    
-    # Queue task
-    background_tasks.add_task(_run_backtest_task, run_id, params)
-    
-    return BacktestResponse(
-        run_id=run_id,
-        status="pending",
-        params=params,
-    )
+    db_path = PARAMS.get("db_path", "data/Spy Options Database.db")
+    try:
+        db_last = _db_coverage_end(db_path)
+        market_max = db_last.date().isoformat()
+    except Exception:
+        market_max = None
 
+    ranges = {
+        "target_delta":            {"min": 0.05, "max": 0.45, "step": 0.01},
+        "wing_delta":              {"min": 0.01, "max": 0.30, "step": 0.01},
+        "dte_min":                 {"min": 0,    "max": 365,  "step": 1},
+        "dte_max":                 {"min": 0,    "max": 365,  "step": 1},
+        "profit_target_pct":       {"min": 0.01, "max": 1.0,  "step": 0.01},
+        "stop_loss_pct":           {"min": 0.1,  "max": 10.0, "step": 0.1},
+        "max_bpr_allocation":      {"min": 0.01, "max": 1.0,  "step": 0.01},
+        "entry_cooldown_days":     {"min": 0,    "max": 30,   "step": 1},
+        "manage_at_dte":           {"min": 0,    "max": 60,   "step": 1},
+        "max_rolls":               {"min": 0,    "max": 10,   "step": 1},
+        "vix_entry_max":           {"min": 5,    "max": 100,  "step": 1},
+        "defensive_trigger_delta": {"min": 0.1,  "max": 0.5,  "step": 0.01},
+        "risk_free_rate":          {"min": 0,    "max": 0.2,  "step": 0.001},
+        "put_slope":               {"min": 0,    "max": 2.0,  "step": 0.05},
+        "call_slope":              {"min": 0,    "max": 2.0,  "step": 0.05},
+    }
+    enums = {
+        "strategy_mode":        ["short_strangle", "iron_condor"],
+        "pricing_mode":         ["synthetic", "market"],
+        "portfolio_mode":       ["laddering", "single"],
+        "cash_investment_mode": ["risk_free", "spy", "blend"],
+    }
+    capabilities = {
+        "supports_iron_condor":  True,
+        "market_data_min_date":  _DB_FIRST.date().isoformat(),
+        "market_data_max_date":  market_max,
+    }
+    return {
+        "defaults":     dict(PARAMS),
+        "ranges":       ranges,
+        "enums":        enums,
+        "capabilities": capabilities,
+    }
+
+
+@app.post("/backtest", response_model=BacktestResponse)
+async def run_backtest_api(background_tasks: BackgroundTasks, req: BacktestRequest = BacktestRequest()):
+    run_id = str(uuid4())[:8]; params = dict(PARAMS); overrides = req.model_dump(exclude_none=True)
+    if "pricing_mode" in overrides: params["mode"] = overrides.pop("pricing_mode")
+    if "pricing_risk_free" in overrides: params["risk_free_rate"] = overrides.pop("pricing_risk_free")
+    if "risk_free_rate" in overrides: params["cash_yield_annual"] = overrides.pop("risk_free_rate")
+    if "defensive_enabled" in overrides: params["defensive_leg_roll_enabled"] = overrides.pop("defensive_enabled")
+    params.update(overrides); _results[run_id] = {"run_id": run_id, "status": "pending", "params": params}
+    background_tasks.add_task(_run_backtest_task, run_id, params)
+    return BacktestResponse(run_id=run_id, status="pending", params=params)
 
 @app.get("/backtest/{run_id}", response_model=BacktestResponse)
 def get_backtest_result(run_id: str):
-    """Retrieve backtest status or results by ID."""
-    if run_id not in _results:
-        raise HTTPException(status_code=404, detail=f"Run {run_id} not found")
-    
-    res = _results[run_id]
-    return BacktestResponse(
-        run_id=run_id,
-        status=res.get("status", "unknown"),
-        params=res.get("params", {}),
-        metrics=res.get("metrics"),
-        trades=res.get("trades"),
-        equity_curve=res.get("equity_curve"),
-        error=res.get("error"),
-    )
-
-
-@app.get("/backtests", response_model=List[BacktestResponse])
-def list_backtests():
-    """List all recent backtest runs."""
-    return [
-        BacktestResponse(
-            run_id=rid,
-            status=data["status"],
-            params=data["params"],
-        )
-        for rid, data in _results.items()
-    ]
+    if run_id not in _results: raise HTTPException(status_code=404)
+    return BacktestResponse(**_results[run_id])

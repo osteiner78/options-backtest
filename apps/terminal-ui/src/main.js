@@ -5,7 +5,8 @@ import './styles/layout.css';
 import './styles/components.css';
 import './styles/uplot-overrides.css';
 
-import { subscribe } from './store.js';
+import { subscribe, setConfig } from './store.js';
+import { fetchConfig } from './api/client.js';
 import { renderTopBar, initTopBar } from './components/topbar/TopBar.js';
 import { renderErrorBanner, initErrorBanner } from './components/banner/ErrorBanner.js';
 import { renderSidebar, initSidebar } from './components/sidebar/Sidebar.js';
@@ -53,3 +54,7 @@ initTradeLog();
 initTweaksPanel();
 
 subscribe(render);
+
+fetchConfig()
+  .then(setConfig)
+  .catch(err => console.warn('[/config] unavailable, using bundled defaults:', err.message));

@@ -1,5 +1,21 @@
 const BASE_URL = import.meta.env.VITE_API_BASE_URL ?? '';
 
+function flattenValidationErrors(detail) {
+  if (!Array.isArray(detail)) return typeof detail === 'string' ? detail : 'Invalid request';
+  return detail
+    .map(d => {
+      const field = Array.isArray(d.loc) ? d.loc.filter(x => x !== 'body').join('.') : 'request';
+      return `${field}: ${d.msg}`;
+    })
+    .join('; ');
+}
+
+export async function fetchConfig() {
+  const response = await fetch(`${BASE_URL}/config`);
+  if (!response.ok) throw new Error(`Failed to fetch /config (HTTP ${response.status})`);
+  return response.json();
+}
+
 export async function triggerBacktest(params) {
   const response = await fetch(`${BASE_URL}/backtest`, {
     method: 'POST',
@@ -8,7 +24,13 @@ export async function triggerBacktest(params) {
   });
   if (!response.ok) {
     const err = await response.json().catch(() => ({}));
-    throw new Error(err.detail || `Failed to start backtest (HTTP ${response.status})`);
+    const msg = response.status === 422
+      ? flattenValidationErrors(err.detail)
+      : (typeof err.detail === 'string' ? err.detail : `Failed to start backtest (HTTP ${response.status})`);
+    const e = new Error(msg);
+    e.status = response.status;
+    e.detail = err.detail;
+    throw e;
   }
   return response.json();
 }
