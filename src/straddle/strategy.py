@@ -771,7 +771,7 @@ def evaluate_trade(
 # ── Backtest runner ──────────────────────────────────────────────────────
 
 def run_backtest(
-    data: pd.DataFrame, params: dict, engine=None
+    data: pd.DataFrame, params: dict, engine=None, progress_callback=None
 ) -> tuple:
     """Run the full SPY short strangle backtest.
 
@@ -812,14 +812,15 @@ def run_backtest(
         skipped_entries: int = 0
         skipped_vix: int = 0
 
-        entries = get_entry_dates(
+        entries = list(get_entry_dates(
             data,
             params["start_date"],
             params["end_date"],
             params["dte_min"],
             params["dte_max"],
-        )
-        for entry_date, expiration in tqdm(entries, desc="Running backtest", unit="trade"):
+        ))
+        total_entries = len(entries)
+        for idx, (entry_date, expiration) in enumerate(tqdm(entries, desc="Running backtest", unit="trade"), start=1):
             if entry_date not in data.index:
                 continue
             if single_position and entry_date < latest_open_exit:
@@ -870,6 +871,12 @@ def run_backtest(
             # Chain complete: update barrier so next monthly entry waits
             # until this chain (including any rolls) has fully exited.
             latest_open_exit = closed.exit_date
+            if progress_callback:
+                progress_callback({
+                    'current_date': str(entry_date.date()),
+                    'trades_so_far': len(trades),
+                    'pct': idx / total_entries if total_entries else 1.0,
+                })
 
         # Build a daily equity series from each trade's daily_marks.
         # This replaces the sparse exit-date dict and gives metrics and plotting

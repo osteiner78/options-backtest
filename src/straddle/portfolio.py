@@ -250,6 +250,7 @@ def run_portfolio_backtest(
     data: pd.DataFrame,
     params: dict,
     engine=None,
+    progress_callback=None,
 ) -> Tuple[List[Trade], pd.DataFrame, PortfolioManager]:
     """Run a portfolio-style backtest with laddering and dynamic margin.
 
@@ -293,7 +294,9 @@ def run_portfolio_backtest(
         prev_spy_close: Optional[float] = None
 
         # ── Main daily loop ─────────────────────────────────────────────────
-        for eval_date in tqdm(sim_dates, desc="Simulating portfolio", unit="day"):
+        sim_dates_list = list(sim_dates)
+        total_days = len(sim_dates_list)
+        for _day_idx, eval_date in enumerate(tqdm(sim_dates_list, desc="Simulating portfolio", unit="day"), start=1):
             row = data.loc[eval_date]
             spy_close = float(row["spy_close"])
             vix_d = float(row["vix_close"])
@@ -453,12 +456,18 @@ def run_portfolio_backtest(
 
             # ── Step 5: Record daily state ───────────────────────────────────
             portfolio.record_daily_state(eval_date, portfolio.total_unrealized_liability)
+            if progress_callback and _day_idx % 5 == 0:
+                progress_callback({
+                    'current_date': str(eval_date.date()),
+                    'trades_so_far': len(trades),
+                    'pct': _day_idx / total_days if total_days else 1.0,
+                })
 
         # ── Force-close any positions still open at backtest end ────────────
         # Label "FORCE_CLOSE" distinguishes end-of-backtest closures from
         # trades that actually reached their natural expiration (EXPIRY).
-        if sim_dates.size > 0:
-            last_date = sim_dates[-1]
+        if len(sim_dates_list) > 0:
+            last_date = sim_dates_list[-1]
             for trade_num_open, pos in list(portfolio.open_positions.items()):
                 t = pos.trade
                 res = evaluate_trade_step(t, last_date, data, engine, params)

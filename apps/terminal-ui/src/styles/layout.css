@@ -125,6 +125,22 @@ body {
 }
 .trade-log-overlay.open { height: 280px; }
 
+.run-history-overlay {
+  position: fixed;
+  bottom: 44px;
+  left: 0;
+  right: 0;
+  height: 0;
+  background: var(--bg1);
+  border-top: 1px solid var(--bg3);
+  overflow: hidden;
+  transition: height 0.2s ease;
+  z-index: 300;
+  display: flex;
+  flex-direction: column;
+}
+.run-history-overlay.open { height: 300px; }
+
 .tweaks-btn {
   position: fixed;
   top: 6px;

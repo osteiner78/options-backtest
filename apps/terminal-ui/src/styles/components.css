@@ -357,6 +357,25 @@ table.tl-table tbody td.r { text-align: right; }
   line-height: 1.4;
 }
 
+/* ──────────────── Run history overlay ──────────────── */
+.rh-row { border-bottom: 1px solid var(--bg3); }
+.rh-row:hover { background: var(--bg2); }
+.rh-label { color: var(--fg2); max-width: 260px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rh-actions { display: flex; gap: 6px; white-space: nowrap; }
+.rh-btn {
+  font-size: 8px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  padding: 1px 5px;
+  border: 1px solid currentColor;
+  border-radius: 2px;
+  cursor: pointer;
+  color: var(--fg4);
+}
+.rh-load { color: var(--a2); }
+.rh-load:hover { color: var(--fg1); }
+.rh-del:hover { color: var(--neg); }
+
 /* ──────────────── Tweaks panel ──────────────── */
 .tw-head {
   display: flex;

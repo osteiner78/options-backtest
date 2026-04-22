@@ -1,24 +1,30 @@
 """FastAPI backend for the SPY short strangle backtest.
 Exposes a REST API for running backtests and retrieving results.
 """
+import asyncio
+import json
 import logging
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import Any, AsyncGenerator, Dict, List, Optional
 from uuid import uuid4
 import pandas as pd
 import numpy as np
 from fastapi import FastAPI, HTTPException, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from straddle import (PARAMS, compute_metrics, compute_portfolio_metrics, load_market_data, make_engine, run_backtest, run_portfolio_backtest)
 from straddle.data import _DB_FIRST, _db_coverage_end
+from straddle.runs_store import init_db, upsert_run, list_runs, get_run, delete_run, patch_label
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-app = FastAPI(title="SPY Short Strangle Backtest API", version="0.1.4")
+app = FastAPI(title="SPY Short Strangle Backtest API", version="0.2.0")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
 _results: Dict[str, dict] = {}
+
+init_db()
 
 class BacktestRequest(BaseModel):
     """Per-field validators return 422 with structured field errors on bad input."""
@@ -147,53 +153,80 @@ def _build_metrics_response(metrics: dict, params: dict, trades: list, data: pd.
 
 def _run_backtest_task(run_id: str, params: dict):
     _results[run_id]["status"] = "running"
+    _results[run_id]["progress"] = {"pct": 0.0, "trades_so_far": 0, "current_date": None}
+    upsert_run(run_id, "running", params)
     is_portfolio = params.get("portfolio_mode", "laddering") == "laddering"
+
+    def _cb(info: dict):
+        _results[run_id]["progress"] = info
+
     try:
         data = load_market_data(start_date=params["start_date"], end_date=params["end_date"])
         engine = make_engine(params)
         try:
             vix_blocked_dates = []
             if is_portfolio:
-                trades, equity_df, portfolio, _ = run_portfolio_backtest(data, params, engine)
+                trades, equity_df, portfolio, _ = run_portfolio_backtest(data, params, engine, progress_callback=_cb)
                 metrics = compute_portfolio_metrics(trades, equity_df, params, data)
                 eq_curve = {str(k.date()): v for k, v in equity_df["total_equity"].items()}
                 bpr_curve = {str(k.date()): v for k, v in equity_df["utilized_bpr"].items()}
                 pos_curve = {str(k.date()): int(v) for k, v in equity_df["open_positions"].items()}
                 vix_blocked_dates = [str(d.date()) for d, v in portfolio.vix_blocked_dates]
             else:
-                trades, equity_curve, _, _ = run_backtest(data, params, engine)
+                trades, equity_curve, _, _ = run_backtest(data, params, engine, progress_callback=_cb)
                 metrics = compute_metrics(trades, equity_curve, params, data)
                 eq_curve = {str(k.date()): v for k, v in equity_curve.items()}
                 bpr_curve, pos_curve = {}, {}
             spy_series = data.loc[pd.Timestamp(params["start_date"]) : pd.Timestamp(params["end_date"]), "spy_close"]
             spy_curve = {str(k.date()): float(v / float(spy_series.iloc[0]) * params["initial_balance"]) for k, v in spy_series.items()} if not spy_series.empty else {}
+            trade_rows = [{
+                "trade_num": t.trade_num,
+                "entry_date": t.entry_date.strftime("%Y-%m-%d"),
+                "exit_date": t.exit_date.strftime("%Y-%m-%d") if t.exit_date else None,
+                "expiration": t.expiration.strftime("%Y-%m-%d"),
+                "put_strike": t.put_strike,
+                "call_strike": t.call_strike,
+                "long_put_strike": t.long_put_strike,
+                "long_call_strike": t.long_call_strike,
+                "net_credit": t.net_credit,
+                "pnl": t.pnl,
+                "pnl_pct": t.pnl_pct,
+                "exit_type": t.exit_type,
+                "entry_vix": t.entry_vix,
+                "roll_count": t.roll_count,
+                "parent_trade_num": t.parent_trade_num,
+                "n_leg_rolls": len(t.leg_rolls),
+                "used_market_data": t.used_market_data,
+            } for t in trades]
+            metrics_resp = _build_metrics_response(metrics, params, trades, data)
             _results[run_id].update({
-                "status": "completed", "metrics": _build_metrics_response(metrics, params, trades, data),
-                "trades": [{
-                    "trade_num": t.trade_num,
-                    "entry_date": t.entry_date.strftime("%Y-%m-%d"),
-                    "exit_date": t.exit_date.strftime("%Y-%m-%d") if t.exit_date else None,
-                    "expiration": t.expiration.strftime("%Y-%m-%d"),
-                    "put_strike": t.put_strike,
-                    "call_strike": t.call_strike,
-                    "long_put_strike": t.long_put_strike,
-                    "long_call_strike": t.long_call_strike,
-                    "net_credit": t.net_credit,
-                    "pnl": t.pnl,
-                    "pnl_pct": t.pnl_pct,
-                    "exit_type": t.exit_type,
-                    "entry_vix": t.entry_vix,
-                    "roll_count": t.roll_count,
-                    "parent_trade_num": t.parent_trade_num,
-                    "n_leg_rolls": len(t.leg_rolls),
-                    "used_market_data": t.used_market_data,
-                } for t in trades],
-                "equity_curve": eq_curve, "spy_curve": spy_curve, "bpr_curve": bpr_curve, "pos_count_curve": pos_curve, "vix_curve": {str(k.date()): float(v) for k, v in data["vix_close"].items()}, "vix_blocked_dates": vix_blocked_dates,
+                "status": "completed",
+                "metrics": metrics_resp,
+                "trades": trade_rows,
+                "equity_curve": eq_curve, "spy_curve": spy_curve, "bpr_curve": bpr_curve,
+                "pos_count_curve": pos_curve,
+                "vix_curve": {str(k.date()): float(v) for k, v in data["vix_close"].items()},
+                "vix_blocked_dates": vix_blocked_dates,
+                "progress": {"pct": 1.0, "trades_so_far": len(trades), "current_date": None},
             })
+            # Persist completed run to SQLite (store full result for /runs/{id} retrieval)
+            result_payload = {
+                "metrics": metrics_resp.model_dump(),
+                "trades": trade_rows,
+                "equity_curve": eq_curve,
+                "spy_curve": spy_curve,
+                "bpr_curve": bpr_curve,
+                "pos_count_curve": pos_curve,
+                "vix_curve": {str(k.date()): float(v) for k, v in data["vix_close"].items()},
+                "vix_blocked_dates": vix_blocked_dates,
+            }
+            upsert_run(run_id, "completed", params, result=result_payload)
         finally:
             if hasattr(engine, "close"): engine.close()
     except Exception as e:
-        logger.error(f"Backtest {run_id} failed: {e}"); _results[run_id].update({"status": "failed", "error": str(e)})
+        logger.error(f"Backtest {run_id} failed: {e}")
+        _results[run_id].update({"status": "failed", "error": str(e)})
+        upsert_run(run_id, "failed", params)
 
 @app.get("/health")
 def health_check():
@@ -263,5 +296,112 @@ async def run_backtest_api(background_tasks: BackgroundTasks, req: BacktestReque
 
 @app.get("/backtest/{run_id}", response_model=BacktestResponse)
 def get_backtest_result(run_id: str):
-    if run_id not in _results: raise HTTPException(status_code=404)
+    if run_id not in _results:
+        # Fall back to SQLite for runs from previous server sessions
+        stored = get_run(run_id)
+        if stored is None:
+            raise HTTPException(status_code=404)
+        result = stored.get("result") or {}
+        return BacktestResponse(
+            run_id=run_id, status=stored["status"], params=stored["params"],
+            error=result.get("error"), **{k: result.get(k) for k in (
+                "metrics", "trades", "equity_curve", "spy_curve",
+                "bpr_curve", "pos_count_curve", "vix_curve", "vix_blocked_dates",
+            ) if result.get(k) is not None},
+        )
     return BacktestResponse(**_results[run_id])
+
+
+async def _sse_generator(run_id: str) -> AsyncGenerator[str, None]:
+    """Yield SSE events for a running backtest until it completes."""
+    while True:
+        entry = _results.get(run_id)
+        if entry is None:
+            yield f"event: error\ndata: {json.dumps({'error': 'run not found'})}\n\n"
+            return
+        progress = entry.get("progress", {})
+        status = entry.get("status", "pending")
+        payload = json.dumps({
+            "status": status,
+            "pct": progress.get("pct", 0.0),
+            "trades_so_far": progress.get("trades_so_far", 0),
+            "current_date": progress.get("current_date"),
+        })
+        yield f"data: {payload}\n\n"
+        if status in ("completed", "failed"):
+            return
+        await asyncio.sleep(0.25)
+
+
+@app.get("/backtest/{run_id}/stream")
+async def stream_backtest(run_id: str):
+    """SSE endpoint — streams progress events until the run completes."""
+    return StreamingResponse(
+        _sse_generator(run_id),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
+# ── Run history endpoints ─────────────────────────────────────────────────────
+
+class RunListItem(BaseModel):
+    run_id: str
+    created_at: str
+    status: str
+    label: Optional[str] = None
+    params: Dict[str, Any]
+
+
+class LabelRequest(BaseModel):
+    label: str
+
+
+@app.get("/runs", response_model=List[RunListItem])
+def list_runs_endpoint(limit: int = 50):
+    return list_runs(limit=limit)
+
+
+@app.get("/runs/{run_id}")
+def get_run_endpoint(run_id: str):
+    row = get_run(run_id)
+    if row is None:
+        raise HTTPException(status_code=404)
+    return row
+
+
+@app.patch("/runs/{run_id}/label")
+def label_run(run_id: str, req: LabelRequest):
+    if not patch_label(run_id, req.label):
+        raise HTTPException(status_code=404)
+    return {"ok": True}
+
+
+@app.delete("/runs/{run_id}")
+def delete_run_endpoint(run_id: str):
+    if not delete_run(run_id):
+        raise HTTPException(status_code=404)
+    _results.pop(run_id, None)
+    return {"ok": True}
+
+
+# ── Compare endpoint ──────────────────────────────────────────────────────────
+
+class CompareRequest(BaseModel):
+    run_ids: List[str]
+
+
+@app.post("/compare")
+def compare_runs(req: CompareRequest):
+    """Return a dict of run_id → metrics for side-by-side comparison."""
+    out = {}
+    for rid in req.run_ids:
+        # Check in-memory cache first, then SQLite
+        if rid in _results and _results[rid].get("metrics"):
+            m = _results[rid]["metrics"]
+            out[rid] = m.model_dump() if hasattr(m, "model_dump") else m
+        else:
+            row = get_run(rid)
+            if row and row.get("result") and row["result"].get("metrics"):
+                out[rid] = row["result"]["metrics"]
+    return out

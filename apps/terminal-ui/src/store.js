@@ -46,6 +46,7 @@ const initialState = {
   config: null, // { defaults, ranges, enums, capabilities } — fetched from /config
   results: null,
   status: 'idle', // 'idle' | 'running' | 'completed' | 'failed'
+  progress: null, // { pct, trades_so_far, current_date } during run
   error: null,
   lastRun: null,
   activeTab: 'equity',
@@ -53,6 +54,8 @@ const initialState = {
   tradeLogFilter: 'ALL', // 'ALL' | 'PROFIT' | 'ROLLED' | '21DTE' | 'STOP' | 'EXPIRY'
   themePanelOpen: false,
   theme: loadTheme(), // 'gruvbox' | 'tokyo'
+  runHistory: [], // [{run_id, created_at, status, label, params}]
+  runHistoryOpen: false,
 };
 
 const listeners = new Set();
@@ -84,7 +87,20 @@ export function setResults(results) {
   store.results = results;
   store.status = 'completed';
   store.error = null;
+  store.progress = null;
   store.lastRun = new Date();
+}
+
+export function setProgress(progress) {
+  store.progress = progress;
+}
+
+export function setRunHistory(runs) {
+  store.runHistory = runs;
+}
+
+export function toggleRunHistory() {
+  store.runHistoryOpen = !store.runHistoryOpen;
 }
 
 export function setError(error) {

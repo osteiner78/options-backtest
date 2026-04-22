@@ -1,14 +1,20 @@
-import { store, setStatus, setResults, setError, toggleThemePanel } from '../../store.js';
-import { triggerBacktest, pollResults } from '../../api/client.js';
+import { store, setStatus, setResults, setError, setProgress, toggleThemePanel, toggleRunHistory, setRunHistory } from '../../store.js';
+import { triggerBacktest, streamResults, fetchRuns } from '../../api/client.js';
 import { normalizeResults } from '../../api/adapters.js';
 import { renderButton } from '../primitives/Button.js';
 
 export function renderTopBar() {
-  const { params, status, lastRun } = store;
+  const { params, status, lastRun, progress } = store;
   const running = status === 'running';
-  const lastRunLabel = lastRun
-    ? `Last run ${new Date(lastRun).toLocaleTimeString()}`
-    : 'No runs yet';
+
+  let runLabel = 'No runs yet';
+  if (running && progress) {
+    const pct = Math.round((progress.pct ?? 0) * 100);
+    const date = progress.current_date ? ` · ${progress.current_date}` : '';
+    runLabel = `Running ${pct}%${date} · ${progress.trades_so_far ?? 0} trades`;
+  } else if (lastRun) {
+    runLabel = `Last run ${new Date(lastRun).toLocaleTimeString()}`;
+  }
 
   const configPill = [
     (params.strategy_mode || 'short_strangle').replace('_', ' ').toUpperCase(),
@@ -25,9 +31,10 @@ export function renderTopBar() {
       <span class="sep">/</span>
       <span class="config-pill">${configPill}</span>
       <span class="spacer"></span>
-      <span class="topbar-meta">${lastRunLabel}</span>
-      ${renderButton({ id: 'btn-theme', label: '⚙ THEME' })}
-      ${renderButton({ id: 'btn-save',  label: '💾 SAVE' })}
+      <span class="topbar-meta">${runLabel}</span>
+      ${renderButton({ id: 'btn-history', label: '◷ HISTORY' })}
+      ${renderButton({ id: 'btn-theme',   label: '⚙ THEME' })}
+      ${renderButton({ id: 'btn-save',    label: '💾 SAVE' })}
       ${renderButton({
         id: 'btn-run',
         label: running ? '● RUNNING' : '▶ RUN',
@@ -49,13 +56,24 @@ export function initTopBar() {
       return;
     }
 
+    if (e.target.id === 'btn-history') {
+      // Refresh list from server, then open
+      fetchRuns(50)
+        .then(runs => { setRunHistory(runs); toggleRunHistory(); })
+        .catch(() => toggleRunHistory());
+      return;
+    }
+
     if (e.target.id === 'btn-run') {
       if (store.status === 'running') return;
       try {
         setStatus('running');
+        setProgress({ pct: 0, trades_so_far: 0, current_date: null });
         const { run_id } = await triggerBacktest(store.params);
-        const raw = await pollResults(run_id);
+        const raw = await streamResults(run_id, (prog) => setProgress(prog));
         setResults(normalizeResults(raw));
+        // Refresh history list silently
+        fetchRuns(50).then(runs => setRunHistory(runs)).catch(() => {});
       } catch (err) {
         console.error('Backtest error:', err);
         setError(err.message || String(err));

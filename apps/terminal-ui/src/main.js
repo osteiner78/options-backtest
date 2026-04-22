@@ -16,6 +16,7 @@ import { renderTableGrid } from './components/tables/TableGrid.js';
 import { renderPnLStrip, initPnLStrip, drawPnL } from './components/pnl/PnLStrip.js';
 import { renderTradeLog, initTradeLog } from './components/tradelog/TradeLog.js';
 import { renderTweaksPanel, initTweaksPanel } from './components/tweaks/TweaksPanel.js';
+import { renderRunHistory, initRunHistory } from './components/history/RunHistory.js';
 
 const app = document.getElementById('app');
 
@@ -34,6 +35,7 @@ function render() {
     </div>
     ${renderTradeLog()}
     ${renderTweaksPanel()}
+    ${renderRunHistory()}
   `;
 
   // After DOM update, paint SVG charts on next frame.
@@ -52,6 +54,7 @@ initChartArea();
 initPnLStrip();
 initTradeLog();
 initTweaksPanel();
+initRunHistory();
 
 subscribe(render);
 
