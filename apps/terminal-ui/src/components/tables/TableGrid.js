@@ -12,69 +12,46 @@ export function renderTableGrid() {
   if (!results || !results.trades) {
     return `
       <div class="tables-row">
-        <div class="tp"><div class="tp-title">Trades Summary</div><div style="padding:10px;color:var(--dim)">Run backtest...</div></div>
+        <div class="tp"><div class="tp-title">Exit Breakdown</div><div style="padding:10px;color:var(--dim)">Run backtest...</div></div>
         <div class="tp"><div class="tp-title">VIX Regime</div><div style="padding:10px;color:var(--dim)">Run backtest...</div></div>
       </div>
     `;
   }
 
   const { metrics, trades } = results;
-  const totalN = trades.length;
+  const totalN   = trades.length;
+  const skipped  = results.vix_blocked_dates ? results.vix_blocked_dates.length : 0;
 
   const exitData = results.exit_stats ?? computeExitStats(trades);
   const vixData  = results.vix_regime_stats ?? computeVixRegimeStats(trades);
 
-  // Options-only total P&L = sum of individual exit rows (excludes cash yield)
+  // Options-only total P&L = sum of exit rows (excludes cash yield)
   const optionsTotalPnl = exitData.reduce((sum, d) => sum + d.totalPnl, 0);
 
   const winRateClass = (wr) => wr >= 0.7 ? 'c-pos' : (wr >= 0.5 ? 'c-amb' : 'c-neg');
 
-  const sub = (label) => `<div class="tp-sub">${label}</div>`;
-  const row = (label, val, cls = '') => `
-    <tr>
-      <td style="color:var(--dim)">${label}</td>
-      <td class="r fw6 ${cls}">${val}</td>
-    </tr>`;
-
-  const avgPos  = metrics.avg_positions  ? metrics.avg_positions.toFixed(1)  : '--';
-  const peakPos = metrics.peak_positions || '--';
-  const maxStrk = metrics.max_streak     || '--';
-  const skipped = results.vix_blocked_dates ? results.vix_blocked_dates.length : 0;
-  const avgBpr  = metrics.avg_bpr_util_pct  ? formatPct(metrics.avg_bpr_util_pct)  : '--';
-  const peakBpr = metrics.peak_bpr_util_pct ? formatPct(metrics.peak_bpr_util_pct) : '--';
-
   return `
     <div class="tables-row">
 
-      <!-- ── Left: Trades Summary (positions + BPR + exit breakdown) ── -->
+      <!-- ── Left: Exit Breakdown (with SKIPPED row) ── -->
       <div class="tp">
-        <div class="tp-title">Trades Summary</div>
-
-        ${sub('Positions')}
-        <table class="dt">
-          <tbody>
-            ${row('Avg positions',        avgPos)}
-            ${row('Peak positions',       peakPos,  'c-amb')}
-            ${row('Max consec. losses',   maxStrk,  maxStrk !== '--' ? 'c-neg' : '')}
-            ${row('Skipped (VIX filter)', skipped,  skipped > 0 ? 'c-neg' : '')}
-          </tbody>
-        </table>
-
-        ${sub('BPR Utilization')}
-        <table class="dt">
-          <tbody>
-            ${row('Avg BPR util',  avgBpr)}
-            ${row('Peak BPR util', peakBpr, 'c-amb')}
-          </tbody>
-        </table>
-
-        ${sub('Exit Breakdown')}
+        <div class="tp-title">Exit Breakdown</div>
         <table class="dt">
           <thead><tr>
             <th>Type</th><th class="r">N</th><th class="r">%</th>
             <th class="r">Win%</th><th class="r">Avg P&L</th><th class="r">Total P&L</th>
           </tr></thead>
           <tbody>
+            <!-- SKIPPED row: above the separator, not counted in % -->
+            <tr class="skipped-row">
+              <td class="c-neg fw6" style="font-size:10px;letter-spacing:0.02em">SKIPPED · VIX</td>
+              <td class="r c-neg">${skipped}</td>
+              <td class="r c-dim">--</td>
+              <td class="r c-dim">--</td>
+              <td class="r c-dim">--</td>
+              <td class="r c-dim">--</td>
+            </tr>
+            <tr class="skipped-sep"><td colspan="6"></td></tr>
             ${exitData.map(d => `
               <tr>
                 <td class="${EXIT_COLORS[d.type] || ''} fw6">${d.type}</td>

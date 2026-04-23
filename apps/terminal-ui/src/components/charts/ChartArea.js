@@ -76,13 +76,19 @@ function makeTip(el) {
 }
 
 function positionTip(tip, u, html) {
-  const { left, top, idx } = u.cursor;
+  const { left, idx } = u.cursor;
   if (idx == null || left == null || left < 0) { tip.style.display = 'none'; return; }
   tip.style.display = 'block';
   tip.innerHTML = html;
-  const overRight = left + 170 > u.width;
-  tip.style.left = (left + (overRight ? -175 : 14)) + 'px';
-  tip.style.top  = Math.max(4, top - 10) + 'px';
+  // Anchor to top corner opposite the cursor so it never covers the cursor area
+  if (left > u.width / 2) {
+    tip.style.left  = '8px';
+    tip.style.right = 'auto';
+  } else {
+    tip.style.right = '8px';
+    tip.style.left  = 'auto';
+  }
+  tip.style.top = '8px';
 }
 
 function fmtDate(ts) {
@@ -392,7 +398,7 @@ function baseAxes() {
       { stroke: dim, font: AXIS_FONT, grid: { stroke: bg3, width: 0.5, dash: [2, 4] }, ticks: { stroke: bg3, width: 0.5 } },
     ],
     cursor: {
-      drag: { x: true, y: false },
+      drag: { x: false, y: false },  // TODO: zoom-to-select — uPlot mouseup never fires setScale in this build; investigate and re-enable
       points: { size: 6, stroke: getColor('--a1'), fill: getColor('--bg0'), width: 2 },
     },
     legend: { show: false },

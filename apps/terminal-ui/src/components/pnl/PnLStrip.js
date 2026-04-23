@@ -6,7 +6,10 @@ export function renderPnLStrip() {
   return `
     <div class="pnl-strip" id="pnl-strip-el">
       <span class="pnl-strip-lbl">P&L</span>
-      <svg id="svg-pnl" style="flex:1;height:38px;" preserveAspectRatio="none"></svg>
+      <div class="pnl-chart-wrap" id="pnl-chart-wrap">
+        <svg id="svg-pnl" width="100%" height="100%" preserveAspectRatio="none"></svg>
+        <div id="pnl-tip" class="pnl-tooltip" style="display:none"></div>
+      </div>
       <div class="pnl-strip-actions">
         <span class="pnl-expand-hint" id="tl-hint">${tradeLogOpen ? '▼ CLOSE' : '▲ TRADE LOG'}</span>
       </div>
@@ -14,55 +17,138 @@ export function renderPnLStrip() {
   `;
 }
 
+// Trade rects for hit-testing on hover: [{x1, x2, trade}]
+let _rects = [];
+
 let bound = false;
 export function initPnLStrip() {
   if (bound) return;
   bound = true;
+
   document.addEventListener('click', (e) => {
-    if (e.target.closest('#pnl-strip-el')) toggleTradeLog();
+    if (e.target.closest('#pnl-strip-el') && !e.target.closest('#pnl-tip')) toggleTradeLog();
   });
   window.addEventListener('resize', drawPnL);
+
+  // Tooltip on hover — listen on the document, filter to svg-pnl
+  document.addEventListener('mousemove', (e) => {
+    const svg = document.getElementById('svg-pnl');
+    const tip = document.getElementById('pnl-tip');
+    if (!svg || !tip) return;
+
+    // Check if mouse is over the SVG
+    const rect = svg.getBoundingClientRect();
+    const inSvg = e.clientX >= rect.left && e.clientX <= rect.right &&
+                  e.clientY >= rect.top  && e.clientY <= rect.bottom;
+    if (!inSvg || !_rects.length) { tip.style.display = 'none'; return; }
+
+    const mx = e.clientX - rect.left;
+    const hit = _rects.find(r => mx >= r.x1 && mx <= r.x2);
+    if (!hit) { tip.style.display = 'none'; return; }
+
+    const t = hit.trade;
+    const pnl = t.pnl ?? 0;
+    const sign = pnl >= 0 ? '+' : '−';
+    const pnlColor = pnl >= 0 ? 'var(--pos)' : 'var(--neg)';
+
+    tip.style.display = 'block';
+    tip.innerHTML = `
+      <div class="ctt-date">${t.entry_date} → ${t.exit_date || '?'}</div>
+      <div class="ctt-row"><span style="color:var(--dim)">Exit</span><span>${t.exit_type || '--'}</span></div>
+      <div class="ctt-row"><span style="color:var(--dim)">P&L</span><span style="color:${pnlColor};font-weight:600">${sign}$${Math.abs(Math.round(pnl)).toLocaleString()}</span></div>
+      ${t.net_credit != null ? `<div class="ctt-row"><span style="color:var(--dim)">Credit</span><span>$${Math.round(t.net_credit).toLocaleString()}</span></div>` : ''}
+    `;
+
+    // Position tooltip to the opposite side from the bar
+    const wrapRect = document.getElementById('pnl-chart-wrap').getBoundingClientRect();
+    const relX = e.clientX - wrapRect.left;
+    if (relX > wrapRect.width / 2) {
+      tip.style.left  = '8px';
+      tip.style.right = 'auto';
+    } else {
+      tip.style.right = '8px';
+      tip.style.left  = 'auto';
+    }
+    tip.style.top = '8px';
+  });
+
+  document.addEventListener('mouseleave', (e) => {
+    if (e.target.id === 'svg-pnl') {
+      const tip = document.getElementById('pnl-tip');
+      if (tip) tip.style.display = 'none';
+    }
+  }, true);
 }
 
 export function drawPnL() {
-  const svg = document.getElementById('svg-pnl');
+  const svg  = document.getElementById('svg-pnl');
   if (!svg) return;
-  const w = svg.clientWidth, h = 38;
+
+  // Use actual rendered dimensions
+  const w = svg.clientWidth;
+  const h = svg.clientHeight;
+  if (!w || !h) return;
+
   const { results } = store;
+  _rects = [];
+
+  const bg3 = getVar('--bg3') || '#3c3836';
+  const dim = getVar('--dim') || '#665c54';
+
+  if (!results) {
+    svg.innerHTML = `<line x1="0" y1="${h * 0.5}" x2="${w}" y2="${h * 0.5}" stroke="${bg3}" stroke-width="0.5"/>`;
+    return;
+  }
 
   const pos = getVar('--pos') || '#b8bb26';
   const neg = getVar('--neg') || '#fb4934';
   const a3  = getVar('--a3') || '#b16286';
   const a2  = getVar('--a2') || '#458588';
   const a1  = getVar('--a1') || '#d79921';
-  const bg3 = getVar('--bg3') || '#3c3836';
+  const colors = { PROFIT: pos, ROLLED: a3, '21DTE': a2, STOP: neg, EXPIRY: a1, FORCE_CLOSE: dim };
 
-  const colors = { PROFIT: pos, ROLLED: a3, '21DTE': a2, STOP: neg, EXPIRY: a1 };
+  // Date range from equity_curve (matches equity chart x-axis)
+  const eqDates = Object.keys(results.equity_curve);
+  const minTs = dateMs(eqDates[0]);
+  const maxTs = dateMs(eqDates[eqDates.length - 1]);
+  const span  = maxTs - minTs || 1;
 
-  const N = 60;
-  const pnls = [], types = [];
+  const trades = results.trades.filter(t => t.exit_date && t.pnl != null);
+  const maxAbs = Math.max(...trades.map(t => Math.abs(t.pnl)), 1);
 
-  if (!results) {
-    // No data — render empty baseline
-    svg.innerHTML = `<line x1="0" y1="${h * 0.52}" x2="${svg.clientWidth}" y2="${h * 0.52}" stroke="${bg3}" stroke-width="0.5"/>`;
-    return;
-  }
-
-  results.trades.slice(-N).forEach(t => {
-    pnls.push(t.pnl || 0);
-    types.push(t.exit_type || 'PROFIT');
-  });
-
-  const maxAbs = Math.max(...pnls.map(Math.abs), 1);
-  const mid = h * 0.52;
-  const bw = Math.max(2, (w / (pnls.length || 1)) - 1);
+  const PAD = 4;          // px above/below zero line
+  const mid = h / 2;
+  const halfH = mid - PAD;
 
   let bars = `<line x1="0" y1="${mid}" x2="${w}" y2="${mid}" stroke="${bg3}" stroke-width="0.5"/>`;
-  pnls.forEach((v, i) => {
-    const x = i * (w / pnls.length);
-    const bh = Math.abs(v) / maxAbs * (h * 0.46);
-    const y = v >= 0 ? mid - bh : mid;
-    bars += `<rect x="${x}" y="${y}" width="${bw}" height="${bh}" fill="${colors[types[i]] || pos}" opacity="0.85"/>`;
+
+  // Year separator lines (same appearance as main charts)
+  const minYear = new Date(minTs).getUTCFullYear();
+  const maxYear = new Date(maxTs).getUTCFullYear();
+  for (let y = minYear + 1; y <= maxYear; y++) {
+    const x = (Date.UTC(y, 0, 1) - minTs) / span * w;
+    if (x > 0 && x < w) {
+      bars += `<line x1="${x}" y1="0" x2="${x}" y2="${h}" stroke="${dim}" stroke-width="1" opacity="0.5"/>`;
+    }
+  }
+
+  trades.forEach(t => {
+    const entryMs = dateMs(t.entry_date);
+    const exitMs  = dateMs(t.exit_date);
+    const x1 = Math.max(0, (entryMs - minTs) / span * w);
+    const x2 = Math.min(w, (exitMs  - minTs) / span * w);
+    const bw = Math.max(1.5, x2 - x1);
+    const bh = Math.abs(t.pnl) / maxAbs * halfH;
+    const y  = t.pnl >= 0 ? mid - bh : mid;
+    const color = colors[t.exit_type] || pos;
+
+    bars += `<rect x="${x1.toFixed(1)}" y="${y.toFixed(1)}" width="${bw.toFixed(1)}" height="${bh.toFixed(1)}" fill="${color}" opacity="0.85"/>`;
+    _rects.push({ x1, x2: x1 + bw, trade: t });
   });
+
   svg.innerHTML = bars;
+}
+
+function dateMs(dateStr) {
+  return new Date(dateStr + 'T00:00:00Z').getTime();
 }

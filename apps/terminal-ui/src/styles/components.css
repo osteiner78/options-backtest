@@ -261,6 +261,9 @@ table.dt td.r { text-align: right; }
 table.dt tr.bld td { font-weight: 600; color: var(--fg0); }
 table.dt tr.sub td { color: var(--fg4); font-size: 10.5px; padding-left: 12px; }
 table.dt tr.tot td { border-top: 1px solid var(--bg3); font-weight: 600; color: var(--fg0); }
+/* SKIPPED row sits above a visible separator, outside the % accounting */
+table.dt tr.skipped-row td { padding-bottom: 3px; }
+table.dt tr.skipped-sep td { height: 4px; padding: 0; border-bottom: 1px dashed var(--bg4); }
 .tp-sub {
   font-size: 9.5px;
   font-weight: 600;
@@ -282,9 +285,28 @@ table.dt tr.tot td { border-top: 1px solid var(--bg3); font-weight: 600; color: 
   white-space: nowrap;
   writing-mode: vertical-rl;
   transform: rotate(180deg);
+  flex-shrink: 0;
+}
+.pnl-chart-wrap {
+  flex: 1;
+  position: relative;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
 }
 .pnl-expand-hint { font-size: 10px; color: var(--dim); white-space: nowrap; }
-.pnl-strip-actions { display: flex; gap: 5px; flex-shrink: 0; }
+.pnl-strip-actions { display: flex; gap: 5px; flex-shrink: 0; align-items: flex-end; padding-bottom: 4px; }
+.pnl-tooltip {
+  position: absolute;
+  background: var(--bg2);
+  border: 1px solid var(--bg4);
+  border-radius: 3px;
+  padding: 5px 8px;
+  font-size: 11px;
+  pointer-events: none;
+  z-index: 10;
+  min-width: 160px;
+}
 
 /* ──────────────── Trade log overlay ──────────────── */
 .tl-header {
