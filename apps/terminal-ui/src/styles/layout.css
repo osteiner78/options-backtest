@@ -92,7 +92,7 @@ body {
 .tables-row {
   border-top: 1px solid var(--bg3);
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: 1.15fr 0.85fr;
   flex-shrink: 0;
 }
 .pnl-strip {
@@ -104,14 +104,15 @@ body {
   padding: 2px 8px;
   cursor: pointer;
   flex-shrink: 0;
-  min-height: 44px;
+  height: 25vh;
+  min-height: 80px;
   position: relative;
 }
 
 /* ── Overlays: Trade Log drawer + Tweaks panel ── */
 .trade-log-overlay {
   position: fixed;
-  bottom: 44px;
+  bottom: max(80px, 25vh);
   left: 188px;
   right: 0;
   height: 0;
@@ -127,7 +128,7 @@ body {
 
 .run-history-overlay {
   position: fixed;
-  bottom: 44px;
+  bottom: max(80px, 25vh);
   left: 0;
   right: 0;
   height: 0;

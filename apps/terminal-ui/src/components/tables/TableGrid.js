@@ -11,9 +11,8 @@ export function renderTableGrid() {
   const { results } = store;
   if (!results || !results.trades) {
     return `
-      <div class="tables-row" style="grid-template-columns: 1fr 1fr 1fr;">
+      <div class="tables-row">
         <div class="tp"><div class="tp-title">Trades Summary</div><div style="padding:10px;color:var(--dim)">Run backtest...</div></div>
-        <div class="tp"><div class="tp-title">Exit Breakdown</div><div style="padding:10px;color:var(--dim)">Run backtest...</div></div>
         <div class="tp"><div class="tp-title">VIX Regime</div><div style="padding:10px;color:var(--dim)">Run backtest...</div></div>
       </div>
     `;
@@ -22,49 +21,58 @@ export function renderTableGrid() {
   const { metrics, trades } = results;
   const totalN = trades.length;
 
-  const pnls = trades.map(t => t.pnl || 0);
-  const minPnl = pnls.length ? Math.min(...pnls) : 0;
-  const maxPnl = pnls.length ? Math.max(...pnls) : 0;
-
-  const summaryRows = [
-    { label: 'Number of trades',    val: metrics.n_trades },
-    { label: 'Win rate',            val: formatPct(metrics.win_rate), color: 'c-blue' },
-    { label: 'Avg P&L',             val: formatPnl(metrics.avg_pnl),  color: 'c-pos' },
-    { label: 'P&L range',           val: `[${formatPnl(minPnl)} - ${formatPnl(maxPnl)}]`, color: 'c-dim' },
-    { label: 'Avg positions',       val: metrics.avg_positions ? metrics.avg_positions.toFixed(1) : '--' },
-    { label: 'Peak positions',      val: metrics.peak_positions || '--', color: 'c-amb' },
-    { label: 'Max consec. losses',  val: metrics.max_streak || '--', color: 'c-neg' },
-    { label: 'Skipped (VIX filter)', val: results.vix_blocked_dates ? results.vix_blocked_dates.length : 0, color: 'c-neg' },
-    { label: 'Avg BPR util',        val: metrics.avg_bpr_util_pct ? formatPct(metrics.avg_bpr_util_pct) : '--' },
-    { label: 'Peak BPR util',       val: metrics.peak_bpr_util_pct ? formatPct(metrics.peak_bpr_util_pct) : '--', color: 'c-amb' },
-  ];
-
   const exitData = results.exit_stats ?? computeExitStats(trades);
   const vixData  = results.vix_regime_stats ?? computeVixRegimeStats(trades);
 
+  // Options-only total P&L = sum of individual exit rows (excludes cash yield)
+  const optionsTotalPnl = exitData.reduce((sum, d) => sum + d.totalPnl, 0);
+
   const winRateClass = (wr) => wr >= 0.7 ? 'c-pos' : (wr >= 0.5 ? 'c-amb' : 'c-neg');
 
+  const sub = (label) => `<div class="tp-sub">${label}</div>`;
+  const row = (label, val, cls = '') => `
+    <tr>
+      <td style="color:var(--dim)">${label}</td>
+      <td class="r fw6 ${cls}">${val}</td>
+    </tr>`;
+
+  const avgPos  = metrics.avg_positions  ? metrics.avg_positions.toFixed(1)  : '--';
+  const peakPos = metrics.peak_positions || '--';
+  const maxStrk = metrics.max_streak     || '--';
+  const skipped = results.vix_blocked_dates ? results.vix_blocked_dates.length : 0;
+  const avgBpr  = metrics.avg_bpr_util_pct  ? formatPct(metrics.avg_bpr_util_pct)  : '--';
+  const peakBpr = metrics.peak_bpr_util_pct ? formatPct(metrics.peak_bpr_util_pct) : '--';
+
   return `
-    <div class="tables-row" style="grid-template-columns: 1.1fr 1.3fr 1.3fr;">
+    <div class="tables-row">
+
+      <!-- ── Left: Trades Summary (positions + BPR + exit breakdown) ── -->
       <div class="tp">
         <div class="tp-title">Trades Summary</div>
+
+        ${sub('Positions')}
         <table class="dt">
           <tbody>
-            ${summaryRows.map(r => `
-              <tr>
-                <td style="color:var(--dim);">${r.label}</td>
-                <td class="r fw6 ${r.color || ''}">${r.val}</td>
-              </tr>
-            `).join('')}
+            ${row('Avg positions',        avgPos)}
+            ${row('Peak positions',       peakPos,  'c-amb')}
+            ${row('Max consec. losses',   maxStrk,  maxStrk !== '--' ? 'c-neg' : '')}
+            ${row('Skipped (VIX filter)', skipped,  skipped > 0 ? 'c-neg' : '')}
           </tbody>
         </table>
-      </div>
 
-      <div class="tp">
-        <div class="tp-title">Exit Breakdown</div>
+        ${sub('BPR Utilization')}
+        <table class="dt">
+          <tbody>
+            ${row('Avg BPR util',  avgBpr)}
+            ${row('Peak BPR util', peakBpr, 'c-amb')}
+          </tbody>
+        </table>
+
+        ${sub('Exit Breakdown')}
         <table class="dt">
           <thead><tr>
-            <th>Type</th><th class="r">N</th><th class="r">%</th><th class="r">Win%</th><th class="r">Avg P&L</th><th class="r">Total P&L</th>
+            <th>Type</th><th class="r">N</th><th class="r">%</th>
+            <th class="r">Win%</th><th class="r">Avg P&L</th><th class="r">Total P&L</th>
           </tr></thead>
           <tbody>
             ${exitData.map(d => `
@@ -81,18 +89,20 @@ export function renderTableGrid() {
               <td>TOTAL</td><td class="r">${totalN}</td><td class="r">100%</td>
               <td class="r c-pos">${(metrics.win_rate * 100).toFixed(0)}%</td>
               <td class="r c-pos">${formatPnl(metrics.avg_pnl)}</td>
-              <td class="r c-pos">${formatPnl(metrics.final_balance - metrics.initial_balance)}</td>
+              <td class="r c-pos">${formatPnl(optionsTotalPnl)}</td>
             </tr>
           </tbody>
         </table>
-        <div style="font-size:7px; color:var(--dim); margin-top:5px; text-align:right;">TOTAL includes Options P&L + Cash Yield</div>
+        <div style="font-size:7px;color:var(--dim);margin-top:4px;text-align:right;">TOTAL = Options P&L only (excl. cash yield)</div>
       </div>
 
+      <!-- ── Right: VIX Regime ── -->
       <div class="tp">
         <div class="tp-title">VIX Regime</div>
         <table class="dt">
           <thead><tr>
-            <th>Regime</th><th class="r">Range</th><th class="r">N</th><th class="r">Win%</th><th class="r">Avg P&L</th><th class="r">Total P&L</th>
+            <th>Regime</th><th class="r">Range</th><th class="r">N</th>
+            <th class="r">Win%</th><th class="r">Avg P&L</th><th class="r">Total P&L</th>
           </tr></thead>
           <tbody>
             ${vixData.map(d => `
@@ -109,11 +119,13 @@ export function renderTableGrid() {
               <td>TOTAL</td><td class="r"></td><td class="r">${totalN}</td>
               <td class="r c-pos">${(metrics.win_rate * 100).toFixed(0)}%</td>
               <td class="r c-pos">${formatPnl(metrics.avg_pnl)}</td>
-              <td class="r c-pos">${formatPnl(metrics.final_balance - metrics.initial_balance)}</td>
+              <td class="r c-pos">${formatPnl(optionsTotalPnl)}</td>
             </tr>
           </tbody>
         </table>
+        <div style="font-size:7px;color:var(--dim);margin-top:4px;text-align:right;">TOTAL = Options P&L only (excl. cash yield)</div>
       </div>
+
     </div>
   `;
 }

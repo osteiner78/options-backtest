@@ -3,9 +3,7 @@ import { store, setTheme, toggleThemePanel } from '../../store.js';
 const THEMES = [
   { id: 'gruvbox',    label: 'Gruvbox Dark' },
   { id: 'tokyo',      label: 'Tokyo Night' },
-  { id: 'solarized',  label: 'Solarized Dark' },
-  { id: 'onedark',    label: 'One Dark' },
-  { id: 'nord',       label: 'Nord' },
+  { id: 'solarized',  label: 'Solarized Light' },
   { id: 'catppuccin', label: 'Catppuccin Macchiato' },
   { id: 'bloomberg',  label: 'Bloomberg Terminal' },
 ];
@@ -38,9 +36,13 @@ export function renderTweaksPanel() {
   `;
 }
 
+const VALID_THEME_IDS = new Set(THEMES.map(t => t.id));
+
 export function applyTheme(theme) {
   document.body.classList.remove(...ALL_THEME_CLASSES);
-  document.body.classList.add(`theme-${theme}`);
+  // Fall back to gruvbox if a removed theme was persisted in localStorage
+  const safe = VALID_THEME_IDS.has(theme) ? theme : 'gruvbox';
+  document.body.classList.add(`theme-${safe}`);
 }
 
 let bound = false;
