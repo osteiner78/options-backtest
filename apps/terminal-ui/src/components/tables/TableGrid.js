@@ -42,16 +42,6 @@ export function renderTableGrid() {
             <th class="r">Win%</th><th class="r">Avg P&L</th><th class="r">Total P&L</th>
           </tr></thead>
           <tbody>
-            <!-- SKIPPED row: above the separator, not counted in % -->
-            <tr class="skipped-row">
-              <td class="c-neg fw6" style="font-size:10px;letter-spacing:0.02em">SKIPPED · VIX</td>
-              <td class="r c-neg">${skipped}</td>
-              <td class="r c-dim">--</td>
-              <td class="r c-dim">--</td>
-              <td class="r c-dim">--</td>
-              <td class="r c-dim">--</td>
-            </tr>
-            <tr class="skipped-sep"><td colspan="6"></td></tr>
             ${exitData.map(d => `
               <tr>
                 <td class="${EXIT_COLORS[d.type] || ''} fw6">${d.type}</td>
@@ -67,6 +57,16 @@ export function renderTableGrid() {
               <td class="r c-pos">${(metrics.win_rate * 100).toFixed(0)}%</td>
               <td class="r c-pos">${formatPnl(metrics.avg_pnl)}</td>
               <td class="r c-pos">${formatPnl(optionsTotalPnl)}</td>
+            </tr>
+            <!-- SKIPPED row: below TOTAL, not included in % or P&L accounting -->
+            <tr class="skipped-sep"><td colspan="6"></td></tr>
+            <tr class="skipped-row">
+              <td class="c-neg fw6" style="font-size:10px;letter-spacing:0.02em">SKIPPED · VIX</td>
+              <td class="r c-neg">${skipped}</td>
+              <td class="r c-dim">--</td>
+              <td class="r c-dim">--</td>
+              <td class="r c-dim">--</td>
+              <td class="r c-dim">--</td>
             </tr>
           </tbody>
         </table>

@@ -4,6 +4,16 @@ import { store, setActiveTab } from '../../store.js';
 let chart = null;
 let mountEl = null;
 
+/** Returns the plot-area left/right margins as fractions of total chart width.
+ *  PnLStrip uses this to align its SVG bars to the same x-scale. */
+export function getPlotFractions() {
+  if (!chart || !chart.bbox || !chart.width) return { left: 0.04, right: 0.008 };
+  return {
+    left:  chart.bbox.left / chart.width,
+    right: 1 - (chart.bbox.left + chart.bbox.width) / chart.width,
+  };
+}
+
 const legends = {
   equity:    `<div class="leg-item"><div class="leg-rect" style="background:var(--pos)"></div>Portfolio P&L ($)</div><div class="leg-item"><div class="leg-line" style="background:var(--a2);opacity:0.8"></div>SPY B&H P&L ($)</div><div class="leg-item"><div class="leg-rect" style="background:var(--neg);opacity:0.7"></div>Drawdown ($)</div>`,
   bpr:       `<div class="leg-item"><div class="leg-rect" style="background:var(--a2)"></div>Utilized BPR ($)</div><div class="leg-item"><div class="leg-line" style="background:var(--neg);opacity:0.6;border-top:2px dashed var(--neg)"></div>BPR Cap</div>`,
@@ -112,10 +122,6 @@ function drawYearSeps(u) {
   ctx.strokeStyle = dim + 'cc';
   ctx.lineWidth = 1.5;
   ctx.setLineDash([]);
-  ctx.fillStyle = dim;
-  ctx.font = `600 12px "IBM Plex Mono", monospace`;
-  ctx.textAlign = 'left';
-  ctx.textBaseline = 'top';
   for (let y = minYear + 1; y <= maxYear; y++) {
     const ts = Date.UTC(y, 0, 1) / 1000;
     const x = u.valToPos(ts, 'x', true);
@@ -124,7 +130,6 @@ function drawYearSeps(u) {
     ctx.moveTo(x, u.bbox.top);
     ctx.lineTo(x, u.bbox.top + u.bbox.height);
     ctx.stroke();
-    ctx.fillText(String(y), x + 3, u.bbox.top + 2);
   }
   ctx.restore();
 }
@@ -552,7 +557,7 @@ function drawHLine(u, yVal, color, label) {
   ctx.setLineDash([]);
   if (label) {
     ctx.fillStyle = color;
-    ctx.font = `600 10px "IBM Plex Mono", monospace`;
+    ctx.font = `600 12px "IBM Plex Mono", monospace`;
     ctx.textBaseline = 'bottom';
     ctx.fillText(label, u.bbox.left + 8, y - 2);
   }
