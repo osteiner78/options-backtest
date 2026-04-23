@@ -90,8 +90,7 @@ export function renderPerformanceBar() {
         <thead><tr>
           <th style="min-width:155px"></th>
           <th class="r">Total Return</th><th class="r">Annual Return</th><th class="r">Sharpe</th>
-          <th class="r">Max DD</th><th class="r">Calmar</th><th class="r">Total P&L</th><th class="r">Trades</th>
-          <th class="r">Win Rate</th><th class="r">Avg P&L</th>
+          <th class="r">Max DD</th><th class="r">Calmar</th><th class="r">Total P&L</th>
         </tr></thead>
         <tbody>
           <tr class="pt-port">
@@ -102,9 +101,6 @@ export function renderPerformanceBar() {
             <td class="r c-neg fw6">${formatPct(metrics.max_drawdown)}</td>
             <td class="r c-amb fw6">${formatNum(metrics.calmar)}</td>
             <td class="r c-pos fw6">${formatPnl(portPnl)}</td>
-            <td class="r fw6">${metrics.n_trades}</td>
-            <td class="r c-blue fw6">${formatPct(metrics.win_rate)}</td>
-            <td class="r c-pos fw6">${formatPnl(metrics.avg_pnl)}</td>
           </tr>
 
           <tr class="pt-sub">
@@ -115,9 +111,6 @@ export function renderPerformanceBar() {
             <td class="r c-neg">${optMDD > 0 ? formatPct(optMDD) : '--'}</td>
             <td class="r c-amb">${optCalmar != null ? formatNum(optCalmar) : '--'}</td>
             <td class="r ${optPnl >= 0 ? 'c-pos' : 'c-neg'}">${formatPnl(optPnl)}</td>
-            <td class="r">${metrics.n_trades}</td>
-            <td class="r c-blue">${formatPct(metrics.win_rate)}</td>
-            <td class="r c-pos">${formatPnl(metrics.avg_pnl)}</td>
           </tr>
 
           <tr class="pt-sub">
@@ -128,7 +121,6 @@ export function renderPerformanceBar() {
             <td class="r c-neg">${formatPct(spyMDD)}</td>
             <td class="r c-amb">${spyCalmar != null ? formatNum(spyCalmar) : '--'}</td>
             <td class="r ${spyPnl >= 0 ? 'c-pos' : 'c-neg'}">${formatPnl(spyPnl)}</td>
-            ${na}${na}${na}
           </tr>
 
           <tr class="pt-sub">
@@ -137,7 +129,6 @@ export function renderPerformanceBar() {
             <td class="r">${formatPct(metrics.cagr_cash_rf)}</td>
             ${na}${na}${na}
             <td class="r ${rfPnl >= 0 ? 'c-pos' : 'c-neg'}">${formatPnl(rfPnl)}</td>
-            ${na}${na}${na}
           </tr>
 
           <tr class="pt-spy">
@@ -145,14 +136,13 @@ export function renderPerformanceBar() {
             <td class="r c-blue fw6">${formatSignedPct(metrics.spy_total_return)}</td>
             <td class="r c-blue fw6">${formatPct(metrics.spy_annualized_return)}</td>
             <td class="r c-blue fw6">${formatNum(metrics.spy_sharpe)}</td>
-            <td class="r c-neg fw6">${formatPct(metrics.spy_max_drawdown)}</td>
+            <td class="r c-blue fw6">${formatPct(metrics.spy_max_drawdown)}</td>
             <td class="r c-blue fw6">${formatNum(metrics.spy_calmar)}</td>
             <td class="r c-blue fw6">${formatPnl(init * metrics.spy_total_return)}</td>
-            ${na}${na}${na}
           </tr>
         </tbody>
       </table>
-      <div style="font-size:7px;color:var(--dim);padding:2px 8px;text-align:right;">
+      <div style="font-size:9px;color:var(--dim);padding:2px 8px;text-align:right;">
         SPY Sharpe &amp; MaxDD: same underlying returns as SPY B&amp;H · Calmar uses component CAGR
       </div>
     </div>

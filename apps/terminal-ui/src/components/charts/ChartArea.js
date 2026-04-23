@@ -4,13 +4,18 @@ import { store, setActiveTab } from '../../store.js';
 let chart = null;
 let mountEl = null;
 
-/** Returns the plot-area left/right margins as fractions of total chart width.
- *  PnLStrip uses this to align its SVG bars to the same x-scale. */
-export function getPlotFractions() {
-  if (!chart || !chart.bbox || !chart.width) return { left: 0.04, right: 0.008 };
+/**
+ * Returns the chart plot-area edges in *viewport* CSS pixel coordinates.
+ * uPlot stores bbox in device pixels, so we divide by devicePixelRatio.
+ * PnLStrip uses this to pixel-align its SVG bars with the equity chart x-axis.
+ */
+export function getPlotViewportRect() {
+  if (!chart || !mountEl || !chart.bbox) return null;
+  const dpr  = window.devicePixelRatio || 1;
+  const rect = mountEl.getBoundingClientRect();
   return {
-    left:  chart.bbox.left / chart.width,
-    right: 1 - (chart.bbox.left + chart.bbox.width) / chart.width,
+    left:  rect.left + chart.bbox.left               / dpr,
+    right: rect.left + (chart.bbox.left + chart.bbox.width)  / dpr,
   };
 }
 
@@ -506,6 +511,7 @@ function vixOpts(w, h) {
       base.axes[0],
       { ...base.axes[1], values: (_, splits) => splits.map(v => v.toFixed(0)) },
     ],
+    scales: { y: { range: (u, dmin, dmax) => [0, Math.max(dmax, 40)] } },
     series: [
       { label: 'Date' },
       { label: 'VIX',     stroke: fg4, width: 1.5 },
@@ -524,7 +530,7 @@ function pnlOpts(w, h) {
     width: w, height: h, ...base,
     axes: [
       base.axes[0],
-      { ...base.axes[1], values: (_, splits) => splits.map(v => (v >= 0 ? '+' : '') + '$' + Math.round(Math.abs(v) / 1000) + 'k') },
+      { ...base.axes[1], values: (_, splits) => splits.map(v => (v >= 0 ? '+$' : '-$') + Math.round(Math.abs(v) / 1000) + 'k') },
     ],
     scales: { y: { range: (u, dmin, dmax) => [Math.min(dmin, 0), dmax] } },
     series: [
@@ -557,7 +563,7 @@ function drawHLine(u, yVal, color, label) {
   ctx.setLineDash([]);
   if (label) {
     ctx.fillStyle = color;
-    ctx.font = `600 12px "IBM Plex Mono", monospace`;
+    ctx.font = `600 13px "IBM Plex Mono", monospace`;
     ctx.textBaseline = 'bottom';
     ctx.fillText(label, u.bbox.left + 8, y - 2);
   }
