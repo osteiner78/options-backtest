@@ -21,7 +21,9 @@ This project is a comprehensive backtesting engine for the **SPY short strangle*
     - `plotting.py`: Visualization tools.
     - `api.py`: FastAPI implementation.
 - `scripts/`: Entry points for CLI backtests and API server.
-- `frontend/`: Streamlit web application.
+- `apps/`: Frontend applications.
+    - `streamlit-ui/`: Streamlit web application.
+    - `terminal-ui/`: Vite/Vanilla terminal interface.
 - `tests/`: Comprehensive test suite for engines, strategy, and metrics.
 - `data/`: Local data storage (SQLite DB and .gitkeep).
 
@@ -39,7 +41,7 @@ pip install -e ".[dev,frontend,api]"
 
 ### Web Interface (Streamlit)
 ```bash
-streamlit run frontend/app.py
+streamlit run apps/streamlit-ui/app.py
 ```
 
 ### API Server

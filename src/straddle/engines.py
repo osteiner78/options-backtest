@@ -341,16 +341,26 @@ class MarketEngine:
 
     def __init__(self, params: dict) -> None:
         import sqlite3 as _sqlite3
+        from pathlib import Path
 
-        db_path = params.get("db_path", "data/Spy Options Database.db")
+        db_path_raw = params.get("db_path", "data/Spy Options Database.db")
+        # Ensure db_path is relative to project root even if run from apps/
+        db_path = Path(db_path_raw)
+        if not db_path.is_absolute():
+            # Assume we are in src/straddle/engines.py or similar
+            root = Path(__file__).resolve().parent.parent.parent
+            db_path = root / db_path_raw
+        
+        db_path_str = str(db_path)
+
         # Validate date range early to avoid silent synthetic fallback
-        validate_market_mode_dates(params["start_date"], params["end_date"], db_path)
+        validate_market_mode_dates(params["start_date"], params["end_date"], db_path_str)
 
         self._synth = SyntheticEngine(params)
-        self._con = _sqlite3.connect(db_path, check_same_thread=False)
+        self._con = _sqlite3.connect(db_path_str, check_same_thread=False)
         self._con.row_factory = _sqlite3.Row
         self.delta = params["target_delta"]
-        print(f"MarketEngine: connected to {db_path}")
+        print(f"MarketEngine: connected to {db_path_str}")
 
     def apply_fill_adj(self, mid_ps: float, side: str) -> float:
         """Market mode: fill adjustment is already baked into bid/ask selection.

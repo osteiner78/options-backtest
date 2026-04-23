@@ -39,7 +39,7 @@ python scripts/run_backtest.py --mode synthetic --no-plot
 ### Run Streamlit Frontend
 
 ```bash
-streamlit run frontend/app.py
+streamlit run apps/streamlit-ui/app.py
 ```
 
 ### Run API Server
@@ -76,8 +76,10 @@ straddle-backtest/
 ├── scripts/
 │   ├── run_backtest.py  # CLI entry point
 │   └── run_api.py       # API server entry point
-├── frontend/
-│   └── app.py           # Streamlit web UI
+├── apps/
+│   ├── streamlit-ui/    # Streamlit dashboard
+│   │   └── app.py       
+│   └── terminal-ui/     # Vite/Vanilla terminal UI
 ├── tests/
 │   ├── conftest.py      # Shared fixtures
 │   ├── test_engines.py  # BS math, engine parity

@@ -1,0 +1,1026 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Terminal UI — Final Wireframe v3</title>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@300;400;500;600&family=Caveat:wght@400;600;700&display=swap" rel="stylesheet">
+<style>
+/* ── Gruvbox Dark tokens ── */
+:root {
+  --bg0:  #1d2021;
+  --bg1:  #282828;
+  --bg2:  #32302f;
+  --bg3:  #3c3836;
+  --bg4:  #504945;
+  --fg0:  #fbf1c7;
+  --fg1:  #ebdbb2;
+  --fg2:  #d5c4a1;
+  --fg3:  #bdae93;
+  --fg4:  #a89984;
+  --dim:  #665c54;
+  --a1:   #d79921;  /* yellow  */
+  --a2:   #458588;  /* teal    */
+  --a3:   #b16286;  /* purple  */
+  --a4:   #98971a;  /* green   */
+  --red:  #cc241d;
+  --pos:  #b8bb26;
+  --neg:  #fb4934;
+  --orange: #d65d0e;
+}
+
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  font-family: 'IBM Plex Mono', monospace;
+  background: var(--bg0);
+  color: var(--fg1);
+  font-size: 12px;
+  line-height: 1.5;
+  height: 100vh;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+/* ════════════════════ TOP BAR ════════════════════ */
+.topbar {
+  height: 36px;
+  min-height: 36px;
+  background: var(--bg1);
+  border-bottom: 1px solid var(--bg3);
+  display: flex;
+  align-items: center;
+  padding: 0 10px;
+  gap: 8px;
+  flex-shrink: 0;
+}
+.brand { font-size: 11px; font-weight: 600; color: var(--a1); letter-spacing: 0.1em; }
+.sep   { color: var(--dim); font-size: 10px; }
+.config-pill {
+  font-size: 9.5px; color: var(--fg4); background: var(--bg2);
+  border: 1px solid var(--bg4); border-radius: 2px; padding: 2px 8px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 500px;
+}
+.spacer { flex: 1; }
+.topbar-meta { font-size: 9px; color: var(--dim); white-space: nowrap; }
+.btn {
+  font-family: inherit; font-size: 10px; font-weight: 500;
+  padding: 3px 10px; border-radius: 2px; cursor: pointer;
+  background: var(--bg2); color: var(--fg3); border: 1px solid var(--bg4);
+  letter-spacing: 0.04em; white-space: nowrap;
+}
+.btn:hover { background: var(--bg3); color: var(--fg1); }
+.btn-primary { background: var(--a1); color: var(--bg0); border-color: var(--a1); font-weight: 600; }
+.btn-primary:hover { opacity: 0.9; }
+
+/* ════════════════════ BODY LAYOUT ════════════════════ */
+.body {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* ════════════════════ SIDEBAR ════════════════════ */
+.sidebar {
+  width: 188px;
+  min-width: 188px;
+  background: var(--bg1);
+  border-right: 1px solid var(--bg3);
+  overflow-y: auto;
+  overflow-x: hidden;
+  scrollbar-width: thin;
+  scrollbar-color: var(--bg4) transparent;
+}
+.sidebar::-webkit-scrollbar { width: 3px; }
+.sidebar::-webkit-scrollbar-thumb { background: var(--bg4); }
+
+.sec-hdr {
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 5px 8px;
+  font-size: 9.5px; font-weight: 600; letter-spacing: 0.1em; text-transform: uppercase;
+  color: var(--a1); cursor: pointer; user-select: none;
+  border-bottom: 1px solid var(--bg3);
+}
+.sec-hdr:hover { background: var(--bg2); }
+.sec-hdr .caret { color: var(--dim); font-size: 8px; }
+
+.sec-body { padding: 4px 8px 6px; border-bottom: 1px solid var(--bg3); }
+
+.pr {
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 1.5px 0; font-size: 10px; gap: 4px;
+}
+.pl { color: var(--fg4); flex-shrink: 0; }
+.pv { color: var(--fg1); font-weight: 500; text-align: right; cursor: pointer; }
+.pv:hover { color: var(--a1); }
+.pv.green  { color: var(--pos); }
+.pv.red    { color: var(--neg); }
+.pv.blue   { color: var(--a2); }
+.pv.amber  { color: var(--a1); }
+.pv.dim    { color: var(--dim); }
+.pv.purple { color: var(--a3); }
+
+/* editable field */
+.pv-input {
+  font-family: inherit; font-size: 10px; font-weight: 500;
+  background: var(--bg3); color: var(--a1); border: 1px solid var(--a1);
+  border-radius: 1px; padding: 0 3px; width: 70px; text-align: right;
+  outline: none;
+}
+
+.pdivider { height: 1px; background: var(--bg3); margin: 3px 0; }
+
+/* ════════════════════ MAIN ════════════════════ */
+.main {
+  flex: 1;
+  min-width: 0;
+  display: grid;
+  grid-template-rows: auto auto 1fr auto auto;
+  overflow: hidden;
+}
+
+/* ── Performance Summary bar ── */
+.perf-bar {
+  display: flex; align-items: stretch;
+  border-bottom: 1px solid var(--bg3);
+  background: var(--bg1); flex-shrink: 0; overflow: hidden;
+}
+.perf-bar-label {
+  font-size: 7.5px; font-weight: 600; letter-spacing: 0.12em; text-transform: uppercase;
+  color: var(--a1); writing-mode: vertical-rl; transform: rotate(180deg);
+  padding: 6px 6px; border-right: 1px solid var(--bg3); flex-shrink: 0;
+  background: var(--bg2);
+}
+table.perf-table { width: 100%; border-collapse: collapse; }
+table.perf-table thead th {
+  font-size: 8px; font-weight: 400; letter-spacing: 0.06em; text-transform: uppercase;
+  color: var(--dim); padding: 3px 10px 2px; border-bottom: 1px solid var(--bg3);
+  white-space: nowrap; text-align: left;
+}
+table.perf-table thead th.r { text-align: right; }
+table.perf-table tbody td { padding: 2px 10px; white-space: nowrap; font-size: 10px; color: var(--fg3); }
+table.perf-table tbody td.r { text-align: right; }
+table.perf-table tbody td.ptl { color: var(--fg4); min-width: 110px; }
+table.perf-table tr.pt-port td {
+  background: var(--bg2); font-size: 12px; padding: 5px 10px;
+  border-bottom: 1px solid var(--bg3);
+}
+table.perf-table tr.pt-sub td { font-size: 9px; color: var(--fg4); padding: 1.5px 10px; }
+table.perf-table tr.pt-sub td.ptl { padding-left: 20px; }
+table.perf-table tr.pt-spy td { border-top: 1px solid var(--bg3); padding: 4px 10px; font-size: 10px; }
+.kv-pos  { color: var(--pos); }
+.kv-neg  { color: var(--neg); }
+.kv-amb  { color: var(--a1); }
+.kv-blue { color: var(--a2); }
+.up { color: var(--pos); }
+.dn { color: var(--neg); }
+
+/* ── Chart tabs ── */
+.chart-tabs {
+  display: flex;
+  align-items: center;
+  background: var(--bg1);
+  border-bottom: 1px solid var(--bg3);
+  padding: 0 8px;
+  gap: 0;
+  flex-shrink: 0;
+}
+.chart-tab {
+  font-size: 9.5px; font-weight: 500; letter-spacing: 0.07em; text-transform: uppercase;
+  padding: 4px 12px;
+  color: var(--dim); cursor: pointer; border-bottom: 2px solid transparent;
+  white-space: nowrap;
+}
+.chart-tab:hover { color: var(--fg3); }
+.chart-tab.active { color: var(--a1); border-bottom-color: var(--a1); }
+.tab-spacer { flex: 1; }
+.chart-legend { display: flex; gap: 10px; align-items: center; padding: 0 4px; }
+.leg-item { display: flex; align-items: center; gap: 4px; font-size: 8.5px; color: var(--dim); }
+.leg-line { width: 14px; height: 2px; border-radius: 1px; }
+
+/* ── Chart area ── */
+.chart-area {
+  position: relative;
+  min-height: 0;
+  overflow: hidden;
+  padding: 6px 8px 4px;
+}
+.chart-wrap {
+  position: relative;
+  width: 100%;
+  height: 100%;
+}
+svg.chart { width: 100%; height: 100%; display: block; }
+
+/* chart panel switching */
+.chart-panel { display: none; width: 100%; height: 100%; }
+.chart-panel.active { display: flex; flex-direction: column; }
+
+/* ── Tables row ── */
+.tables-row {
+  border-top: 1px solid var(--bg3);
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  flex-shrink: 0;
+}
+.tp {
+  padding: 5px 8px 6px;
+  border-right: 1px solid var(--bg3);
+  overflow: hidden;
+}
+.tp:last-child { border-right: none; }
+.tp-title {
+  font-size: 8.5px; font-weight: 600; letter-spacing: 0.1em; text-transform: uppercase;
+  color: var(--a1); margin-bottom: 4px; padding-bottom: 3px; border-bottom: 1px solid var(--bg3);
+}
+table.dt { width: 100%; border-collapse: collapse; font-size: 9.5px; }
+table.dt th { color: var(--dim); font-size: 8.5px; font-weight: 400; letter-spacing: 0.04em; padding: 1px 3px 3px; text-align: left; border-bottom: 1px solid var(--bg3); }
+table.dt th.r { text-align: right; }
+table.dt td { padding: 1.5px 3px; color: var(--fg3); white-space: nowrap; }
+table.dt td.r { text-align: right; }
+table.dt tr.bld td { font-weight: 600; color: var(--fg0); }
+table.dt tr.sub td { color: var(--fg4); font-size: 9px; padding-left: 12px; }
+table.dt tr.tot td { border-top: 1px solid var(--bg3); font-weight: 600; color: var(--fg0); }
+.c-pos    { color: var(--pos) !important; }
+.c-neg    { color: var(--neg) !important; }
+.c-amb    { color: var(--a1) !important; }
+.c-blue   { color: var(--a2) !important; }
+.c-pur    { color: var(--a3) !important; }
+.c-dim    { color: var(--dim) !important; }
+.c-grn    { color: var(--a4) !important; }
+.fw6      { font-weight: 600 !important; }
+
+/* ── P&L strip ── */
+.pnl-strip {
+  border-top: 1px solid var(--bg3);
+  background: var(--bg1);
+  display: flex; align-items: center; gap: 8px;
+  padding: 2px 8px;
+  cursor: pointer;
+  flex-shrink: 0;
+  min-height: 44px;
+  position: relative;
+}
+.pnl-strip:hover { background: var(--bg2); }
+.pnl-strip-lbl { font-size: 8.5px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--dim); white-space: nowrap; writing-mode: vertical-rl; transform: rotate(180deg); }
+.pnl-expand-hint { font-size: 8.5px; color: var(--dim); white-space: nowrap; }
+.pnl-strip-actions { display: flex; gap: 5px; flex-shrink: 0; }
+
+/* ════════════════════ TRADE LOG OVERLAY ════════════════════ */
+.trade-log-overlay {
+  position: fixed;
+  bottom: 44px; /* height of pnl-strip */
+  left: 188px;  /* sidebar width */
+  right: 0;
+  height: 0;
+  background: var(--bg1);
+  border-top: 1px solid var(--bg3);
+  overflow: hidden;
+  transition: height 0.2s ease;
+  z-index: 200;
+  display: flex;
+  flex-direction: column;
+}
+.trade-log-overlay.open { height: 280px; }
+
+.tl-header {
+  display: flex; align-items: center; gap: 8px;
+  padding: 5px 10px;
+  border-bottom: 1px solid var(--bg3);
+  background: var(--bg2);
+  flex-shrink: 0;
+}
+.tl-title { font-size: 9.5px; font-weight: 600; letter-spacing: 0.1em; text-transform: uppercase; color: var(--a1); }
+.tl-filter { font-size: 9px; color: var(--dim); background: var(--bg3); border: 1px solid var(--bg4); border-radius: 2px; padding: 1px 6px; }
+.tl-filter.active { color: var(--a1); border-color: var(--a1); }
+.tl-close { font-size: 10px; color: var(--dim); cursor: pointer; margin-left: auto; }
+.tl-close:hover { color: var(--fg1); }
+
+.tl-body { flex: 1; overflow-y: auto; overflow-x: hidden; }
+.tl-body::-webkit-scrollbar { width: 3px; }
+.tl-body::-webkit-scrollbar-thumb { background: var(--bg4); }
+
+table.tl-table { width: 100%; border-collapse: collapse; font-size: 9.5px; }
+table.tl-table thead th {
+  position: sticky; top: 0; background: var(--bg2);
+  padding: 3px 6px; text-align: left; font-size: 8.5px; font-weight: 500;
+  color: var(--dim); letter-spacing: 0.04em; border-bottom: 1px solid var(--bg3);
+  white-space: nowrap;
+}
+table.tl-table thead th.r { text-align: right; }
+table.tl-table tbody tr { border-bottom: 1px solid var(--bg3); }
+table.tl-table tbody tr:hover { background: var(--bg2); }
+table.tl-table tbody td { padding: 2px 6px; color: var(--fg3); white-space: nowrap; }
+table.tl-table tbody td.r { text-align: right; }
+
+/* ════════════════════ TWEAKS ════════════════════ */
+.tweaks-btn {
+  position: fixed; top: 6px; right: 8px; z-index: 500;
+}
+.tweaks-panel {
+  position: fixed; bottom: 44px; right: 0; width: 230px;
+  background: var(--bg1); border: 1px solid var(--bg3);
+  border-radius: 3px 0 0 0; padding: 8px; z-index: 400;
+  display: none;
+}
+.tweaks-panel.open { display: block; }
+.tw-title { font-size: 8.5px; font-weight: 600; letter-spacing: 0.1em; text-transform: uppercase; color: var(--a1); margin-bottom: 6px; padding-bottom: 4px; border-bottom: 1px solid var(--bg3); }
+.tw-section { font-size: 8.5px; color: var(--dim); letter-spacing: 0.07em; text-transform: uppercase; margin-bottom: 4px; margin-top: 8px; }
+.tw-row { display: flex; justify-content: space-between; align-items: center; padding: 2px 0; font-size: 9.5px; }
+.tw-label { color: var(--fg4); }
+.tw-val { color: var(--fg1); }
+
+/* annotation overlays */
+.ann {
+  position: fixed; font-family: 'Caveat', cursive; font-size: 12px;
+  color: #e879f9; pointer-events: none; z-index: 600; white-space: nowrap;
+}
+</style>
+</head>
+<body>
+
+<!-- TOP BAR -->
+<header class="topbar">
+  <span class="brand">▸ SPY BACKTEST</span>
+  <span class="sep">/</span>
+  <span class="config-pill">SHORT STRANGLE · PORTFOLIO · MARKET PRICING · 2021-01-01 → 2025-11-30 · Δ0.16 · PT 50% · BPR 30% · CASH:SPY · VIX FILTER:OFF</span>
+  <span class="spacer"></span>
+  <span class="topbar-meta">last run: 00:04:12 ago · 147 trades</span>
+  <button class="btn" onclick="document.getElementById('tweaks').classList.toggle('open')">⚙ THEME</button>
+  <button class="btn">💾 SAVE</button>
+  <button class="btn btn-primary">▶ RUN</button>
+</header>
+
+<!-- BODY -->
+<div class="body">
+
+  <!-- SIDEBAR -->
+  <aside class="sidebar">
+
+    <div class="sec-hdr" onclick="tog(this)"><span>BACKTEST</span><span class="caret">▼</span></div>
+    <div class="sec-body">
+      <div class="pr"><span class="pl">start</span><span class="pv amber" onclick="editParam(this)">2021-01-01</span></div>
+      <div class="pr"><span class="pl">end</span><span class="pv amber" onclick="editParam(this)">2025-11-30</span></div>
+      <div class="pr"><span class="pl">balance</span><span class="pv" onclick="editParam(this)">$50,000</span></div>
+    </div>
+
+    <div class="sec-hdr" onclick="tog(this)"><span>STRATEGY</span><span class="caret">▼</span></div>
+    <div class="sec-body">
+      <div class="pr"><span class="pl">mode</span><span class="pv blue">STRANGLE</span></div>
+      <div class="pdivider"></div>
+      <div class="pr"><span class="pl">target Δ</span><span class="pv" onclick="editParam(this)">0.16</span></div>
+      <div class="pr"><span class="pl">DTE min</span><span class="pv" onclick="editParam(this)">30</span></div>
+      <div class="pr"><span class="pl">DTE max</span><span class="pv" onclick="editParam(this)">45</span></div>
+      <div class="pr"><span class="pl">profit tgt</span><span class="pv green" onclick="editParam(this)">50%</span></div>
+      <div class="pr"><span class="pl">stop loss</span><span class="pv dim">OFF</span></div>
+      <div class="pr"><span class="pl">single pos</span><span class="pv dim">OFF</span></div>
+    </div>
+
+    <div class="sec-hdr" onclick="tog(this)"><span>PORTFOLIO</span><span class="caret">▼</span></div>
+    <div class="sec-body">
+      <div class="pr"><span class="pl">mode</span><span class="pv blue">LADDERING</span></div>
+      <div class="pdivider"></div>
+      <div class="pr"><span class="pl">max BPR</span><span class="pv" onclick="editParam(this)">30%</span></div>
+      <div class="pr"><span class="pl">cooldown</span><span class="pv" onclick="editParam(this)">3 days</span></div>
+      <div class="pr"><span class="pl">cash mode</span><span class="pv amber">SPY</span></div>
+      <div class="pr"><span class="pl">risk-free</span><span class="pv" onclick="editParam(this)">4.00%</span></div>
+    </div>
+
+    <div class="sec-hdr" onclick="tog(this)"><span>ROLL MGMT</span><span class="caret">▼</span></div>
+    <div class="sec-body">
+      <div class="pr"><span class="pl">manage@DTE</span><span class="pv" onclick="editParam(this)">21</span></div>
+      <div class="pr"><span class="pl">roll credit</span><span class="pv green">ON</span></div>
+      <div class="pr"><span class="pl">max rolls</span><span class="pv" onclick="editParam(this)">3</span></div>
+    </div>
+
+    <div class="sec-hdr" onclick="tog(this)"><span>VIX FILTER</span><span class="caret">▶</span></div>
+    <div class="sec-body" style="display:none">
+      <div class="pr"><span class="pl">enabled</span><span class="pv dim">OFF</span></div>
+      <div class="pr"><span class="pl">max VIX</span><span class="pv" onclick="editParam(this)">35.0</span></div>
+      <div class="pr"><span class="pl">skipped</span><span class="pv dim">0</span></div>
+    </div>
+
+    <div class="sec-hdr" onclick="tog(this)"><span>DEFENSIVE</span><span class="caret">▶</span></div>
+    <div class="sec-body" style="display:none">
+      <div class="pr"><span class="pl">enabled</span><span class="pv dim">OFF</span></div>
+      <div class="pr"><span class="pl">trigger Δ</span><span class="pv dim">0.30</span></div>
+      <div class="pr"><span class="pl">target Δ</span><span class="pv dim">0.16</span></div>
+    </div>
+
+    <div class="sec-hdr" onclick="tog(this)"><span>PRICING</span><span class="caret">▶</span></div>
+    <div class="sec-body" style="display:none">
+      <div class="pr"><span class="pl">mode</span><span class="pv blue">MARKET</span></div>
+      <div class="pr"><span class="pl">risk-free</span><span class="pv" onclick="editParam(this)">4.50%</span></div>
+      <div class="pr"><span class="pl">put slope</span><span class="pv" onclick="editParam(this)">0.30</span></div>
+      <div class="pr"><span class="pl">call slope</span><span class="pv" onclick="editParam(this)">0.10</span></div>
+    </div>
+
+  </aside>
+
+  <!-- MAIN -->
+  <main class="main">
+
+    <!-- PERFORMANCE SUMMARY BAR -->
+    <div class="perf-bar" id="perf-bar"></div>
+
+    <!-- CHART TABS -->
+    <div class="chart-tabs">
+      <div class="chart-tab active" onclick="switchTab('equity',this)">EQUITY</div>
+      <div class="chart-tab" onclick="switchTab('bpr',this)">BPR UTIL</div>
+      <div class="chart-tab" onclick="switchTab('positions',this)">POSITIONS</div>
+      <div class="chart-tab" onclick="switchTab('vix',this)">VIX</div>
+      <div class="tab-spacer"></div>
+      <div class="chart-legend" id="chart-legend">
+        <div class="leg-item"><div class="leg-line" style="background:var(--pos)"></div>Portfolio</div>
+        <div class="leg-item"><div class="leg-line" style="background:var(--a2);opacity:0.6"></div>SPY B&H</div>
+        <div class="leg-item"><div class="leg-line" style="background:var(--neg);height:8px;border-radius:1px;opacity:0.5"></div>Drawdown</div>
+      </div>
+    </div>
+
+    <!-- CHART AREA -->
+    <div class="chart-area" id="chart-area">
+
+      <!-- EQUITY panel -->
+      <div class="chart-panel active" id="panel-equity">
+        <div style="flex:1;position:relative;min-height:0;">
+          <svg id="svg-equity" class="chart" preserveAspectRatio="none"></svg>
+        </div>
+      </div>
+
+      <!-- BPR UTIL panel -->
+      <div class="chart-panel" id="panel-bpr">
+        <div style="flex:1;position:relative;min-height:0;">
+          <svg id="svg-bpr" class="chart" preserveAspectRatio="none"></svg>
+        </div>
+      </div>
+
+      <!-- POSITIONS panel -->
+      <div class="chart-panel" id="panel-positions">
+        <div style="flex:1;position:relative;min-height:0;">
+          <svg id="svg-positions" class="chart" preserveAspectRatio="none"></svg>
+        </div>
+      </div>
+
+      <!-- VIX panel -->
+      <div class="chart-panel" id="panel-vix">
+        <div style="flex:1;position:relative;min-height:0;">
+          <svg id="svg-vix" class="chart" preserveAspectRatio="none"></svg>
+        </div>
+      </div>
+
+    </div>
+
+    <!-- TABLES ROW -->
+    <div class="tables-row">
+
+      <!-- Exit Breakdown -->
+      <div class="tp">
+        <div class="tp-title">Exit Breakdown</div>
+        <table class="dt">
+          <thead><tr>
+            <th>Type</th><th class="r">N</th><th class="r">%</th><th class="r">Win%</th><th class="r">Avg P&L</th><th class="r">Total</th>
+          </tr></thead>
+          <tbody>
+            <tr><td class="c-pos fw6">PROFIT</td><td class="r">94</td><td class="r c-dim">64%</td><td class="r c-pos">100%</td><td class="r c-pos">+$438</td><td class="r c-pos">+$41.2k</td></tr>
+            <tr><td class="c-pur fw6">ROLLED</td><td class="r">31</td><td class="r c-dim">21%</td><td class="r c-pos">74%</td><td class="r c-pos">+$387</td><td class="r c-pos">+$12.0k</td></tr>
+            <tr><td class="c-blue fw6">21DTE</td><td class="r">14</td><td class="r c-dim">10%</td><td class="r c-pos">64%</td><td class="r c-pos">+$214</td><td class="r c-pos">+$3.0k</td></tr>
+            <tr><td class="c-amb fw6">EXPIRY</td><td class="r">5</td><td class="r c-dim">3%</td><td class="r c-pos">60%</td><td class="r c-pos">+$182</td><td class="r c-pos">+$0.9k</td></tr>
+            <tr><td class="c-neg fw6">STOP</td><td class="r">3</td><td class="r c-dim">2%</td><td class="r c-neg">0%</td><td class="r c-neg">−$2.7k</td><td class="r c-neg">−$8.1k</td></tr>
+            <tr class="tot"><td>TOTAL</td><td class="r">147</td><td class="r">100%</td><td class="r c-pos">81.3%</td><td class="r c-pos">+$333</td><td class="r c-pos">+$49.0k</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <!-- VIX Regime -->
+      <div class="tp">
+        <div class="tp-title">VIX Regime</div>
+        <table class="dt">
+          <thead><tr>
+            <th>Regime</th><th class="r">Range</th><th class="r">N</th><th class="r">Win%</th><th class="r">Avg P&L</th><th class="r">Total</th>
+          </tr></thead>
+          <tbody>
+            <tr><td class="c-blue fw6">LOW</td><td class="r c-dim">0–15</td><td class="r">42</td><td class="r c-pos">88%</td><td class="r c-pos">+$381</td><td class="r c-pos">+$16.0k</td></tr>
+            <tr><td class="c-amb fw6">NORMAL</td><td class="r c-dim">15–25</td><td class="r">78</td><td class="r c-pos">84%</td><td class="r c-pos">+$291</td><td class="r c-pos">+$22.7k</td></tr>
+            <tr><td class="c-pur fw6">ELEVATED</td><td class="r c-dim">25–35</td><td class="r">21</td><td class="r c-amb">71%</td><td class="r c-pos">+$177</td><td class="r c-pos">+$3.7k</td></tr>
+            <tr><td class="c-neg fw6">HIGH</td><td class="r c-dim">35–50</td><td class="r">6</td><td class="r c-neg">33%</td><td class="r c-neg">−$241</td><td class="r c-neg">−$1.4k</td></tr>
+            <tr><td class="c-neg fw6">EXTREME</td><td class="r c-dim">&gt;50</td><td class="r">0</td><td class="r c-dim">—</td><td class="r c-dim">—</td><td class="r c-dim">—</td></tr>
+            <tr class="tot"><td>TOTAL</td><td class="r"></td><td class="r">147</td><td class="r c-pos">81%</td><td class="r c-pos">+$333</td><td class="r c-pos">+$49.0k</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+    </div>
+
+    <!-- P&L STRIP (click to expand trade log) -->
+    <div class="pnl-strip" id="pnl-strip" onclick="toggleTradeLog()">
+      <span class="pnl-strip-lbl">P&L</span>
+      <svg id="svg-pnl" style="flex:1;height:38px;" preserveAspectRatio="none"></svg>
+      <div class="pnl-strip-actions" onclick="e=>e.stopPropagation()">
+        <span class="pnl-expand-hint" id="tl-hint">▲ TRADE LOG</span>
+      </div>
+    </div>
+
+  </main>
+</div>
+
+<!-- TRADE LOG OVERLAY -->
+<div class="trade-log-overlay" id="trade-log">
+  <div class="tl-header">
+    <span class="tl-title">Trade Log</span>
+    <span class="tl-filter active">ALL</span>
+    <span class="tl-filter">PROFIT</span>
+    <span class="tl-filter">ROLLED</span>
+    <span class="tl-filter">21DTE</span>
+    <span class="tl-filter">STOP</span>
+    <span style="font-size:9px;color:var(--dim);margin-left:4px;">147 trades shown</span>
+    <span class="tl-close" onclick="toggleTradeLog()">▼ CLOSE</span>
+  </div>
+  <div class="tl-body">
+    <table class="tl-table">
+      <thead><tr>
+        <th>#</th><th>Entry</th><th>Expiry</th><th class="r">DTE</th><th class="r">VIX</th>
+        <th class="r">Put K</th><th class="r">Call K</th><th class="r">Credit</th>
+        <th>Exit Date</th><th>Type</th><th class="r">Days</th><th class="r">P&L $</th><th class="r">P&L %</th>
+      </tr></thead>
+      <tbody id="tl-tbody"></tbody>
+    </table>
+  </div>
+</div>
+
+<!-- TWEAKS -->
+<div class="tweaks-panel" id="tweaks">
+  <div class="tw-title">Tweaks</div>
+  <div class="tw-section">Click any param value in sidebar to edit inline</div>
+  <div class="tw-row"><span class="tw-label">Font</span><span class="tw-val">IBM Plex Mono</span></div>
+  <div class="tw-row"><span class="tw-label">Scheme</span><span class="tw-val">Gruvbox Dark</span></div>
+  <div class="tw-section" style="margin-top:8px;">Architecture</div>
+  <div class="tw-row" style="font-size:9px;color:var(--fg4);flex-direction:column;align-items:flex-start;gap:2px;">
+    <span>frontend-terminal/ → FastAPI</span>
+    <span>frontend/app.py → Streamlit ✓</span>
+    <span>Multiple frontends, one backend</span>
+  </div>
+</div>
+
+<!-- SKETCH ANNOTATIONS -->
+<div class="ann" id="ann-edit" style="display:none;"></div>
+
+<script>
+/* ── Sidebar section toggle ── */
+function tog(hdr) {
+  const body = hdr.nextElementSibling;
+  const caret = hdr.querySelector('.caret');
+  const open = body.style.display !== 'none';
+  body.style.display = open ? 'none' : 'block';
+  caret.textContent = open ? '▶' : '▼';
+}
+
+/* ── Inline param editing ── */
+function editParam(el) {
+  if (el.querySelector('input')) return;
+  const old = el.textContent;
+  const input = document.createElement('input');
+  input.className = 'pv-input';
+  input.value = old;
+  el.textContent = '';
+  el.appendChild(input);
+  input.focus();
+  input.select();
+  function done() {
+    el.textContent = input.value || old;
+    el.classList.add('amber');
+  }
+  input.addEventListener('blur', done);
+  input.addEventListener('keydown', e => { if (e.key === 'Enter') { input.blur(); } if (e.key === 'Escape') { input.value = old; input.blur(); } });
+}
+
+/* ── Chart tab switching ── */
+const legends = {
+  equity:    `<div class="leg-item"><div class="leg-line" style="background:var(--pos)"></div>Portfolio</div><div class="leg-item"><div class="leg-line" style="background:var(--a2);opacity:0.6"></div>SPY B&H</div><div class="leg-item"><div class="leg-line" style="background:var(--neg);height:8px;border-radius:1px;opacity:0.5"></div>Drawdown</div>`,
+  bpr:       `<div class="leg-item"><div class="leg-line" style="background:var(--a2)"></div>Utilized BPR ($)</div><div class="leg-item"><div class="leg-line" style="background:var(--neg);opacity:0.6"></div>BPR Cap (30%)</div>`,
+  positions: `<div class="leg-item"><div class="leg-line" style="background:var(--a4)"></div>Open Positions (count)</div><div class="leg-item"><div class="leg-line" style="background:var(--a1);opacity:0.6"></div>Peak positions</div>`,
+  vix:       `<div class="leg-item"><div class="leg-line" style="background:var(--fg4)"></div>VIX close</div><div class="leg-item" style="gap:5px;"><div style="width:8px;height:8px;border-radius:50%;background:var(--a2)"></div>Entry</div><div class="leg-item" style="gap:5px;"><div style="width:8px;height:8px;border-radius:50%;border:2px solid var(--neg);background:transparent"></div>Skipped</div>`,
+};
+
+function switchTab(name, el) {
+  document.querySelectorAll('.chart-tab').forEach(t => t.classList.remove('active'));
+  el.classList.add('active');
+  document.querySelectorAll('.chart-panel').forEach(p => p.classList.remove('active'));
+  document.getElementById('panel-' + name).classList.add('active');
+  document.getElementById('chart-legend').innerHTML = legends[name] || '';
+  setTimeout(() => drawChart(name), 30);
+}
+
+/* ── Trade Log ── */
+let tlOpen = false;
+function toggleTradeLog() {
+  tlOpen = !tlOpen;
+  document.getElementById('trade-log').classList.toggle('open', tlOpen);
+  document.getElementById('tl-hint').textContent = tlOpen ? '▼ TRADE LOG' : '▲ TRADE LOG';
+}
+
+/* Generate fake trade log rows */
+(function buildTradeLog() {
+  const exits = ['PROFIT','PROFIT','PROFIT','PROFIT','PROFIT','ROLLED','ROLLED','21DTE','STOP','EXPIRY'];
+  const colors = { PROFIT:'c-pos', ROLLED:'c-pur', '21DTE':'c-blue', STOP:'c-neg', EXPIRY:'c-amb' };
+  let html = '';
+  let date = new Date('2021-01-15');
+  for (let i = 1; i <= 30; i++) {
+    const exit = exits[Math.floor(Math.random() * exits.length)];
+    const credit = Math.round(Math.random() * 600 + 200);
+    const pnl = exit === 'STOP' ? -(Math.random() * 2500 + 500) : (Math.random() * 800 + 50);
+    const pnlPct = pnl / credit;
+    const days = Math.round(Math.random() * 30 + 10);
+    const entryStr = date.toISOString().slice(0, 10);
+    date = new Date(date.getTime() + (days + 15) * 86400000);
+    const exitStr = new Date(date.getTime() - 10 * 86400000).toISOString().slice(0, 10);
+    const expiryStr = new Date(date.getTime() + 5 * 86400000).toISOString().slice(0, 10);
+    const vix = (Math.random() * 20 + 12).toFixed(1);
+    const spy = Math.round(350 + Math.random() * 200);
+    const pnlCls = pnl >= 0 ? 'c-pos' : 'c-neg';
+    html += `<tr>
+      <td>${i}</td><td>${entryStr}</td><td>${expiryStr}</td>
+      <td class="r">${Math.round(Math.random()*15+30)}</td>
+      <td class="r">${vix}</td>
+      <td class="r">${spy - Math.round(Math.random()*30+10)}</td>
+      <td class="r">${spy + Math.round(Math.random()*30+10)}</td>
+      <td class="r">$${credit}</td>
+      <td>${exitStr}</td>
+      <td class="${colors[exit]} fw6">${exit}</td>
+      <td class="r">${days}</td>
+      <td class="r ${pnlCls}">${pnl>=0?'+':''}$${Math.abs(Math.round(pnl)).toLocaleString()}</td>
+      <td class="r ${pnlCls}">${(pnlPct*100).toFixed(0)}%</td>
+    </tr>`;
+  }
+  document.getElementById('tl-tbody').innerHTML = html;
+})();
+
+/* ── Chart drawing ── */
+function rnd(min, max) { return min + Math.random() * (max - min); }
+
+function getVar(n) { return getComputedStyle(document.documentElement).getPropertyValue(n).trim(); }
+
+function drawChart(name) {
+  const id = 'svg-' + name;
+  const svg = document.getElementById(id);
+  if (!svg) return;
+  const w = svg.clientWidth;
+  const h = svg.clientHeight;
+  if (!w || !h) return;
+
+  const pos = getVar('--pos') || '#b8bb26';
+  const neg = getVar('--neg') || '#fb4934';
+  const a1  = getVar('--a1')  || '#d79921';
+  const a2  = getVar('--a2')  || '#458588';
+  const a3  = getVar('--a3')  || '#b16286';
+  const a4  = getVar('--a4')  || '#98971a';
+  const dim = getVar('--dim') || '#665c54';
+  const bg3 = getVar('--bg3') || '#3c3836';
+
+  const N = 55;
+  const xs = i => (i / (N - 1)) * w;
+  const scaleY = (v, lo, hi, top, bot) => top + (1 - (v - lo) / (hi - lo)) * (bot - top);
+
+  if (name === 'equity') {
+    // Generate portfolio & SPY series
+    let pv = 0, sv = 0;
+    const portPnl = [0], spyPnl = [0];
+    for (let i = 1; i < N; i++) {
+      pv += rnd(-0.4, 1.2);
+      sv += rnd(-0.3, 1.0);
+      portPnl.push(pv);
+      spyPnl.push(sv);
+    }
+    // Normalize to target returns
+    const pScale = 84 / portPnl[N-1];
+    const sScale = 72 / spyPnl[N-1];
+    const p = portPnl.map(v => v * pScale);
+    const s = spyPnl.map(v => v * sScale);
+
+    const chartH = h * 0.72, ddTop = h * 0.72;
+    const lo = Math.min(...p, ...s, 0) * 1.05;
+    const hi = Math.max(...p, ...s) * 1.05;
+
+    const peak = [p[0]]; for (let i = 1; i < N; i++) peak.push(Math.max(peak[i-1], p[i]));
+    const dd = p.map((v, i) => (v - peak[i]) / (peak[i] || 1) * 100);
+    const ddLo = Math.min(...dd) * 1.1;
+
+    const ePts = p.map((v, i) => `${xs(i)},${scaleY(v, lo, hi, 3, chartH - 2)}`).join(' ');
+    const sPts = s.map((v, i) => `${xs(i)},${scaleY(v, lo, hi, 3, chartH - 2)}`).join(' ');
+    const dPts = dd.map((v, i) => `${xs(i)},${scaleY(v, ddLo, 0, ddTop + 3, h - 2)}`).join(' ');
+
+    // Grid
+    let grid = '';
+    [0, 25, 50, 75].forEach(pct => {
+      const y = scaleY(pct, lo, hi, 3, chartH - 2);
+      if (y > 0 && y < chartH) {
+        grid += `<line x1="0" y1="${y}" x2="${w}" y2="${y}" stroke="${bg3}" stroke-width="0.4" stroke-dasharray="2,6"/>`;
+        grid += `<text x="3" y="${y - 2}" font-size="7" fill="${dim}" font-family="IBM Plex Mono,monospace">+${pct}%</text>`;
+      }
+    });
+
+    // Year markers
+    let yrs = '';
+    ['2022','2023','2024','2025'].forEach((yr, i) => {
+      const x = ((i + 1) / 5) * w;
+      yrs += `<line x1="${x}" y1="0" x2="${x}" y2="${h}" stroke="${bg3}" stroke-width="0.5" stroke-dasharray="2,5"/>`;
+      yrs += `<text x="${x + 3}" y="${chartH - 5}" font-size="7" fill="${dim}" font-family="IBM Plex Mono,monospace">${yr}</text>`;
+    });
+
+    svg.innerHTML = `
+      <defs>
+        <linearGradient id="gp" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stop-color="${pos}" stop-opacity="0.25"/>
+          <stop offset="100%" stop-color="${pos}" stop-opacity="0"/>
+        </linearGradient>
+        <linearGradient id="gd" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stop-color="${neg}" stop-opacity="0.5"/>
+          <stop offset="100%" stop-color="${neg}" stop-opacity="0.02"/>
+        </linearGradient>
+      </defs>
+      ${grid}${yrs}
+      <line x1="0" y1="${ddTop}" x2="${w}" y2="${ddTop}" stroke="${bg3}" stroke-width="0.5"/>
+      <polygon points="${ePts} ${w},${chartH} 0,${chartH}" fill="url(#gp)"/>
+      <polyline points="${sPts}" stroke="${a2}" stroke-width="1.2" fill="none" stroke-dasharray="6,3" opacity="0.55"/>
+      <polyline points="${ePts}" stroke="${pos}" stroke-width="1.8" fill="none"/>
+      <polygon points="${dPts} ${w},${h} 0,${h}" fill="url(#gd)"/>
+      <polyline points="${dPts}" stroke="${neg}" stroke-width="1" fill="none" opacity="0.65"/>
+      <text x="3" y="${h - 3}" font-size="7" fill="${dim}" font-family="IBM Plex Mono,monospace">DRAWDOWN %</text>
+    `;
+  }
+
+  else if (name === 'bpr') {
+    let bpr = 0;
+    const bprVals = [];
+    for (let i = 0; i < N; i++) {
+      bpr += rnd(-1.5, 2.0);
+      bpr = Math.max(2, Math.min(42, bpr));
+      bprVals.push(bpr);
+    }
+    const capPct = 30;
+    const hi = 45;
+
+    const chartH = h * 0.80;
+    const bPts = bprVals.map((v, i) => `${xs(i)},${scaleY(v, 0, hi, 3, chartH - 2)}`).join(' ');
+    const capY = scaleY(capPct, 0, hi, 3, chartH - 2);
+
+    let grid = '';
+    [10, 20, 30, 40].forEach(v => {
+      const y = scaleY(v, 0, hi, 3, chartH - 2);
+      grid += `<line x1="0" y1="${y}" x2="${w}" y2="${y}" stroke="${bg3}" stroke-width="0.4" stroke-dasharray="2,6"/>`;
+      grid += `<text x="3" y="${y-2}" font-size="7" fill="${dim}" font-family="IBM Plex Mono,monospace">${v}%</text>`;
+    });
+
+    svg.innerHTML = `
+      <defs>
+        <linearGradient id="gbpr" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stop-color="${a2}" stop-opacity="0.3"/>
+          <stop offset="100%" stop-color="${a2}" stop-opacity="0.03"/>
+        </linearGradient>
+      </defs>
+      ${grid}
+      <polygon points="${bPts} ${w},${chartH} 0,${chartH}" fill="url(#gbpr)"/>
+      <polyline points="${bPts}" stroke="${a2}" stroke-width="1.8" fill="none"/>
+      <line x1="0" y1="${capY}" x2="${w}" y2="${capY}" stroke="${neg}" stroke-width="1" stroke-dasharray="5,3" opacity="0.7"/>
+      <text x="${w-60}" y="${capY-3}" font-size="7" fill="${neg}" font-family="IBM Plex Mono,monospace" opacity="0.8">CAP 30%</text>
+      <text x="3" y="${h-3}" font-size="7" fill="${dim}" font-family="IBM Plex Mono,monospace">BPR UTILIZATION %</text>
+    `;
+  }
+
+  else if (name === 'positions') {
+    const posVals = [];
+    let p2 = 1;
+    for (let i = 0; i < N; i++) {
+      p2 += Math.random() < 0.3 ? (Math.random() < 0.5 ? 1 : -1) : 0;
+      p2 = Math.max(0, Math.min(7, p2));
+      posVals.push(p2);
+    }
+    const hi2 = 8;
+    const chartH = h * 0.85;
+
+    // Step line
+    let stepPts = `0,${scaleY(posVals[0], 0, hi2, 3, chartH - 2)}`;
+    for (let i = 1; i < N; i++) {
+      const x = xs(i);
+      const yPrev = scaleY(posVals[i-1], 0, hi2, 3, chartH - 2);
+      const yCur  = scaleY(posVals[i],   0, hi2, 3, chartH - 2);
+      stepPts += ` ${x},${yPrev} ${x},${yCur}`;
+    }
+    stepPts += ` ${w},${scaleY(posVals[N-1], 0, hi2, 3, chartH-2)}`;
+
+    let fillPts = `0,${chartH} 0,${scaleY(posVals[0], 0, hi2, 3, chartH-2)}`;
+    for (let i = 1; i < N; i++) {
+      const x = xs(i);
+      const yPrev = scaleY(posVals[i-1], 0, hi2, 3, chartH - 2);
+      const yCur  = scaleY(posVals[i],   0, hi2, 3, chartH - 2);
+      fillPts += ` ${x},${yPrev} ${x},${yCur}`;
+    }
+    fillPts += ` ${w},${scaleY(posVals[N-1], 0, hi2, 3, chartH-2)} ${w},${chartH}`;
+
+    let grid = '';
+    [1,2,3,4,5,6].forEach(v => {
+      const y = scaleY(v, 0, hi2, 3, chartH - 2);
+      grid += `<line x1="0" y1="${y}" x2="${w}" y2="${y}" stroke="${bg3}" stroke-width="0.4" stroke-dasharray="2,6"/>`;
+      grid += `<text x="3" y="${y-2}" font-size="7" fill="${dim}" font-family="IBM Plex Mono,monospace">${v}</text>`;
+    });
+
+    svg.innerHTML = `
+      <defs>
+        <linearGradient id="gpos" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stop-color="${a4}" stop-opacity="0.3"/>
+          <stop offset="100%" stop-color="${a4}" stop-opacity="0.03"/>
+        </linearGradient>
+      </defs>
+      ${grid}
+      <polygon points="${fillPts}" fill="url(#gpos)"/>
+      <polyline points="${stepPts}" stroke="${a4}" stroke-width="1.6" fill="none"/>
+      <text x="3" y="${h-3}" font-size="7" fill="${dim}" font-family="IBM Plex Mono,monospace">OPEN POSITIONS COUNT</text>
+    `;
+  }
+
+  else if (name === 'vix') {
+    const vixVals = [];
+    let v2 = 18;
+    for (let i = 0; i < N; i++) {
+      v2 += rnd(-1.5, 1.5);
+      v2 = Math.max(10, Math.min(55, v2));
+      // Occasional spike
+      if (Math.random() < 0.04) v2 = Math.min(55, v2 + rnd(8, 20));
+      vixVals.push(v2);
+    }
+
+    const chartH = h * 0.88;
+    const lo = 8, hi2 = 58;
+    const vPts = vixVals.map((v, i) => `${xs(i)},${scaleY(v, lo, hi2, 3, chartH - 2)}`).join(' ');
+
+    const lo15 = scaleY(15, lo, hi2, 3, chartH - 2);
+    const hi25 = scaleY(25, lo, hi2, 3, chartH - 2);
+    const hi35 = scaleY(35, lo, hi2, 3, chartH - 2);
+
+    // Fake entry dots
+    let dots = '';
+    for (let i = 0; i < N; i += Math.round(rnd(2, 4))) {
+      const x = xs(i);
+      const y = scaleY(vixVals[i], lo, hi2, 3, chartH - 2);
+      const isSkip = Math.random() < 0.05;
+      if (isSkip) {
+        dots += `<circle cx="${x}" cy="${y}" r="4" fill="none" stroke="${neg}" stroke-width="1.5" opacity="0.8"/>`;
+      } else {
+        dots += `<circle cx="${x}" cy="${y}" r="3.5" fill="${a2}" opacity="0.8"/>`;
+      }
+    }
+
+    let grid = '';
+    [15, 25, 35].forEach((v, idx) => {
+      const y = scaleY(v, lo, hi2, 3, chartH - 2);
+      const colors2 = [a2, a1, neg];
+      grid += `<line x1="0" y1="${y}" x2="${w}" y2="${y}" stroke="${colors2[idx]}" stroke-width="0.6" stroke-dasharray="4,4" opacity="0.5"/>`;
+      grid += `<text x="${w - 30}" y="${y - 2}" font-size="7" fill="${colors2[idx]}" font-family="IBM Plex Mono,monospace" opacity="0.7">${v}</text>`;
+    });
+
+    svg.innerHTML = `
+      <defs>
+        <linearGradient id="gvix" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stop-color="${a1}" stop-opacity="0.1"/>
+          <stop offset="100%" stop-color="${a1}" stop-opacity="0"/>
+        </linearGradient>
+      </defs>
+      ${grid}
+      <polygon points="0,${chartH} ${vPts} ${w},${chartH}" fill="url(#gvix)"/>
+      <polyline points="${vPts}" stroke="${getVar('--fg4') || '#a89984'}" stroke-width="1.2" fill="none" opacity="0.8"/>
+      ${dots}
+      <text x="3" y="${h-3}" font-size="7" fill="${dim}" font-family="IBM Plex Mono,monospace">VIX CLOSE · ● ENTRY · ○ SKIPPED</text>
+    `;
+  }
+}
+
+function drawPnL() {
+  const svg = document.getElementById('svg-pnl');
+  if (!svg) return;
+  const w = svg.clientWidth, h = 38;
+  const pos = getVar('--pos') || '#b8bb26';
+  const neg = getVar('--neg') || '#fb4934';
+  const a3  = getVar('--a3') || '#b16286';
+  const a2  = getVar('--a2') || '#458588';
+  const a1  = getVar('--a1') || '#d79921';
+  const bg3 = getVar('--bg3') || '#3c3836';
+
+  const exits = ['PROFIT','PROFIT','PROFIT','PROFIT','PROFIT','ROLLED','ROLLED','21DTE','STOP','EXPIRY'];
+  const colors = { PROFIT: pos, ROLLED: a3, '21DTE': a2, STOP: neg, EXPIRY: a1 };
+
+  const N = 60;
+  const pnls = [], types = [];
+  for (let i = 0; i < N; i++) {
+    const t = exits[Math.floor(Math.random() * exits.length)];
+    types.push(t);
+    pnls.push(t === 'STOP' ? -rnd(500, 3000) : rnd(50, 800));
+  }
+  const maxAbs = Math.max(...pnls.map(Math.abs));
+  const mid = h * 0.52;
+  const bw = Math.max(2, w / N - 1);
+
+  let bars = `<line x1="0" y1="${mid}" x2="${w}" y2="${mid}" stroke="${bg3}" stroke-width="0.5"/>`;
+  pnls.forEach((v, i) => {
+    const x = i * (w / N);
+    const bh = Math.abs(v) / maxAbs * (h * 0.46);
+    const y = v >= 0 ? mid - bh : mid;
+    bars += `<rect x="${x}" y="${y}" width="${bw}" height="${bh}" fill="${colors[types[i]]}" opacity="0.85"/>`;
+  });
+  svg.innerHTML = bars;
+}
+
+/* ── Performance Summary Bar ── */
+function buildPerfBar() {
+  const el = document.getElementById('perf-bar');
+  if (!el) return;
+  el.innerHTML = `
+    <div class="perf-bar-label">PERFORMANCE</div>
+    <table class="perf-table">
+      <thead><tr>
+        <th style="min-width:108px"></th>
+        <th class="r">Total Ret</th><th class="r">CAGR</th><th class="r">Sharpe</th>
+        <th class="r">Max DD</th><th class="r">Calmar</th><th class="r">Win Rate</th>
+        <th class="r">Avg P&L</th><th class="r">Final Bal</th><th class="r">Avg BPR</th><th class="r">Trades</th>
+      </tr></thead>
+      <tbody>
+        <tr class="pt-port">
+          <td class="ptl c-amb fw6">PORTFOLIO</td>
+          <td class="r c-pos fw6">+84.2%</td><td class="r c-pos fw6">13.4%</td>
+          <td class="r c-amb fw6">1.42</td><td class="r c-neg fw6">&#8722;18.3%</td>
+          <td class="r c-amb fw6">0.73</td><td class="r c-blue fw6">81.3%</td>
+          <td class="r c-pos fw6">+$333</td><td class="r c-pos fw6">$92,100</td>
+          <td class="r c-amb fw6">24.7%</td><td class="r fw6">147</td>
+        </tr>
+        <tr class="pt-sub">
+          <td class="ptl" style="padding-left:18px">&#9500; strangles</td>
+          <td class="r c-pos">+62.1%</td><td class="r c-pos">10.2%</td>
+          <td class="r c-dim">&#8212;</td><td class="r c-dim">&#8212;</td><td class="r c-dim">&#8212;</td>
+          <td class="r c-dim">&#8212;</td><td class="r c-pos">+$421</td>
+          <td class="r c-dim">&#8212;</td><td class="r c-dim">&#8212;</td><td class="r">94</td>
+        </tr>
+        <tr class="pt-sub">
+          <td class="ptl" style="padding-left:18px">&#9500; SPY cash</td>
+          <td class="r c-pos">+14.2%</td><td class="r c-pos">2.7%</td>
+          <td class="r c-dim">&#8212;</td><td class="r c-dim">&#8212;</td><td class="r c-dim">&#8212;</td>
+          <td class="r c-dim">&#8212;</td><td class="r c-dim">&#8212;</td>
+          <td class="r c-dim">&#8212;</td><td class="r c-dim">&#8212;</td><td class="r c-dim">&#8212;</td>
+        </tr>
+        <tr class="pt-sub">
+          <td class="ptl" style="padding-left:18px">&#9492; risk-free</td>
+          <td class="r c-pos">+7.9%</td><td class="r c-pos">1.5%</td>
+          <td class="r c-dim">&#8212;</td><td class="r c-dim">&#8212;</td><td class="r c-dim">&#8212;</td>
+          <td class="r c-dim">&#8212;</td><td class="r c-dim">&#8212;</td>
+          <td class="r c-dim">&#8212;</td><td class="r c-dim">&#8212;</td><td class="r c-dim">&#8212;</td>
+        </tr>
+        <tr class="pt-spy">
+          <td class="ptl c-blue">SPY B&amp;H</td>
+          <td class="r c-blue">+72.1%</td><td class="r c-blue">11.6%</td>
+          <td class="r c-blue">0.91</td><td class="r c-neg">&#8722;33.7%</td>
+          <td class="r c-blue">0.34</td><td class="r c-dim">&#8212;</td>
+          <td class="r c-dim">&#8212;</td><td class="r c-blue">$86,050</td>
+          <td class="r c-dim">&#8212;</td><td class="r c-dim">&#8212;</td>
+        </tr>
+      </tbody>
+    </table>`;
+
+  /* inject CSS once */
+  if (!document.getElementById('perf-css')) {
+    const s = document.createElement('style');
+    s.id = 'perf-css';
+    s.textContent = `
+      .perf-bar{display:flex;align-items:stretch;border-bottom:1px solid var(--bg3);background:var(--bg1);flex-shrink:0;overflow:hidden;}
+      .perf-bar-label{font-size:7.5px;font-weight:600;letter-spacing:.12em;text-transform:uppercase;color:var(--a1);writing-mode:vertical-rl;transform:rotate(180deg);padding:6px;border-right:1px solid var(--bg3);flex-shrink:0;background:var(--bg2);}
+      table.perf-table{width:100%;border-collapse:collapse;}
+      table.perf-table thead th{font-size:8px;font-weight:400;letter-spacing:.06em;text-transform:uppercase;color:var(--dim);padding:3px 10px 2px;border-bottom:1px solid var(--bg3);white-space:nowrap;text-align:left;}
+      table.perf-table thead th.r{text-align:right;}
+      table.perf-table tbody td{padding:2px 10px;white-space:nowrap;font-size:10px;color:var(--fg3);}
+      table.perf-table tbody td.r{text-align:right;}
+      table.perf-table tbody td.ptl{color:var(--fg4);min-width:108px;}
+      table.perf-table tr.pt-port td{background:var(--bg2);font-size:12px;padding:5px 10px;border-bottom:1px solid var(--bg3);}
+      table.perf-table tr.pt-sub td{font-size:9px;color:var(--fg4);padding:1.5px 10px;}
+      table.perf-table tr.pt-spy td{border-top:1px solid var(--bg3);padding:4px 10px;font-size:10px;}
+    `;
+    document.head.appendChild(s);
+  }
+}
+
+/* ── Init ── */
+function init() {
+  buildPerfBar();
+  drawChart('equity');
+  drawPnL();
+}
+window.addEventListener('load', () => setTimeout(init, 100));
+window.addEventListener('resize', () => {
+  const active = document.querySelector('.chart-tab.active');
+  if (active) {
+    const name = active.textContent.toLowerCase().replace(' util','').replace(' ','');
+    const map = { 'equity':'equity', 'bprutil':'bpr', 'bpr':'bpr', 'positions':'positions', 'vix':'vix' };
+    drawChart(map[name] || name);
+  }
+  drawPnL();
+});
+</script>
+</body>
+</html>

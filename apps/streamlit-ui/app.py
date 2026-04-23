@@ -2,7 +2,7 @@
 
 Usage:
     pip install -e ".[frontend]"
-    streamlit run frontend/app.py
+    streamlit run apps/streamlit-ui/app.py
 """
 
 import sys
@@ -15,7 +15,7 @@ import plotly.graph_objects as go
 import streamlit as st
 
 # Ensure the package is importable
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent / "src"))
 
 from straddle import (
     PARAMS,

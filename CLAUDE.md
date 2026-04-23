@@ -18,7 +18,7 @@ python scripts/run_backtest.py --mode market
 python scripts/run_backtest.py --mode synthetic --no-plot
 
 # Streamlit UI
-streamlit run frontend/app.py
+streamlit run apps/streamlit-ui/app.py
 
 # API server
 python scripts/run_api.py --port 8000
