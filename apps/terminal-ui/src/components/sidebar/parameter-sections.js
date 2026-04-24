@@ -57,14 +57,15 @@ export const parameterSections = [
       { key: 'dte_max', label: 'DTE max',
         tooltip: 'Maximum DTE. The strategy uses the nearest 3rd-Friday expiration in [dte_min, dte_max].' },
       { key: 'profit_target_pct', label: 'profit tgt', color: 'green',
-        format: v => Math.round(v * 100) + '%',
+        format: v => Math.round(v * 100) + '%', pct: true,
         tooltip: 'Close position when P&L ≥ this fraction of net credit collected. TastyTrade standard: 50%.' },
 
-      { key: 'use_price_stop', label: 'stop loss', color: 'dim',
+      { key: 'use_price_stop', label: 'stop loss',
+        color: v => v ? 'green' : 'red',
         transform: v => v ? 'ON' : 'OFF', options: [false, true],
         tooltip: 'Enable a price-based stop loss. Off by default — the strategy relies on time decay, not stop management.' },
       { key: 'stop_loss_pct', label: 'stop loss %',
-        format: v => Math.round(v * 100) + '%',
+        format: v => Math.round(v * 100) + '%', pct: true,
         showWhen: { key: 'use_price_stop', value: true }, indent: true,
         tooltip: 'Close when P&L ≤ −(stop × credit). 200% = lose up to 2× the premium received.' },
     ],
@@ -77,13 +78,14 @@ export const parameterSections = [
       { key: 'portfolio_mode', label: 'mode', color: 'blue',
         transform: v => String(v).toUpperCase(), options: ['laddering', 'single'],
         tooltip: 'Laddering: multiple concurrent positions with Reg-T margin management. Single: one active chain at a time.' },
-      { key: 'single_position', label: 'single barrier', color: 'dim',
+      { key: 'single_position', label: 'single barrier',
+        color: v => v ? 'green' : 'red',
         transform: v => v ? 'ON' : 'OFF', options: [true, false],
         showWhen: { key: 'portfolio_mode', value: 'single' }, indent: true,
         tooltip: 'In single mode: skip new monthly entries while the current roll chain is still open.' },
 
       { key: 'max_bpr_allocation', label: 'max BPR',
-        format: v => Math.round(v * 100) + '%',
+        format: v => Math.round(v * 100) + '%', pct: true,
         tooltip: 'Max fraction of capital allocated to margin (Buying Power Reduction). 30% limits margin to $15k on a $50k account.' },
       { key: 'entry_cooldown_days', label: 'entry cooldown',
         format: v => v + ' days',
@@ -92,7 +94,7 @@ export const parameterSections = [
         transform: v => String(v).toUpperCase(), options: ['spy', 'risk_free', 'blend'],
         tooltip: 'How uninvested cash earns return: SPY (equity-like), risk-free (T-bills), or a blend of both.' },
       { key: 'spy_allocation_pct', label: 'SPY split',
-        format: v => Math.round(v * 100) + '% SPY',
+        format: v => Math.round(v * 100) + '% SPY', pct: true,
         showWhen: { key: 'cash_investment_mode', value: 'blend' }, indent: true,
         tooltip: 'In blend mode, fraction of uninvested cash invested in SPY. Remainder earns risk-free rate.' },
     ],
@@ -104,7 +106,8 @@ export const parameterSections = [
     params: [
       { key: 'manage_at_dte', label: 'manage@DTE',
         tooltip: 'Days-to-expiration at which to roll or close the position. TastyTrade standard: 21 DTE.' },
-      { key: 'roll_for_credit', label: 'roll credit', color: 'green',
+      { key: 'roll_for_credit', label: 'roll credit',
+        color: v => v ? 'green' : 'red',
         transform: v => v ? 'ON' : 'OFF', options: [true, false],
         tooltip: 'At manage_at_dte, roll to next expiration only if a net credit can be collected. Else close flat.' },
       { key: 'max_rolls', label: 'max rolls',
@@ -116,7 +119,8 @@ export const parameterSections = [
   {
     id: 'DEFENSIVE', title: 'DEFENSIVE',
     params: [
-      { key: 'defensive_leg_roll_enabled', label: 'leg rolls', color: 'dim',
+      { key: 'defensive_leg_roll_enabled', label: 'leg rolls',
+        color: v => v ? 'green' : 'red',
         transform: v => v ? 'ON' : 'OFF', options: [false, true],
         tooltip: 'Roll the profitable leg toward ATM when the tested leg reaches trigger delta. WARNING: historically hurts returns — default OFF.' },
       { key: 'defensive_trigger_delta', label: 'trigger Δ',
@@ -135,7 +139,8 @@ export const parameterSections = [
   {
     id: 'VIX_FILTER', title: 'VIX FILTER',
     params: [
-      { key: 'vix_entry_filter_enabled', label: 'enabled', color: 'dim',
+      { key: 'vix_entry_filter_enabled', label: 'enabled',
+        color: v => v ? 'green' : 'red',
         transform: v => v ? 'ON' : 'OFF', options: [true, false],
         tooltip: 'Skip new entries and rolls when VIX is above the threshold on the entry date.' },
       { key: 'vix_entry_max', label: 'max VIX',
@@ -156,6 +161,16 @@ export function matchesCondition(showWhen, params) {
     return Boolean(actual) === expected;
   }
   return String(actual ?? '').toLowerCase() === String(expected).toLowerCase();
+}
+
+// ── Param lookup ──────────────────────────────────────────────────────────
+
+export function findParam(key) {
+  for (const sec of parameterSections) {
+    const p = sec.params.find(q => q.key === key);
+    if (p) return p;
+  }
+  return null;
 }
 
 // ── Type coercion ──────────────────────────────────────────────────────────

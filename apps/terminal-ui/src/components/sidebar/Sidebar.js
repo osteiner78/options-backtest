@@ -1,7 +1,7 @@
 import { store, updateParams } from '../../store.js';
 import { renderCollapsibleSection, bindCollapsibleSections } from '../primitives/CollapsibleSection.js';
 import { renderEditableValue, bindEditableValues } from '../primitives/EditableValue.js';
-import { parameterSections, coerceParamValue, matchesCondition } from './parameter-sections.js';
+import { parameterSections, coerceParamValue, matchesCondition, findParam } from './parameter-sections.js';
 
 const escAttr = s => String(s).replace(/"/g, '&quot;');
 
@@ -14,6 +14,9 @@ function renderSectionBody(section, params) {
         ? p.format(val)
         : (p.transform ? p.transform(val) : val);
 
+      // color can be a static string or a function of the current value
+      const colorClass = typeof p.color === 'function' ? p.color(val) : (p.color || '');
+
       const cls   = `pr${p.indent ? ' pr-indent' : ''}`;
       const tipAt = p.tooltip ? ` data-tooltip="${escAttr(p.tooltip)}"` : '';
 
@@ -22,7 +25,7 @@ function renderSectionBody(section, params) {
         return `
           <div class="${cls}"${tipAt}>
             <span class="pl">${p.label}</span>
-            <span class="pv-cycle ${p.color || ''}" data-key="${p.key}" data-options='${opts}'>${displayValue}</span>
+            <span class="pv-cycle ${colorClass}" data-key="${p.key}" data-options='${opts}'>${displayValue}</span>
           </div>
         `;
       }
@@ -30,7 +33,7 @@ function renderSectionBody(section, params) {
       return `
         <div class="${cls}"${tipAt}>
           <span class="pl">${p.label}</span>
-          ${renderEditableValue({ key: p.key, value: val, color: p.color, displayValue, type: p.type })}
+          ${renderEditableValue({ key: p.key, value: val, color: colorClass, displayValue, type: p.type })}
         </div>
       `;
     })
@@ -61,7 +64,15 @@ export function initSidebar() {
 
   bindEditableValues(document, (key, raw) => {
     const original = store.params[key];
-    updateParams({ [key]: coerceParamValue(raw, original) });
+    const paramDef = findParam(key);
+    if (paramDef?.pct) {
+      // Percentage params store fractions (0.50 = 50%).
+      // Accept "50", "50%", or "0.50" — all treated as the intended percentage.
+      const n = parseFloat(String(raw).trim().replace('%', ''));
+      if (Number.isFinite(n)) updateParams({ [key]: n / 100 });
+    } else {
+      updateParams({ [key]: coerceParamValue(raw, original) });
+    }
   });
 
   // Cycle through fixed-option params on click

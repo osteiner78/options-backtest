@@ -85,7 +85,7 @@
   gap: 4px;
 }
 .pl { color: var(--fg4); flex-shrink: 0; }
-.pv, .pv-cycle { color: var(--fg1); font-weight: 500; text-align: right; cursor: pointer; }
+.pv, .pv-cycle { color: var(--fg1); font-weight: 500; text-align: right; cursor: pointer; user-select: none; }
 .pv:hover, .pv-cycle:hover { color: var(--a1); }
 .pv.green,  .pv-cycle.green  { color: var(--pos); }
 .pv.red,    .pv-cycle.red    { color: var(--neg); }
