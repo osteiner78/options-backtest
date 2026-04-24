@@ -37,7 +37,8 @@ _PARAM_REMAP = {
     "pricing_mode":      "mode",
     "pricing_risk_free": "risk_free_rate",
     "risk_free_rate":    "cash_yield_annual",
-    "defensive_enabled": "defensive_leg_roll_enabled",
+    # Defensive params now use engine key names directly in BacktestRequest;
+    # no remap entries needed for them.
 }
 
 
@@ -64,9 +65,11 @@ class BacktestRequest(BaseModel):
     max_rolls: Optional[int] = Field(default=None, ge=0, le=10)
     vix_entry_filter_enabled: Optional[bool] = None
     vix_entry_max: Optional[float] = Field(default=None, ge=5, le=100)
-    defensive_enabled: Optional[bool] = None
+    use_price_stop: Optional[bool] = None
+    defensive_leg_roll_enabled: Optional[bool] = None
     defensive_trigger_delta: Optional[float] = Field(default=None, ge=0.1, le=0.5)
-    defensive_target_delta: Optional[float] = Field(default=None, ge=0.05, le=0.3)
+    leg_roll_target_delta: Optional[float] = Field(default=None, ge=0.05, le=0.3)
+    max_leg_rolls_per_trade: Optional[int] = Field(default=None, ge=0, le=10)
     pricing_mode: Optional[str] = Field(default=None, pattern=r"^(synthetic|market)$")
     pricing_risk_free: Optional[float] = Field(default=None, ge=0, le=0.2)
     put_slope: Optional[float] = Field(default=None, ge=0, le=2.0)

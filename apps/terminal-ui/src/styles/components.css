@@ -94,6 +94,33 @@
 .pv.dim,    .pv-cycle.dim    { color: var(--dim); }
 .pv.purple, .pv-cycle.purple { color: var(--a3); }
 
+/* Indented sub-param rows (conditional params under a toggle) */
+.pr.pr-indent {
+  padding-left: 10px;
+  opacity: 0.85;
+}
+.pr.pr-indent .pl {
+  font-size: 11px;
+  color: var(--dim);
+}
+
+/* Sidebar hover tooltip (singleton appended to body) */
+.sidebar-tip {
+  position: fixed;
+  z-index: 1000;
+  background: var(--bg2);
+  border: 1px solid var(--bg4);
+  border-radius: 3px;
+  padding: 6px 10px;
+  font-size: 10px;
+  color: var(--fg3);
+  max-width: 240px;
+  line-height: 1.5;
+  pointer-events: none;
+  display: none;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.4);
+}
+
 .pv-input {
   font-family: inherit;
   font-size: 12px;
@@ -108,6 +135,19 @@
   outline: none;
 }
 .pdivider { height: 1px; background: var(--bg3); margin: 3px 0; }
+
+/* Native date picker styled to match terminal theme */
+.pv-date {
+  width: 100px;
+  padding: 0 2px;
+  color-scheme: dark;  /* tells browser to use dark calendar popup */
+  text-align: left;
+}
+.pv-date::-webkit-calendar-picker-indicator {
+  filter: invert(0.6);
+  cursor: pointer;
+  margin-left: 2px;
+}
 
 /* ──────────────── Performance table ──────────────── */
 .perf-bar-label {

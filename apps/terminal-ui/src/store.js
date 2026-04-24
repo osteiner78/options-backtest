@@ -6,23 +6,41 @@ const PARAMS_KEY = 'straddle_params';
 const THEME_KEY  = 'straddle_theme';
 
 const defaultParams = {
+  // BACKTEST
   start_date: '2021-01-01',
   end_date: '2025-11-30',
   initial_balance: 50000,
+  // STRATEGY
+  mode: 'market',               // pricing mode: 'market' | 'synthetic'
+  put_slope: 0.30,              // synthetic vol skew — put
+  call_slope: 0.10,             // synthetic vol skew — call
+  strategy_mode: 'short_strangle',
+  wing_delta: 0.05,             // iron condor long-leg delta
   target_delta: 0.16,
   dte_min: 30,
   dte_max: 45,
   profit_target_pct: 0.50,
+  use_price_stop: false,        // enable price-based stop loss
   stop_loss_pct: 2.00,
+  // PORTFOLIO
+  portfolio_mode: 'laddering',  // 'laddering' | 'single'
+  single_position: true,        // single-mode: skip entry while chain open
   max_bpr_allocation: 0.30,
+  entry_cooldown_days: 3,
+  cash_investment_mode: 'spy',
+  spy_allocation_pct: 0.40,    // blend mode: SPY fraction of uninvested cash
+  // ROLL MGMT
   manage_at_dte: 21,
   roll_for_credit: true,
   max_rolls: 3,
-  entry_cooldown_days: 3,
-  cash_investment_mode: 'spy',
+  // DEFENSIVE
+  defensive_leg_roll_enabled: false,
+  defensive_trigger_delta: 0.30,
+  leg_roll_target_delta: 0.16,
+  max_leg_rolls_per_trade: 2,
+  // VIX FILTER
   vix_entry_filter_enabled: false,
   vix_entry_max: 35.0,
-  mode: 'market',
 };
 
 const ENUM_FIELDS = ['mode', 'cash_investment_mode', 'portfolio_mode', 'strategy_mode'];
