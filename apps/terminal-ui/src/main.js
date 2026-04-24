@@ -5,7 +5,7 @@ import './styles/layout.css';
 import './styles/components.css';
 import './styles/uplot-overrides.css';
 
-import { subscribe, setConfig } from './store.js';
+import { subscribe, setConfig, applyConfigDefaults } from './store.js';
 import { fetchConfig } from './api/client.js';
 import { renderTopBar, initTopBar } from './components/topbar/TopBar.js';
 import { renderErrorBanner, initErrorBanner } from './components/banner/ErrorBanner.js';
@@ -59,5 +59,8 @@ initRunHistory();
 subscribe(render);
 
 fetchConfig()
-  .then(setConfig)
+  .then(config => {
+    setConfig(config);
+    applyConfigDefaults(config); // sync backend defaults if user has no saved params
+  })
   .catch(err => console.warn('[/config] unavailable, using bundled defaults:', err.message));

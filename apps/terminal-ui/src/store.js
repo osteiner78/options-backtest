@@ -143,3 +143,17 @@ export function setActiveTab(tab) {
 export function setConfig(config) {
   store.config = config;
 }
+
+/**
+ * Hydrate store.params with backend defaults from /config.
+ * Only runs when the user has no saved params in localStorage, so existing
+ * custom setups are never overwritten. New parameters added to the backend
+ * flow in automatically without touching frontend code.
+ */
+export function applyConfigDefaults(config) {
+  if (!config?.defaults) return;
+  if (localStorage.getItem(PARAMS_KEY)) return; // user has saved params — don't touch
+  // Backend defaults take precedence over frontend defaults for any shared key.
+  // Frontend-only keys (e.g. 'mode' alias) are preserved in defaultParams.
+  store.params = { ...defaultParams, ...config.defaults };
+}

@@ -20,6 +20,9 @@ export function renderPnLStrip() {
 
 // Trade rects for hover hit-testing: [{x1, x2, trade}]
 let _rects = [];
+// Flag set by pointer-enter/leave on the strip so the mousemove handler bails
+// immediately for every cursor move that happens outside the P&L area.
+let _inStrip = false;
 
 let bound = false;
 export function initPnLStrip() {
@@ -31,7 +34,17 @@ export function initPnLStrip() {
   });
   window.addEventListener('resize', drawPnL);
 
+  // Track whether the cursor is inside the strip using capture-phase events so
+  // we don't pay for getBoundingClientRect on every mousemove outside the strip.
+  document.addEventListener('pointerover', (e) => {
+    if (e.target.closest('#pnl-strip-el')) _inStrip = true;
+  }, true);
+  document.addEventListener('pointerout', (e) => {
+    if (e.target.closest('#pnl-strip-el')) _inStrip = false;
+  }, true);
+
   document.addEventListener('mousemove', (e) => {
+    if (!_inStrip) return; // fast-exit for all cursor moves outside the strip
     const svg = document.getElementById('svg-pnl');
     const tip = document.getElementById('pnl-tip');
     if (!svg || !tip) return;

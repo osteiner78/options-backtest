@@ -21,6 +21,15 @@ with diffs highlighted.
 
 ---
 
+## Refactoring C — ChartArea uPlot factory
+
+`ChartArea.js` is 570+ lines with 5 chart variants that all repeat the same
+`destroyChart → new uPlot({...opts(), hooks:{setCursor, draw}}, data, mountEl) →
+mouseleave` boilerplate. Extract a `mountChart(opts, data, tooltipFn, drawHooks)`
+helper to reduce this to ~350 lines and make adding a 6th chart trivial.
+
+---
+
 ## Low priority / Phase C
 
 ### Expose remaining strategy params in sidebar

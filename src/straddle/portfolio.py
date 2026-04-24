@@ -251,7 +251,7 @@ def run_portfolio_backtest(
     params: dict,
     engine=None,
     progress_callback=None,
-) -> Tuple[List[Trade], pd.DataFrame, PortfolioManager]:
+) -> Tuple[List[Trade], pd.DataFrame, PortfolioManager, int]:
     """Run a portfolio-style backtest with laddering and dynamic margin.
 
     This is a chronological simulation that steps forward one trading day at a time,
@@ -289,8 +289,8 @@ def run_portfolio_backtest(
 
         cash_yield_annual = params.get("cash_yield_annual", 0.04)
         daily_rf_rate = cash_yield_annual / 252.0
-        cash_investment_mode = params.get("cash_investment_mode", "risk_free")
-        spy_allocation_pct = params.get("spy_allocation_pct", 0.40)
+        cash_investment_mode = params["cash_investment_mode"]
+        spy_allocation_pct = params["spy_allocation_pct"]
         prev_spy_close: Optional[float] = None
 
         # ── Main daily loop ─────────────────────────────────────────────────

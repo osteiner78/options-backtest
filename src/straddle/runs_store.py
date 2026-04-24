@@ -1,7 +1,7 @@
 """SQLite persistence layer for backtest run history."""
 import json
 import sqlite3
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -42,7 +42,7 @@ def upsert_run(run_id: str, status: str, params: dict, result: Optional[dict] = 
                 result_json = excluded.result_json
         """, (
             run_id,
-            datetime.utcnow().isoformat(),
+            datetime.now(timezone.utc).isoformat(),
             status,
             label,
             json.dumps(params),

@@ -164,7 +164,7 @@ class LegRollEvent:
 
 @dataclass
 class Trade:
-    trade_num: int
+    trade_num: Optional[int]   # None until assigned by run_backtest / run_portfolio_backtest
     entry_date: pd.Timestamp
     expiration: pd.Timestamp
     entry_dte: int
@@ -781,11 +781,11 @@ def run_backtest(
         engine: Pricing engine instance. If None, it is created via make_engine(params).
 
     Returns:
-        (trades, equity_curve, skipped_entries, skipped_vix)
+        (trades, equity_curve, skipped_entries, vix_blocked_dates)
         - trades: list of Trade objects (one per chain leg, including ROLLED descendants)
         - equity_curve: daily pd.Series of mark-to-market account equity
         - skipped_entries: count of skipped entries due to single_position barrier
-        - skipped_vix: count of skipped entries due to VIX filter
+        - vix_blocked_dates: list of date strings (YYYY-MM-DD) where VIX filter blocked entry
     """
     from straddle.engines import make_engine
 
@@ -810,7 +810,7 @@ def run_backtest(
         trades: List[Trade] = []
         trade_num: int = 0
         skipped_entries: int = 0
-        skipped_vix: int = 0
+        vix_blocked_dates: List[str] = []
 
         entries = list(get_entry_dates(
             data,
@@ -830,7 +830,7 @@ def run_backtest(
             S = float(row["spy_close"])
             vix = float(row["vix_close"])
             if vix_filter_enabled and vix > vix_entry_max:
-                skipped_vix += 1
+                vix_blocked_dates.append(str(entry_date.date()))
                 continue  # VIX too high; skip this entry
 
             entry_dte = (expiration - entry_date).days
@@ -898,7 +898,7 @@ def run_backtest(
                     daily_pnl[this_date] += this_val - prev_val
 
         equity_curve = daily_pnl.cumsum() + params["initial_balance"]
-        return trades, equity_curve, skipped_entries, skipped_vix
+        return trades, equity_curve, skipped_entries, vix_blocked_dates
     finally:
         if created_engine and hasattr(engine, "close"):
             engine.close()

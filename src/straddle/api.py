@@ -4,7 +4,7 @@ Exposes a REST API for running backtests and retrieving results.
 import asyncio
 import json
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, AsyncGenerator, Dict, List, Optional
 from uuid import uuid4
 import pandas as pd
@@ -22,9 +22,24 @@ logger = logging.getLogger(__name__)
 
 app = FastAPI(title="SPY Short Strangle Backtest API", version="0.2.0")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
+
+# In-memory store for *active* runs only (pending/running).
+# Completed results live in SQLite; this dict keeps only status + progress
+# so memory usage stays flat regardless of run count.
 _results: Dict[str, dict] = {}
 
 init_db()
+
+# ── Declarative API→internal parameter remapping ─────────────────────────────
+# Keys here are the API field names (from BacktestRequest); values are the
+# engine-internal param names (from params.py / PARAMS).
+_PARAM_REMAP = {
+    "pricing_mode":      "mode",
+    "pricing_risk_free": "risk_free_rate",
+    "risk_free_rate":    "cash_yield_annual",
+    "defensive_enabled": "defensive_leg_roll_enabled",
+}
+
 
 class BacktestRequest(BaseModel):
     """Per-field validators return 422 with structured field errors on bad input."""
@@ -122,8 +137,8 @@ def _build_metrics_response(metrics: dict, params: dict, trades: list, data: pd.
     def _clean(v): return float(v) if v is not None and not np.isnan(v) and not np.isinf(v) else 0.0
     short_pnl = sum(t.pnl for t in trades if t.pnl is not None)
     cash_yield_total = metrics.get("cash_yield_earned", 0.0)
-    cash_mode = params.get("cash_investment_mode", "spy")
-    spy_alloc = params.get("spy_allocation_pct", 0.40)
+    cash_mode = params["cash_investment_mode"]
+    spy_alloc = params["spy_allocation_pct"]
     if cash_mode == "spy": ret_cash_spy, ret_cash_rf = cash_yield_total / init, 0.0
     elif cash_mode == "risk_free": ret_cash_spy, ret_cash_rf = 0.0, cash_yield_total / init
     else: ret_cash_spy, ret_cash_rf = (cash_yield_total * spy_alloc) / init, (cash_yield_total * (1 - spy_alloc)) / init
@@ -164,21 +179,31 @@ def _run_backtest_task(run_id: str, params: dict):
         data = load_market_data(start_date=params["start_date"], end_date=params["end_date"])
         engine = make_engine(params)
         try:
-            vix_blocked_dates = []
             if is_portfolio:
                 trades, equity_df, portfolio, _ = run_portfolio_backtest(data, params, engine, progress_callback=_cb)
                 metrics = compute_portfolio_metrics(trades, equity_df, params, data)
                 eq_curve = {str(k.date()): v for k, v in equity_df["total_equity"].items()}
                 bpr_curve = {str(k.date()): v for k, v in equity_df["utilized_bpr"].items()}
                 pos_curve = {str(k.date()): int(v) for k, v in equity_df["open_positions"].items()}
-                vix_blocked_dates = [str(d.date()) for d, v in portfolio.vix_blocked_dates]
+                vix_blocked_dates = [str(d.date()) for d, _ in portfolio.vix_blocked_dates]
             else:
-                trades, equity_curve, _, _ = run_backtest(data, params, engine, progress_callback=_cb)
+                trades, equity_curve, _, vix_blocked_dates = run_backtest(data, params, engine, progress_callback=_cb)
                 metrics = compute_metrics(trades, equity_curve, params, data)
                 eq_curve = {str(k.date()): v for k, v in equity_curve.items()}
                 bpr_curve, pos_curve = {}, {}
-            spy_series = data.loc[pd.Timestamp(params["start_date"]) : pd.Timestamp(params["end_date"]), "spy_close"]
-            spy_curve = {str(k.date()): float(v / float(spy_series.iloc[0]) * params["initial_balance"]) for k, v in spy_series.items()} if not spy_series.empty else {}
+
+            # Restrict VIX curve to the backtest window (data may have a 90-day pre-buffer)
+            start_ts = pd.Timestamp(params["start_date"])
+            end_ts   = pd.Timestamp(params["end_date"])
+            vix_window = data.loc[start_ts:end_ts, "vix_close"]
+            spy_series = data.loc[start_ts:end_ts, "spy_close"]
+            spy_curve = (
+                {str(k.date()): float(v / float(spy_series.iloc[0]) * params["initial_balance"])
+                 for k, v in spy_series.items()}
+                if not spy_series.empty else {}
+            )
+            vix_curve = {str(k.date()): float(v) for k, v in vix_window.items()}
+
             trade_rows = [{
                 "trade_num": t.trade_num,
                 "entry_date": t.entry_date.strftime("%Y-%m-%d"),
@@ -199,17 +224,7 @@ def _run_backtest_task(run_id: str, params: dict):
                 "used_market_data": t.used_market_data,
             } for t in trades]
             metrics_resp = _build_metrics_response(metrics, params, trades, data)
-            _results[run_id].update({
-                "status": "completed",
-                "metrics": metrics_resp,
-                "trades": trade_rows,
-                "equity_curve": eq_curve, "spy_curve": spy_curve, "bpr_curve": bpr_curve,
-                "pos_count_curve": pos_curve,
-                "vix_curve": {str(k.date()): float(v) for k, v in data["vix_close"].items()},
-                "vix_blocked_dates": vix_blocked_dates,
-                "progress": {"pct": 1.0, "trades_so_far": len(trades), "current_date": None},
-            })
-            # Persist completed run to SQLite (store full result for /runs/{id} retrieval)
+
             result_payload = {
                 "metrics": metrics_resp.model_dump(),
                 "trades": trade_rows,
@@ -217,10 +232,17 @@ def _run_backtest_task(run_id: str, params: dict):
                 "spy_curve": spy_curve,
                 "bpr_curve": bpr_curve,
                 "pos_count_curve": pos_curve,
-                "vix_curve": {str(k.date()): float(v) for k, v in data["vix_close"].items()},
+                "vix_curve": vix_curve,
                 "vix_blocked_dates": vix_blocked_dates,
             }
+            # Persist full result to SQLite; keep only status in memory
             upsert_run(run_id, "completed", params, result=result_payload)
+            _results[run_id] = {
+                "run_id": run_id,
+                "status": "completed",
+                "params": params,
+                "progress": {"pct": 1.0, "trades_so_far": len(trades), "current_date": None},
+            }
         finally:
             if hasattr(engine, "close"): engine.close()
     except Exception as e:
@@ -230,16 +252,12 @@ def _run_backtest_task(run_id: str, params: dict):
 
 @app.get("/health")
 def health_check():
-    return {"status": "ok", "timestamp": datetime.utcnow().isoformat()}
+    return {"status": "ok", "timestamp": datetime.now(timezone.utc).isoformat()}
 
 
 @app.get("/config")
 def get_config():
-    """Return defaults, per-field ranges/enums, and capabilities.
-
-    Frontends should hydrate their parameter schema from this endpoint so
-    defaults don't drift between client and server.
-    """
+    """Return defaults, per-field ranges/enums, and capabilities."""
     db_path = PARAMS.get("db_path", "data/Spy Options Database.db")
     try:
         db_last = _db_coverage_end(db_path)
@@ -285,31 +303,37 @@ def get_config():
 
 @app.post("/backtest", response_model=BacktestResponse)
 async def run_backtest_api(background_tasks: BackgroundTasks, req: BacktestRequest = BacktestRequest()):
-    run_id = str(uuid4())[:8]; params = dict(PARAMS); overrides = req.model_dump(exclude_none=True)
-    if "pricing_mode" in overrides: params["mode"] = overrides.pop("pricing_mode")
-    if "pricing_risk_free" in overrides: params["risk_free_rate"] = overrides.pop("pricing_risk_free")
-    if "risk_free_rate" in overrides: params["cash_yield_annual"] = overrides.pop("risk_free_rate")
-    if "defensive_enabled" in overrides: params["defensive_leg_roll_enabled"] = overrides.pop("defensive_enabled")
-    params.update(overrides); _results[run_id] = {"run_id": run_id, "status": "pending", "params": params}
+    run_id = str(uuid4())
+    params = dict(PARAMS)
+    overrides = req.model_dump(exclude_none=True)
+    # Apply declarative key remapping before merging
+    for api_key, internal_key in _PARAM_REMAP.items():
+        if api_key in overrides:
+            overrides[internal_key] = overrides.pop(api_key)
+    params.update(overrides)
+    _results[run_id] = {"run_id": run_id, "status": "pending", "params": params}
     background_tasks.add_task(_run_backtest_task, run_id, params)
     return BacktestResponse(run_id=run_id, status="pending", params=params)
 
 @app.get("/backtest/{run_id}", response_model=BacktestResponse)
 def get_backtest_result(run_id: str):
-    if run_id not in _results:
-        # Fall back to SQLite for runs from previous server sessions
-        stored = get_run(run_id)
-        if stored is None:
-            raise HTTPException(status_code=404)
-        result = stored.get("result") or {}
-        return BacktestResponse(
-            run_id=run_id, status=stored["status"], params=stored["params"],
-            error=result.get("error"), **{k: result.get(k) for k in (
-                "metrics", "trades", "equity_curve", "spy_curve",
-                "bpr_curve", "pos_count_curve", "vix_curve", "vix_blocked_dates",
-            ) if result.get(k) is not None},
-        )
-    return BacktestResponse(**_results[run_id])
+    entry = _results.get(run_id)
+    # Active run (pending/running): return lightweight status without full data
+    if entry and entry["status"] in ("pending", "running"):
+        return BacktestResponse(run_id=run_id, status=entry["status"], params=entry.get("params", {}))
+    # Completed/failed: read from SQLite (authoritative source for full payloads)
+    stored = get_run(run_id)
+    if stored is None:
+        raise HTTPException(status_code=404)
+    result = stored.get("result") or {}
+    return BacktestResponse(
+        run_id=run_id, status=stored["status"], params=stored["params"],
+        error=result.get("error"),
+        **{k: result.get(k) for k in (
+            "metrics", "trades", "equity_curve", "spy_curve",
+            "bpr_curve", "pos_count_curve", "vix_curve", "vix_blocked_dates",
+        ) if result.get(k) is not None},
+    )
 
 
 async def _sse_generator(run_id: str) -> AsyncGenerator[str, None]:
@@ -317,7 +341,12 @@ async def _sse_generator(run_id: str) -> AsyncGenerator[str, None]:
     while True:
         entry = _results.get(run_id)
         if entry is None:
-            yield f"event: error\ndata: {json.dumps({'error': 'run not found'})}\n\n"
+            # Not in memory — check SQLite (run from a previous server session)
+            stored = get_run(run_id)
+            if stored:
+                yield f"data: {json.dumps({'status': stored['status'], 'pct': 1.0, 'trades_so_far': 0, 'current_date': None})}\n\n"
+            else:
+                yield f"event: error\ndata: {json.dumps({'error': 'run not found'})}\n\n"
             return
         progress = entry.get("progress", {})
         status = entry.get("status", "pending")
@@ -396,12 +425,8 @@ def compare_runs(req: CompareRequest):
     """Return a dict of run_id → metrics for side-by-side comparison."""
     out = {}
     for rid in req.run_ids:
-        # Check in-memory cache first, then SQLite
-        if rid in _results and _results[rid].get("metrics"):
-            m = _results[rid]["metrics"]
-            out[rid] = m.model_dump() if hasattr(m, "model_dump") else m
-        else:
-            row = get_run(rid)
-            if row and row.get("result") and row["result"].get("metrics"):
-                out[rid] = row["result"]["metrics"]
+        # SQLite is the authoritative source for completed runs
+        row = get_run(rid)
+        if row and row.get("result") and row["result"].get("metrics"):
+            out[rid] = row["result"]["metrics"]
     return out

@@ -330,6 +330,11 @@ def compute_portfolio_metrics(
         results["peak_bpr_util"] = 0.0
 
     realized_pnl = sum(t.pnl for t in trades if t.pnl is not None)
+    # This formula is exact (not an approximation): the last equity_df row records
+    # available_cash + total_unrealized_liability, where unrealized_liability is the
+    # negative of close-costs for positions still open at end of day. The force-close
+    # loop then subtracts those same close-costs from available_cash, so both sides
+    # move identically. Hence final_equity == post-force-close cash.
     results["cash_yield_earned"] = results["final"] - results["init"] - realized_pnl
 
     # Structured stats for API consumers
