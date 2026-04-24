@@ -59,6 +59,7 @@ class BacktestRequest(BaseModel):
     max_bpr_allocation: Optional[float] = Field(default=None, gt=0, le=1.0)
     entry_cooldown_days: Optional[int] = Field(default=None, ge=0, le=30)
     cash_investment_mode: Optional[str] = Field(default=None, pattern=r"^(risk_free|spy|blend)$")
+    spy_allocation_pct: Optional[float] = Field(default=None, ge=0.0, le=1.0)
     risk_free_rate: Optional[float] = Field(default=None, ge=0, le=0.2)
     manage_at_dte: Optional[int] = Field(default=None, ge=0, le=60)
     roll_for_credit: Optional[bool] = None
