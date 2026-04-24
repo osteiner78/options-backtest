@@ -38,7 +38,7 @@ export function renderTableGrid() {
         <div class="tp-title">Exit Breakdown</div>
         <table class="dt">
           <thead><tr>
-            <th>Type</th><th class="r">N</th><th class="r">%</th>
+            <th>Type</th><th class="r">n</th><th class="r">%</th>
             <th class="r">Win%</th><th class="r">Avg P&L</th><th class="r">Total P&L</th>
           </tr></thead>
           <tbody>
@@ -70,7 +70,6 @@ export function renderTableGrid() {
             </tr>
           </tbody>
         </table>
-        <div style="font-size:7px;color:var(--dim);margin-top:4px;text-align:right;">TOTAL = Options P&L only (excl. cash yield)</div>
       </div>
 
       <!-- ── Right: VIX Regime ── -->
@@ -78,7 +77,7 @@ export function renderTableGrid() {
         <div class="tp-title">VIX Regime</div>
         <table class="dt">
           <thead><tr>
-            <th>Regime</th><th class="r">Range</th><th class="r">N</th>
+            <th>Regime</th><th class="r">Range</th><th class="r">n</th>
             <th class="r">Win%</th><th class="r">Avg P&L</th><th class="r">Total P&L</th>
           </tr></thead>
           <tbody>
@@ -100,7 +99,6 @@ export function renderTableGrid() {
             </tr>
           </tbody>
         </table>
-        <div style="font-size:7px;color:var(--dim);margin-top:4px;text-align:right;">TOTAL = Options P&L only (excl. cash yield)</div>
       </div>
 
     </div>

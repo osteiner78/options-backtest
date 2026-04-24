@@ -67,16 +67,20 @@ export function renderPerformanceBar() {
   const spyPnl  = metrics.ret_cash_spy * init;
   const rfPnl   = metrics.ret_cash_rf  * init;
 
-  // ── Options component: MaxDD and Calmar derived from trade curve ──
+  // ── Options component: MaxDD and Calmar derived from cumulative trade P&L curve ──
+  // computeOptionsMDD returns a POSITIVE fraction (magnitude of max drawdown).
+  // We display it negative to match the convention used in all other rows.
   const optMDD    = computeOptionsMDD(trades, init);
   const optCalmar = optMDD > 1e-4 ? metrics.cagr_options / optMDD : null;
 
-  // ── SPY component: metrics from spy_curve (scale-invariant Sharpe/MDD; Calmar uses component CAGR) ──
-  // Sharpe and MaxDD % are identical to SPY B&H because it's the same underlying return series.
-  // Calmar uses cagr_cash_spy (actual component CAGR) / spy B&H MaxDD.
+  // ── SPY component: same underlying returns as SPY B&H, different allocation size ──
+  // Sharpe is scale-invariant → same as SPY B&H.
+  // MaxDD % is the same underlying drawdown sequence → same as SPY B&H.
+  // Calmar uses cagr_cash_spy (component CAGR, differs from SPY B&H CAGR).
+  // spy_max_drawdown is NEGATIVE (standard convention), so use Math.abs for Calmar.
   const spySharpe  = metrics.spy_sharpe;
-  const spyMDD     = metrics.spy_max_drawdown;  // already a fraction
-  const spyCalmar  = spyMDD > 1e-4 ? metrics.cagr_cash_spy / spyMDD : null;
+  const spyMDD     = metrics.spy_max_drawdown;  // negative fraction, e.g. -0.254
+  const spyCalmar  = Math.abs(spyMDD) > 1e-4 ? metrics.cagr_cash_spy / Math.abs(spyMDD) : null;
 
   // ── Risk-free: monotonically increasing → MaxDD = 0, Sharpe ≈ 0, Calmar = ∞ ──
   // Not meaningful to display; leave as --
@@ -108,7 +112,7 @@ export function renderPerformanceBar() {
             <td class="r">${formatSignedPct(metrics.ret_options)}</td>
             <td class="r">${formatPct(metrics.cagr_options)}</td>
             ${na}
-            <td class="r c-neg">${optMDD > 0 ? formatPct(optMDD) : '--'}</td>
+            <td class="r c-neg">${optMDD > 0 ? formatPct(-optMDD) : '--'}</td>
             <td class="r c-amb">${optCalmar != null ? formatNum(optCalmar) : '--'}</td>
             <td class="r ${optPnl >= 0 ? 'c-pos' : 'c-neg'}">${formatPnl(optPnl)}</td>
           </tr>
@@ -142,9 +146,6 @@ export function renderPerformanceBar() {
           </tr>
         </tbody>
       </table>
-      <div style="font-size:9px;color:var(--dim);padding:2px 8px;text-align:right;">
-        SPY Sharpe &amp; MaxDD: same underlying returns as SPY B&amp;H · Calmar uses component CAGR
-      </div>
     </div>
   `;
 }

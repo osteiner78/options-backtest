@@ -150,6 +150,10 @@ export function drawPnL() {
   const mid   = plotH / 2;
   const halfH = mid - PAD;
 
+  // Uniform bar width: each trade gets a fair share of plot width, capped to avoid
+  // bars that are too wide (long backtest, few trades) or too narrow (many trades).
+  const bw = Math.max(2, Math.min(10, plotW / Math.max(trades.length, 1) * 0.75));
+
   let out = '';
 
   // Baseline
@@ -165,18 +169,19 @@ export function drawPnL() {
     out += `<text x="${(x + 3).toFixed(1)}" y="${h - 2}" font-family="IBM Plex Mono,monospace" font-size="10" fill="${fg4}">${y}</text>`;
   }
 
-  // Trade bars positioned by entry→exit date
+  // Trade bars: each bar centered on its EXIT date, uniform width.
+  // Using exit date avoids variable widths (entry→exit duration) and the
+  // overlapping bars that occur in portfolio mode with concurrent positions.
   trades.forEach(t => {
-    const entryX = toX(dateMs(t.entry_date));
-    const exitX  = toX(dateMs(t.exit_date));
-    const x1 = Math.max(LEFT, Math.min(entryX, exitX));
-    const x2 = Math.min(LEFT + plotW, Math.max(entryX, exitX));
-    const bw = Math.max(1.5, x2 - x1);
-    const bh = Math.abs(t.pnl) / maxAbs * halfH;
-    const y  = t.pnl >= 0 ? mid - bh : mid;
+    const cx  = toX(dateMs(t.exit_date));
+    const x1  = Math.max(LEFT, cx - bw / 2);
+    const x2  = Math.min(LEFT + plotW, cx + bw / 2);
+    const bwi = Math.max(1.5, x2 - x1);
+    const bh  = Math.abs(t.pnl) / maxAbs * halfH;
+    const y   = t.pnl >= 0 ? mid - bh : mid;
     const color = colors[t.exit_type] || pos;
-    out += `<rect x="${x1.toFixed(1)}" y="${y.toFixed(1)}" width="${bw.toFixed(1)}" height="${bh.toFixed(1)}" fill="${color}" opacity="0.85"/>`;
-    _rects.push({ x1, x2: x1 + bw, trade: t });
+    out += `<rect x="${x1.toFixed(1)}" y="${y.toFixed(1)}" width="${bwi.toFixed(1)}" height="${bh.toFixed(1)}" fill="${color}" opacity="0.85"/>`;
+    _rects.push({ x1, x2: x1 + bwi, trade: t });
   });
 
   svg.innerHTML = out;

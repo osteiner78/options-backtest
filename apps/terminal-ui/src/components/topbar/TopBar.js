@@ -16,20 +16,9 @@ export function renderTopBar() {
     runLabel = `Last run ${new Date(lastRun).toLocaleTimeString()}`;
   }
 
-  const configPill = [
-    (params.strategy_mode || 'short_strangle').replace('_', ' ').toUpperCase(),
-    'PORTFOLIO',
-    (params.pricing_mode || params.mode || 'market').toUpperCase() + ' PRICING',
-    `${params.start_date} → ${params.end_date}`,
-    `Δ${params.target_delta}`,
-    `PT ${Math.round(params.profit_target_pct * 100)}%`,
-  ].join(' · ');
-
   return `
     <header class="topbar">
       <span class="brand">▸ SPY BACKTEST</span>
-      <span class="sep">/</span>
-      <span class="config-pill">${configPill}</span>
       <span class="spacer"></span>
       <span class="topbar-meta">${runLabel}</span>
       ${renderButton({ id: 'btn-history', label: '◷ HISTORY' })}

@@ -91,11 +91,11 @@ function makeTip(el) {
 }
 
 function positionTip(tip, u, html) {
-  const { left, idx } = u.cursor;
+  const { left, top, idx } = u.cursor;
   if (idx == null || left == null || left < 0) { tip.style.display = 'none'; return; }
   tip.style.display = 'block';
   tip.innerHTML = html;
-  // Anchor to top corner opposite the cursor so it never covers the cursor area
+  // Horizontal: always on the opposite side from the cursor (never covers data under cursor).
   if (left > u.width / 2) {
     tip.style.left  = '8px';
     tip.style.right = 'auto';
@@ -103,7 +103,8 @@ function positionTip(tip, u, html) {
     tip.style.right = '8px';
     tip.style.left  = 'auto';
   }
-  tip.style.top = '8px';
+  // Vertical: follows the cursor so you can read the highlighted curve area.
+  tip.style.top = Math.max(4, (top ?? 0) - 10) + 'px';
 }
 
 function fmtDate(ts) {
@@ -428,7 +429,7 @@ function equityOpts(w, h) {
       base.axes[0],
       {
         ...base.axes[1],
-        values: (_, splits) => splits.map(v => (v >= 0 ? '+' : '') + '$' + Math.round(Math.abs(v) / 1000) + 'k'),
+        values: (_, splits) => splits.map(v => (v >= 0 ? '+$' : '-$') + Math.round(Math.abs(v) / 1000) + 'k'),
       },
     ],
     scales: {

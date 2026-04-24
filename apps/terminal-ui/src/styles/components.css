@@ -236,9 +236,9 @@ table.perf-table tr.pt-spy td {
 .tp { padding: 5px 8px 6px; border-right: 1px solid var(--bg3); overflow: hidden; }
 .tp:last-child { border-right: none; }
 .tp-title {
-  font-size: 10px;
+  font-size: 12px;
   font-weight: 600;
-  letter-spacing: 0.1em;
+  letter-spacing: 0.08em;
   text-transform: uppercase;
   color: var(--a1);
   margin-bottom: 4px;
