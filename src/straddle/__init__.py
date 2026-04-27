@@ -18,12 +18,14 @@ Public API::
         calculate_reg_t_strangle_margin,
         run_portfolio_backtest,
         plot_portfolio_backtest,
-        # Paper trading (new):
+        # Paper trading:
         StateStore,
         PaperTrade,
         PendingSignal,
         SignalType,
         SignalStatus,
+        PaperConfig,
+        Notifier,
     )
 """
 
@@ -49,6 +51,8 @@ from straddle.paper_trading.state import (
     SignalType,
     SignalStatus,
 )
+from straddle.paper_trading.config import PaperConfig
+from straddle.paper_trading.notifications import Notifier
 
 __all__ = [
     "PARAMS",
@@ -77,4 +81,6 @@ __all__ = [
     "PendingSignal",
     "SignalType",
     "SignalStatus",
+    "PaperConfig",
+    "Notifier",
 ]
