@@ -13,15 +13,18 @@ Lifecycle per daily cycle (4:30 PM ET):
   5. Record equity snapshot, tick heartbeat.
 
 process_approved_signals (every 5 s):
-  - In dry_run mode: no-op (signals stay approved, UI can still display them).
+  - In dry_run mode: fetch BS prices and write to payload; never changes status.
   - In live mode: revalidate → IBKR → fill → mutate canonical trade → notify.
 """
 
 import copy
 import json
+import logging
 import math
 from datetime import datetime, timezone
 from typing import Callable, Optional
+
+logger = logging.getLogger(__name__)
 
 import pandas as pd
 
@@ -116,16 +119,16 @@ class PaperTradingEngine:
 
     def process_approved_signals(self) -> None:
         for sig in self._store.list_signals(status=SignalStatus.APPROVED):
-            try:
-                if self._dry_run:
-                    self._price_signal_dry_run(sig)
-                else:
+            if self._dry_run:
+                self._price_signal_dry_run(sig)  # never raises; errors logged internally
+            else:
+                try:
                     self._execute_signal(sig)
-            except Exception as exc:
-                self._store.update_signal_status(
-                    sig.id, SignalStatus.FAILED, error_msg=str(exc)
-                )
-                self._notifier.notify("error", "Signal execution failed", str(exc))
+                except Exception as exc:
+                    self._store.update_signal_status(
+                        sig.id, SignalStatus.FAILED, error_msg=str(exc)
+                    )
+                    self._notifier.notify("error", "Signal execution failed", str(exc))
 
     def _price_signal_dry_run(self, sig: PendingSignal) -> None:
         """Dry-run: compute BS-only prices and write back to payload.
