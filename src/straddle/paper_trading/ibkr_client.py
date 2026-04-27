@@ -108,32 +108,71 @@ class IBKRClient:
     # ── Market data ───────────────────────────────────────────────────────────
 
     def get_spy_close(self) -> float:
-        """Return SPY last regular-session close via delayed (type-3) feed."""
+        """Return SPY last regular-session close.
+
+        Tries reqHistoricalData first (works on paper accounts without market
+        data subscriptions, and on weekends). Falls back to reqMktData type-4
+        (delayed-frozen) for live-account users with a data subscription.
+        """
         import ib_insync
 
         contract = ib_insync.Stock("SPY", "SMART", "USD")
         self._ib.qualifyContracts(contract)
-        self._ib.reqMarketDataType(3)
+
+        price = self._last_close_from_history(contract, "TRADES")
+        if price is not None:
+            return price
+
+        # Fallback: delayed-frozen streaming tick
+        self._ib.reqMarketDataType(4)
         ticker = self._ib.reqMktData(contract, "", False, False)
         self._ib.sleep(2)
-        price = ticker.close
-        if price is None or (isinstance(price, float) and math.isnan(price)):
-            raise ValueError("SPY close unavailable from IBKR delayed feed")
-        return float(price)
+        p = ticker.close
+        if p is not None and not math.isnan(p):
+            return float(p)
+        raise ValueError("SPY close unavailable (no market data subscription and history failed)")
 
     def get_vix_close(self) -> float:
-        """Return VIX last close via delayed (type-3) feed."""
+        """Return VIX last close (historical + delayed-frozen fallback)."""
         import ib_insync
 
         contract = ib_insync.Index("VIX", "CBOE", "USD")
         self._ib.qualifyContracts(contract)
-        self._ib.reqMarketDataType(3)
+
+        price = self._last_close_from_history(contract, "TRADES")
+        if price is not None:
+            return price
+
+        self._ib.reqMarketDataType(4)
         ticker = self._ib.reqMktData(contract, "", False, False)
         self._ib.sleep(2)
-        price = ticker.close
-        if price is None or (isinstance(price, float) and math.isnan(price)):
-            raise ValueError("VIX close unavailable from IBKR delayed feed")
-        return float(price)
+        p = ticker.close
+        if p is not None and not math.isnan(p):
+            return float(p)
+        raise ValueError("VIX close unavailable (no market data subscription and history failed)")
+
+    def _last_close_from_history(self, contract, what_to_show: str) -> Optional[float]:
+        """Fetch the most recent daily close via reqHistoricalData.
+
+        Works on paper accounts without a market data subscription.
+        Returns None on any failure so callers can fall back to streaming data.
+        """
+        try:
+            bars = self._ib.reqHistoricalData(
+                contract,
+                endDateTime="",          # '' = now / last available
+                durationStr="3 D",       # 3 days covers weekends
+                barSizeSetting="1 day",
+                whatToShow=what_to_show,
+                useRTH=True,
+                formatDate=1,
+                keepUpToDate=False,
+            )
+            if bars:
+                return float(bars[-1].close)
+        except Exception:
+            pass
+        return None
 
     def get_option_quote(
         self, strike: float, expiration: str, right: str
@@ -150,7 +189,7 @@ class IBKRClient:
         except Exception:
             return None
 
-        self._ib.reqMarketDataType(3)
+        self._ib.reqMarketDataType(4)
         ticker = self._ib.reqMktData(contract, "", False, False)
         self._ib.sleep(2)
 

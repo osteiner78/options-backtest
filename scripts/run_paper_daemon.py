@@ -103,7 +103,7 @@ def cmd_run(args: argparse.Namespace) -> None:
     )
 
     if args.once:
-        _run_once(runner, ibkr, connected, args.config, cfg, store)
+        _run_once(runner, ibkr, connected, args.config, cfg, store, force=getattr(args, "force", False))
         return
 
     _run_scheduler(runner, ibkr, cfg, store, connected, args.config)
@@ -119,11 +119,12 @@ def _run_once(
     config_path: str,
     cfg: PaperConfig,
     store: StateStore,
+    force: bool = False,
 ) -> None:
     today = today_naive_ny()
     logger.info("--once: running daily cycle for %s", today.date())
 
-    if not _is_scheduled_trading_day(today):
+    if not force and not _is_scheduled_trading_day(today):
         logger.info("Not a scheduled trading day — skipping cycle (use --force to override)")
     else:
         runner.run_daily_cycle(today)
@@ -354,6 +355,7 @@ def _build_parser() -> argparse.ArgumentParser:
     run_p = sub.add_parser("run", help="Start the paper trading daemon")
     run_p.add_argument("--once", action="store_true", help="Run one cycle then exit")
     run_p.add_argument("--dry-run", action="store_true", help="No IBKR order submission")
+    run_p.add_argument("--force", action="store_true", help="Skip market-day check (useful for weekend tests)")
     run_p.add_argument("--config", default=default_config, metavar="PATH")
     run_p.add_argument("--db", default=default_db, metavar="PATH")
 
