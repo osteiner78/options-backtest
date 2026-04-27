@@ -1,4 +1,4 @@
-"""Tests for paper trading milestone 2: config, auth, notifications."""
+"""Tests for paper trading milestones 2 and 3: config, auth, notifications, IBKR client."""
 
 import json
 import tempfile
@@ -197,3 +197,145 @@ def test_notifier_ntfy_failure_is_swallowed(temp_store, tmp_path):
     notifier.notify("info", "title", "body")  # must not raise
     notifs = temp_store.list_notifications()
     assert len(notifs) == 1  # DB write still succeeded
+
+
+# ── IBKR client tests (milestone 3) ──────────────────────────────────────────
+
+
+from straddle.paper_trading.ibkr_client import (
+    Fill,
+    FillTimeout,
+    MockIBKRClient,
+    is_quote_sane,
+)
+
+
+@pytest.fixture
+def default_config():
+    return PaperConfig()
+
+
+# Quote sanity gate
+
+
+def test_quote_sane_valid(default_config):
+    assert is_quote_sane(bid=1.00, ask=1.10, age_sec=30, config=default_config)
+
+
+def test_quote_insane_bid_too_low(default_config):
+    # bid=0.04 < quote_min_bid=0.05
+    assert not is_quote_sane(bid=0.04, ask=0.10, age_sec=30, config=default_config)
+
+
+def test_quote_insane_ask_below_bid(default_config):
+    assert not is_quote_sane(bid=1.10, ask=1.00, age_sec=30, config=default_config)
+
+
+def test_quote_insane_spread_too_wide(default_config):
+    # spread = (2.00 - 1.00) / 1.00 = 100% >> 25%
+    assert not is_quote_sane(bid=1.00, ask=2.00, age_sec=30, config=default_config)
+
+
+def test_quote_insane_stale(default_config):
+    # age_sec=120 > quote_max_age_sec=90
+    assert not is_quote_sane(bid=1.00, ask=1.10, age_sec=120, config=default_config)
+
+
+def test_quote_sane_at_spread_boundary(default_config):
+    # spread exactly 25% — still sane (boundary is inclusive)
+    ask = 1.00 * (1 + default_config.quote_max_spread_pct)
+    assert is_quote_sane(bid=1.00, ask=ask, age_sec=30, config=default_config)
+
+
+def test_quote_insane_just_over_spread_boundary(default_config):
+    ask = 1.00 * (1 + default_config.quote_max_spread_pct) + 0.01
+    assert not is_quote_sane(bid=1.00, ask=ask, age_sec=30, config=default_config)
+
+
+# MockIBKRClient
+
+
+def test_mock_ibkr_returns_spy_close():
+    mock = MockIBKRClient(spy_close=505.25)
+    assert mock.get_spy_close() == 505.25
+
+
+def test_mock_ibkr_returns_vix_close():
+    mock = MockIBKRClient(vix_close=22.5)
+    assert mock.get_vix_close() == 22.5
+
+
+def test_mock_ibkr_returns_configured_quote():
+    quote = {"bid": 1.50, "ask": 1.60, "mid": 1.55, "last": 1.52, "age_sec": 10, "sane": True}
+    mock = MockIBKRClient(quotes={(480.0, "20250221", "P"): quote})
+    result = mock.get_option_quote(480.0, "20250221", "P")
+    assert result == quote
+
+
+def test_mock_ibkr_returns_none_for_unknown_quote():
+    mock = MockIBKRClient()
+    assert mock.get_option_quote(999.0, "20250221", "P") is None
+
+
+def test_mock_ibkr_raises_on_place_strangle_by_default():
+    mock = MockIBKRClient()
+    with pytest.raises(AssertionError, match="place_strangle"):
+        mock.place_strangle(480.0, 520.0, "20250221", 1, 6.50)
+
+
+def test_mock_ibkr_raises_on_close_strangle_by_default(tmp_path):
+    from straddle.paper_trading.state import PaperTrade
+    import pandas as pd
+
+    mock = MockIBKRClient()
+    trade = PaperTrade(
+        entry_date=pd.Timestamp("2025-01-15"),
+        expiration=pd.Timestamp("2025-02-21"),
+        put_strike=480.0,
+        call_strike=520.0,
+        net_credit=650.0,
+    )
+    with pytest.raises(AssertionError, match="close_strangle"):
+        mock.close_strangle(trade, 3.00)
+
+
+def test_mock_ibkr_returns_fill_when_configured():
+    expected_fill = Fill(order_id=1, perm_id=12345, avg_price=6.48, qty=1, commission=2.05)
+    mock = MockIBKRClient(fills={"place_strangle": expected_fill})
+    result = mock.place_strangle(480.0, 520.0, "20250221", 1, 6.50)
+    assert result is expected_fill
+    assert result.avg_price == 6.48
+
+
+def test_mock_ibkr_connect_disconnect():
+    mock = MockIBKRClient(connected=False)
+    assert not mock.is_connected
+    mock.connect()
+    assert mock.is_connected
+    mock.disconnect()
+    assert not mock.is_connected
+
+
+def test_mock_ibkr_validate_strike_snaps_to_nearest_dollar():
+    mock = MockIBKRClient()
+    assert mock.validate_strike(480.3) == 480.0
+    assert mock.validate_strike(480.7) == 481.0
+
+
+def test_fill_timeout_is_exception():
+    exc = FillTimeout("did not fill in 60s")
+    assert isinstance(exc, Exception)
+    assert "60s" in str(exc)
+
+
+def test_mock_ibkr_account_summary_defaults():
+    mock = MockIBKRClient()
+    summary = mock.get_account_summary()
+    assert "NetLiquidation" in summary
+    assert "BuyingPower" in summary
+
+
+def test_mock_ibkr_custom_account_summary():
+    mock = MockIBKRClient(account_summary={"NetLiquidation": "75000", "BuyingPower": "60000"})
+    summary = mock.get_account_summary()
+    assert summary["NetLiquidation"] == "75000"
