@@ -128,7 +128,11 @@ class PaperTradingEngine:
                 self._notifier.notify("error", "Signal execution failed", str(exc))
 
     def _price_signal_dry_run(self, sig: PendingSignal) -> None:
-        """Dry-run: fetch prices and write back to payload without placing any order."""
+        """Dry-run: compute BS-only prices and write back to payload.
+
+        IBKR calls are intentionally skipped — ib_insync is event-loop-based
+        and deadlocks when called from an APScheduler worker thread.
+        """
         payload = json.loads(sig.payload_json)
         if payload.get("quote_source", "pending") != "pending":
             return  # already priced
@@ -136,32 +140,48 @@ class PaperTradingEngine:
             return
 
         try:
+            today = today_naive_ny()
+            exp_ts = pd.Timestamp(payload["expiration"])
+            entry_dte = max((exp_ts - today).days, 1)
+            T = entry_dte / 365.0
+            row = self._snapshot_market(today)
+            S, vix, r = row["spy_close"], row["vix_close"], row["risk_free_rate"]
+            ctx = PricingContext(eval_date=today, expiration=exp_ts)
+
             if not payload.get("put_strike") or not payload.get("call_strike"):
-                payload = self._fill_entry_defaults(payload)
+                kw = build_entry(self._engine, S, T, r, vix, entry_dte, ctx, self._params)
+                if kw is None:
+                    logger.warning("[DRY-RUN] Signal #%d: no valid strangle for expiry %s", sig.id, payload["expiration"])
+                    return
+                put_k = kw["put_strike"]
+                call_k = kw["call_strike"]
             else:
-                today = today_naive_ny()
-                exp_ts = pd.Timestamp(payload["expiration"])
-                T = max((exp_ts - today).days / 365.0, 1e-7)
-                row = self._snapshot_market(today)
-                S, vix, r = row["spy_close"], row["vix_close"], row["risk_free_rate"]
-                exp_str = exp_ts.strftime("%Y%m%d")
-                put_q = self._get_quote(payload["put_strike"], exp_str, "P", S, T, r, vix)
-                call_q = self._get_quote(payload["call_strike"], exp_str, "C", S, T, r, vix)
-                payload.update({
-                    "put_ibkr_mid": put_q["ibkr_mid"],
-                    "call_ibkr_mid": call_q["ibkr_mid"],
-                    "put_bs_mid": put_q["bs_mid"],
-                    "call_bs_mid": call_q["bs_mid"],
-                    "quote_source": put_q["source"],
-                    "entry_vix": vix,
-                })
+                put_k = payload["put_strike"]
+                call_k = payload["call_strike"]
+
+            put_bs  = float(self._engine.get_leg_mark(put_k,  S, entry_dte, vix, r, "put",  ctx=ctx))
+            call_bs = float(self._engine.get_leg_mark(call_k, S, entry_dte, vix, r, "call", ctx=ctx))
+
+            payload.update({
+                "put_strike":    put_k,
+                "call_strike":   call_k,
+                "put_bs_mid":    put_bs,
+                "call_bs_mid":   call_bs,
+                "put_ibkr_mid":  None,
+                "call_ibkr_mid": None,
+                "quote_source":  "bs",
+                "entry_vix":     vix,
+                "entry_dte":     entry_dte,
+            })
+            if not payload.get("entry_date"):
+                payload["entry_date"] = str(today.date())
+            if not payload.get("limit_price"):
+                payload["limit_price"] = put_bs + call_bs
+
             self._store.update_signal_payload(sig.id, json.dumps(payload))
             logger.info(
-                "[DRY-RUN] Priced signal #%d: put_bs=%.2f call_bs=%.2f source=%s",
-                sig.id,
-                payload.get("put_bs_mid") or 0,
-                payload.get("call_bs_mid") or 0,
-                payload.get("quote_source", "?"),
+                "[DRY-RUN] Priced signal #%d put=%.0f bs=%.2f call=%.0f bs=%.2f",
+                sig.id, put_k, put_bs, call_k, call_bs,
             )
         except Exception as exc:
             logger.warning("[DRY-RUN] Failed to price signal #%d: %s", sig.id, exc)
