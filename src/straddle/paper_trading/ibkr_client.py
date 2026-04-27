@@ -151,17 +151,28 @@ class IBKRClient:
             return float(p)
         raise ValueError("VIX close unavailable (no market data subscription and history failed)")
 
-    def _last_close_from_history(self, contract, what_to_show: str) -> Optional[float]:
-        """Fetch the most recent daily close via reqHistoricalData.
+    def _run_in_loop(self, coro, timeout: float = 15):
+        """Submit a coroutine to ib_insync's event loop from any thread.
 
-        Works on paper accounts without a market data subscription.
-        Returns None on any failure so callers can fall back to streaming data.
+        ib_insync's synchronous wrappers (reqHistoricalData, sleep, …) call
+        loop.run_until_complete() internally.  That works from the main thread
+        but deadlocks from a worker thread because the loop is already running.
+        The fix: schedule the *async* coroutine on the running loop via
+        run_coroutine_threadsafe, then block only this worker thread on the
+        resulting Future — the event loop stays free to service IBKR traffic.
         """
+        import asyncio
+        loop = self._ib.client._loop
+        future = asyncio.run_coroutine_threadsafe(coro, loop)
+        return future.result(timeout=timeout)
+
+    def _last_close_from_history(self, contract, what_to_show: str) -> Optional[float]:
+        """Fetch the most recent daily close via reqHistoricalData (main-thread only)."""
         try:
             bars = self._ib.reqHistoricalData(
                 contract,
-                endDateTime="",          # '' = now / last available
-                durationStr="3 D",       # 3 days covers weekends
+                endDateTime="",
+                durationStr="3 D",
                 barSizeSetting="1 day",
                 whatToShow=what_to_show,
                 useRTH=True,
@@ -173,6 +184,48 @@ class IBKRClient:
         except Exception:
             pass
         return None
+
+    def _last_close_threadsafe(self, contract, what_to_show: str) -> Optional[float]:
+        """Like _last_close_from_history but safe to call from background threads."""
+        try:
+            bars = self._run_in_loop(
+                self._ib.reqHistoricalDataAsync(
+                    contract,
+                    endDateTime="",
+                    durationStr="3 D",
+                    barSizeSetting="1 day",
+                    whatToShow=what_to_show,
+                    useRTH=True,
+                    formatDate=1,
+                    keepUpToDate=False,
+                ),
+                timeout=15,
+            )
+            if bars:
+                return float(bars[-1].close)
+        except Exception:
+            pass
+        return None
+
+    def get_spy_close_threadsafe(self) -> Optional[float]:
+        """Return SPY last close; safe to call from APScheduler worker threads."""
+        import ib_insync
+        contract = ib_insync.Stock("SPY", "SMART", "USD")
+        try:
+            self._run_in_loop(self._ib.qualifyContractsAsync(contract), timeout=10)
+        except Exception:
+            return None
+        return self._last_close_threadsafe(contract, "TRADES")
+
+    def get_vix_close_threadsafe(self) -> Optional[float]:
+        """Return VIX last close; safe to call from APScheduler worker threads."""
+        import ib_insync
+        contract = ib_insync.Index("VIX", "CBOE", "USD")
+        try:
+            self._run_in_loop(self._ib.qualifyContractsAsync(contract), timeout=10)
+        except Exception:
+            return None
+        return self._last_close_threadsafe(contract, "TRADES")
 
     def get_option_quote(
         self, strike: float, expiration: str, right: str
@@ -205,6 +258,61 @@ class IBKRClient:
 
         mid = (bid + ask) / 2
 
+        if ticker.time is not None:
+            ts = ticker.time
+            if ts.tzinfo is None:
+                ts = ts.replace(tzinfo=timezone.utc)
+            age_sec = (datetime.now(timezone.utc) - ts).total_seconds()
+        else:
+            age_sec = float("inf")
+
+        sane = is_quote_sane(bid, ask, age_sec, self._config)
+        return {"bid": bid, "ask": ask, "mid": mid, "last": last, "age_sec": age_sec, "sane": sane}
+
+    def get_option_quote_threadsafe(
+        self, strike: float, expiration: str, right: str
+    ) -> Optional[dict]:
+        """Like get_option_quote but safe to call from APScheduler worker threads.
+
+        Uses reqTickersAsync (snapshot) instead of reqMktData + sleep so the
+        ib_insync event loop is never blocked by the calling thread.
+        """
+        import ib_insync
+
+        contract = ib_insync.Option(
+            "SPY", expiration, strike, right, "SMART", tradingClass="SPY"
+        )
+        try:
+            self._run_in_loop(self._ib.qualifyContractsAsync(contract), timeout=10)
+        except Exception:
+            return None
+
+        try:
+            # reqMarketDataType must run on the event loop too
+            self._run_in_loop(
+                self._ib.reqMarketDataTypeAsync(4), timeout=5
+            )
+            tickers = self._run_in_loop(
+                self._ib.reqTickersAsync(contract), timeout=15
+            )
+        except Exception:
+            return None
+
+        if not tickers:
+            return None
+        ticker = tickers[0]
+
+        def _float(v) -> Optional[float]:
+            return float(v) if v is not None and not math.isnan(float(v)) else None
+
+        bid = _float(ticker.bid)
+        ask = _float(ticker.ask)
+        last = _float(ticker.last)
+
+        if bid is None or ask is None:
+            return None
+
+        mid = (bid + ask) / 2
         if ticker.time is not None:
             ts = ticker.time
             if ts.tzinfo is None:

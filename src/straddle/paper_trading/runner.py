@@ -153,7 +153,7 @@ class PaperTradingEngine:
             exp_ts = pd.Timestamp(payload["expiration"])
             entry_dte = max((exp_ts - today).days, 1)
             T = entry_dte / 365.0
-            row = self._snapshot_market_no_ibkr(today)
+            row = self._snapshot_market_threadsafe(today)
             S, vix, r = row["spy_close"], row["vix_close"], row["risk_free_rate"]
             ctx = PricingContext(eval_date=today, expiration=exp_ts)
 
@@ -171,36 +171,50 @@ class PaperTradingEngine:
             put_bs  = float(self._engine.get_leg_mark(put_k,  S, entry_dte, vix, r, "put",  ctx=ctx))
             call_bs = float(self._engine.get_leg_mark(call_k, S, entry_dte, vix, r, "call", ctx=ctx))
 
-            # Try yfinance for real market mid prices (thread-safe plain HTTP)
-            put_yf = call_yf = None
+            # 1. Try IBKR threadsafe (uses async API, no event-loop conflict)
+            # 2. Fall back to yfinance (plain HTTP, always thread-safe)
+            # 3. BS is always computed regardless
+            put_mkt = call_mkt = None
             source = "bs"
-            try:
-                import yfinance as yf
-                ticker = yf.Ticker("SPY")
-                exp_str = exp_ts.strftime("%Y-%m-%d")
-                chain = ticker.option_chain(exp_str)
-                def _yf_mid(df, strike):
-                    row = df[df["strike"] == strike]
-                    if row.empty:
-                        return None
-                    bid, ask = float(row.iloc[0]["bid"]), float(row.iloc[0]["ask"])
-                    if bid > 0 and ask >= bid:
-                        return round((bid + ask) / 2, 2)
-                    return None
-                put_yf  = _yf_mid(chain.puts,  put_k)
-                call_yf = _yf_mid(chain.calls, call_k)
-                if put_yf is not None or call_yf is not None:
-                    source = "yfinance"
-            except Exception as yf_exc:
-                logger.debug("[DRY-RUN] yfinance quote failed for signal #%d: %s", sig.id, yf_exc)
+
+            if self._ibkr.is_connected:
+                exp_yyyymmdd = exp_ts.strftime("%Y%m%d")
+                try:
+                    pq = self._ibkr.get_option_quote_threadsafe(put_k,  exp_yyyymmdd, "P")
+                    cq = self._ibkr.get_option_quote_threadsafe(call_k, exp_yyyymmdd, "C")
+                    if pq and pq.get("sane"):
+                        put_mkt = round(pq["mid"], 2)
+                    if cq and cq.get("sane"):
+                        call_mkt = round(cq["mid"], 2)
+                    if put_mkt is not None or call_mkt is not None:
+                        source = "ibkr"
+                except Exception as ibkr_exc:
+                    logger.debug("[DRY-RUN] IBKR threadsafe quote failed for signal #%d: %s", sig.id, ibkr_exc)
+
+            if source == "bs":
+                try:
+                    import yfinance as yf
+                    chain = yf.Ticker("SPY").option_chain(exp_ts.strftime("%Y-%m-%d"))
+                    def _yf_mid(df, strike):
+                        r = df[df["strike"] == strike]
+                        if r.empty:
+                            return None
+                        b, a = float(r.iloc[0]["bid"]), float(r.iloc[0]["ask"])
+                        return round((b + a) / 2, 2) if b > 0 and a >= b else None
+                    put_mkt  = _yf_mid(chain.puts,  put_k)
+                    call_mkt = _yf_mid(chain.calls, call_k)
+                    if put_mkt is not None or call_mkt is not None:
+                        source = "yfinance"
+                except Exception as yf_exc:
+                    logger.debug("[DRY-RUN] yfinance quote failed for signal #%d: %s", sig.id, yf_exc)
 
             payload.update({
                 "put_strike":    put_k,
                 "call_strike":   call_k,
                 "put_bs_mid":    put_bs,
                 "call_bs_mid":   call_bs,
-                "put_ibkr_mid":  put_yf,
-                "call_ibkr_mid": call_yf,
+                "put_ibkr_mid":  put_mkt,
+                "call_ibkr_mid": call_mkt,
                 "quote_source":  source,
                 "entry_vix":     vix,
                 "entry_dte":     entry_dte,
@@ -208,12 +222,12 @@ class PaperTradingEngine:
             if not payload.get("entry_date"):
                 payload["entry_date"] = str(today.date())
             if not payload.get("limit_price"):
-                payload["limit_price"] = (put_yf or put_bs) + (call_yf or call_bs)
+                payload["limit_price"] = (put_mkt or put_bs) + (call_mkt or call_bs)
 
             self._store.update_signal_payload(sig.id, json.dumps(payload))
             logger.info(
-                "[DRY-RUN] Priced signal #%d put=%.0f yf=%s bs=%.2f  call=%.0f yf=%s bs=%.2f  source=%s",
-                sig.id, put_k, put_yf, put_bs, call_k, call_yf, call_bs, source,
+                "[DRY-RUN] Priced signal #%d put=%.0f mkt=%s bs=%.2f  call=%.0f mkt=%s bs=%.2f  source=%s",
+                sig.id, put_k, put_mkt, put_bs, call_k, call_mkt, call_bs, source,
             )
         except Exception as exc:
             logger.warning("[DRY-RUN] Failed to price signal #%d: %s", sig.id, exc)
@@ -336,25 +350,42 @@ class PaperTradingEngine:
             "risk_free_rate": risk_free_rate,
         }
 
-    def _snapshot_market_no_ibkr(self, today: pd.Timestamp) -> dict:
-        """Like _snapshot_market but skips IBKR calls (safe to call from threads)."""
+    def _snapshot_market_threadsafe(self, today: pd.Timestamp) -> dict:
+        """Market snapshot safe to call from APScheduler worker threads.
+
+        Tries IBKR threadsafe async API first; falls back to Yahoo/parquet.
+        """
+        spy_close = vix_close = None
+        if self._ibkr.is_connected:
+            try:
+                spy_close = self._ibkr.get_spy_close_threadsafe()
+                vix_close = self._ibkr.get_vix_close_threadsafe()
+            except Exception as exc:
+                logger.debug("Threadsafe IBKR market data failed: %s", exc)
+
         risk_free_rate = self._params.get("risk_free_rate", 0.05)
-        lookback_start = str((today - pd.Timedelta(days=7)).date())
-        lookback_end = str((today - pd.Timedelta(days=1)).date())
-        hist = self._data_loader(lookback_start, lookback_end)
-        if hist.empty:
-            raise RuntimeError(f"No market data available for {today}")
-        row = hist.iloc[-1]
-        rf = float(row.get("risk_free_rate", risk_free_rate))
-        if math.isnan(rf):
-            rf = risk_free_rate
+        if spy_close is None or vix_close is None:
+            lookback_start = str((today - pd.Timedelta(days=7)).date())
+            lookback_end = str((today - pd.Timedelta(days=1)).date())
+            hist = self._data_loader(lookback_start, lookback_end)
+            if hist.empty:
+                raise RuntimeError(f"No market data available for {today}")
+            row = hist.iloc[-1]
+            rf = float(row.get("risk_free_rate", risk_free_rate))
+            if not math.isnan(rf):
+                risk_free_rate = rf
+            if spy_close is None:
+                spy_close = float(row["spy_close"])
+            if vix_close is None:
+                vix_close = float(row["vix_close"])
+
         return {
-            "spy_close": float(row["spy_close"]),
-            "spy_open": float(row["spy_close"]),
-            "spy_high": float(row["spy_close"]),
-            "spy_low": float(row["spy_close"]),
-            "vix_close": float(row["vix_close"]),
-            "risk_free_rate": rf,
+            "spy_close": spy_close,
+            "spy_open": spy_close,
+            "spy_high": spy_close,
+            "spy_low": spy_close,
+            "vix_close": vix_close,
+            "risk_free_rate": risk_free_rate,
         }
 
     def _build_lookback_df(self, today: pd.Timestamp, market_row: dict) -> pd.DataFrame:
