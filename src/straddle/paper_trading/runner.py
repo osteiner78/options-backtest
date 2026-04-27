@@ -118,12 +118,8 @@ class PaperTradingEngine:
         )
 
     def process_approved_signals(self) -> None:
+        """Execute approved signals. In dry-run, no-op — pricing runs on main thread."""
         if self._dry_run:
-            # Price both pending and approved signals so quotes appear before approval
-            for sig in self._store.list_signals(status=SignalStatus.PENDING):
-                self._price_signal_dry_run(sig)
-            for sig in self._store.list_signals(status=SignalStatus.APPROVED):
-                self._price_signal_dry_run(sig)
             return
         for sig in self._store.list_signals(status=SignalStatus.APPROVED):
             try:
@@ -134,17 +130,29 @@ class PaperTradingEngine:
                 )
                 self._notifier.notify("error", "Signal execution failed", str(exc))
 
-    def _price_signal_dry_run(self, sig: PendingSignal) -> None:
-        """Dry-run: fetch yfinance option prices (thread-safe) + BS fallback.
+    def price_pending_signals(self) -> None:
+        """Fetch quotes for unpriced pending+approved signals.
 
-        ib_insync is NOT used here — its synchronous wrappers call
-        loop.run_until_complete() which deadlocks when the asyncio event loop
-        is already running in a different thread (as it is inside APScheduler).
-        yfinance is a plain HTTP call and is safe from any thread.
+        Must be called from the main thread — ib_insync's synchronous API is
+        not thread-safe (the event loop only runs during blocking calls, so
+        run_coroutine_threadsafe does not work from worker threads).
+        """
+        for sig in (
+            self._store.list_signals(status=SignalStatus.PENDING)
+            + self._store.list_signals(status=SignalStatus.APPROVED)
+        ):
+            self._price_signal_dry_run(sig)
+
+    def _price_signal_dry_run(self, sig: PendingSignal) -> None:
+        """Price one signal: IBKR mid (main thread) → yfinance → BS fallback.
+
+        Must be called from the main thread (via price_pending_signals).
+        ib_insync's synchronous API is safe on the main thread because the
+        event loop only runs during each blocking call — no background loop.
         """
         payload = json.loads(sig.payload_json)
         if payload.get("quote_source", "pending") != "pending":
-            return  # already priced
+            return
         if sig.signal_type not in (SignalType.ENTRY, SignalType.MANUAL, SignalType.OPEN_RECOVERY):
             return
 
@@ -153,7 +161,7 @@ class PaperTradingEngine:
             exp_ts = pd.Timestamp(payload["expiration"])
             entry_dte = max((exp_ts - today).days, 1)
             T = entry_dte / 365.0
-            row = self._snapshot_market_threadsafe(today)
+            row = self._snapshot_market(today)
             S, vix, r = row["spy_close"], row["vix_close"], row["risk_free_rate"]
             ctx = PricingContext(eval_date=today, expiration=exp_ts)
 
@@ -171,17 +179,15 @@ class PaperTradingEngine:
             put_bs  = float(self._engine.get_leg_mark(put_k,  S, entry_dte, vix, r, "put",  ctx=ctx))
             call_bs = float(self._engine.get_leg_mark(call_k, S, entry_dte, vix, r, "call", ctx=ctx))
 
-            # 1. Try IBKR threadsafe (uses async API, no event-loop conflict)
-            # 2. Fall back to yfinance (plain HTTP, always thread-safe)
-            # 3. BS is always computed regardless
+            # 1. IBKR via regular synchronous API (safe on main thread)
             put_mkt = call_mkt = None
             source = "bs"
+            exp_str = exp_ts.strftime("%Y%m%d")
 
             if self._ibkr.is_connected:
-                exp_yyyymmdd = exp_ts.strftime("%Y%m%d")
                 try:
-                    pq = self._ibkr.get_option_quote_threadsafe(put_k,  exp_yyyymmdd, "P")
-                    cq = self._ibkr.get_option_quote_threadsafe(call_k, exp_yyyymmdd, "C")
+                    pq = self._ibkr.get_option_quote(put_k,  exp_str, "P")
+                    cq = self._ibkr.get_option_quote(call_k, exp_str, "C")
                     if pq and pq.get("sane"):
                         put_mkt = round(pq["mid"], 2)
                     if cq and cq.get("sane"):
@@ -189,8 +195,9 @@ class PaperTradingEngine:
                     if put_mkt is not None or call_mkt is not None:
                         source = "ibkr"
                 except Exception as ibkr_exc:
-                    logger.warning("[DRY-RUN] IBKR threadsafe quote failed for signal #%d: %s", sig.id, ibkr_exc)
+                    logger.warning("[DRY-RUN] IBKR quote failed for signal #%d: %s", sig.id, ibkr_exc)
 
+            # 2. yfinance fallback
             if source == "bs":
                 try:
                     import yfinance as yf
@@ -206,7 +213,7 @@ class PaperTradingEngine:
                     if put_mkt is not None or call_mkt is not None:
                         source = "yfinance"
                 except Exception as yf_exc:
-                    logger.debug("[DRY-RUN] yfinance quote failed for signal #%d: %s", sig.id, yf_exc)
+                    logger.debug("[DRY-RUN] yfinance fallback failed for signal #%d: %s", sig.id, yf_exc)
 
             payload.update({
                 "put_strike":    put_k,

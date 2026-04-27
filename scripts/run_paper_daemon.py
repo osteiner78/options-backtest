@@ -244,8 +244,17 @@ def _run_scheduler(
     signal.signal(signal.SIGINT, _shutdown)
     signal.signal(signal.SIGTERM, _shutdown)
 
+    _last_pricing = 0.0
     while not stop_event[0]:
         time.sleep(1)
+        # Dry-run pricing runs on the main thread — the only thread that can
+        # safely call ib_insync synchronous methods (the event loop is not
+        # continuously running; run_coroutine_threadsafe does not work).
+        if runner._dry_run:
+            _now = time.time()
+            if _now - _last_pricing >= 10:
+                _last_pricing = _now
+                runner.price_pending_signals()
 
     logger.info("Shutting down scheduler...")
     scheduler.shutdown(wait=True)
