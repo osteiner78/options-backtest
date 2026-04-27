@@ -233,6 +233,18 @@ class StateStore:
                 )
             """)
             
+            # Schema migrations (ADD COLUMN IF NOT EXISTS via try/except — SQLite has no IF NOT EXISTS for columns)
+            _migrations = [
+                "ALTER TABLE heartbeat ADD COLUMN dry_run BOOLEAN NOT NULL DEFAULT 0",
+                "ALTER TABLE paper_trades ADD COLUMN metadata_json TEXT",
+                "ALTER TABLE leg_rolls ADD COLUMN data_json TEXT",
+            ]
+            for _sql in _migrations:
+                try:
+                    conn.execute(_sql)
+                except Exception:
+                    pass  # column already exists
+
             # Create indexes
             conn.execute("CREATE INDEX IF NOT EXISTS idx_paper_trades_status ON paper_trades(status)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_paper_trades_parent ON paper_trades(parent_trade_num)")
