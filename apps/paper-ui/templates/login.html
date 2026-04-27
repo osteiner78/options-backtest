@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Login — SPY Strangle Paper Trading</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+</head>
+<body class="bg-gray-100 min-h-screen flex items-center justify-center">
+
+  <div class="bg-white rounded-xl shadow-lg p-8 w-full max-w-sm"
+       x-data="{
+         password: '',
+         error: '',
+         loading: false,
+         async submit() {
+           this.error = '';
+           this.loading = true;
+           try {
+             const res = await fetch('/login', {
+               method: 'POST',
+               headers: {'Content-Type': 'application/json'},
+               body: JSON.stringify({password: this.password}),
+             });
+             if (res.ok) {
+               const d = await res.json();
+               localStorage.setItem('paper_token', d.token);
+               window.location.href = '/ui/signals';
+             } else if (res.status === 503) {
+               this.error = 'Auth not configured — run setup-auth first.';
+             } else {
+               this.error = 'Incorrect password.';
+             }
+           } catch(e) {
+             this.error = 'Network error: ' + e.message;
+           } finally {
+             this.loading = false;
+           }
+         }
+       }">
+
+    <h1 class="text-2xl font-bold text-gray-800 mb-1">SPY Strangle</h1>
+    <p class="text-sm text-gray-500 mb-6">Paper Trading Dashboard</p>
+
+    <form @submit.prevent="submit">
+      <label class="block text-sm font-medium text-gray-700 mb-1">Password</label>
+      <input type="password"
+             x-model="password"
+             class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 mb-4"
+             placeholder="Enter password"
+             autofocus />
+
+      <div x-show="error" x-text="error"
+           class="text-red-600 text-sm mb-3"></div>
+
+      <button type="submit"
+              :disabled="loading"
+              class="w-full bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white font-semibold py-2 rounded-lg text-sm transition">
+        <span x-text="loading ? 'Logging in…' : 'Log in'"></span>
+      </button>
+    </form>
+  </div>
+
+  <script>
+    // Already logged in → skip login page
+    if (localStorage.getItem('paper_token')) {
+      window.location.href = '/ui/signals';
+    }
+  </script>
+</body>
+</html>

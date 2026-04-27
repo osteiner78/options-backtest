@@ -1,0 +1,140 @@
+{% extends "base.html" %}
+{% block title %}Trades{% endblock %}
+{% block nav_trades %}text-yellow-300 font-semibold{% endblock %}
+
+{% block content %}
+<div x-data="tradesPage()" x-init="init()" class="space-y-4">
+
+  <div class="flex items-center justify-between">
+    <h1 class="text-xl font-bold">Trades</h1>
+    <div class="flex rounded-lg border border-gray-300 overflow-hidden text-sm">
+      <template x-for="tab in ['all','open','closed']" :key="tab">
+        <button @click="filter=tab; load()"
+                :class="filter===tab ? 'bg-blue-600 text-white' : 'bg-white text-gray-700 hover:bg-gray-50'"
+                class="px-4 py-1.5 border-r last:border-r-0 border-gray-300 capitalize"
+                x-text="tab">
+        </button>
+      </template>
+    </div>
+  </div>
+
+  <div x-show="loading" class="text-gray-400 text-sm">Loading…</div>
+  <div x-show="!loading && trades.length === 0"
+       class="text-gray-500 text-sm bg-white rounded-lg p-6 text-center border">
+    No trades.
+  </div>
+
+  <!-- Summary bar (open trades) -->
+  <div x-show="openTrades.length > 0"
+       class="bg-blue-50 border border-blue-200 rounded-lg px-4 py-2 text-sm flex gap-6">
+    <span><strong x-text="openTrades.length"></strong> open</span>
+    <span>Total credit: <strong x-text="'$' + totalCredit.toFixed(0)"></strong></span>
+    <span x-show="totalPnl !== 0">
+      Unrealised P&amp;L: <strong :class="totalPnl >= 0 ? 'text-green-700' : 'text-red-600'"
+                                   x-text="(totalPnl >= 0 ? '+$' : '-$') + Math.abs(totalPnl).toFixed(0)"></strong>
+    </span>
+  </div>
+
+  <!-- Trade table -->
+  <div x-show="trades.length > 0" class="bg-white rounded-lg border shadow-sm overflow-x-auto">
+    <table class="w-full text-sm">
+      <thead class="bg-gray-50 text-gray-500 text-xs uppercase">
+        <tr>
+          <th class="px-4 py-2 text-left">#</th>
+          <th class="px-4 py-2 text-left">Entry</th>
+          <th class="px-4 py-2 text-left">Expiry</th>
+          <th class="px-4 py-2 text-right">Put</th>
+          <th class="px-4 py-2 text-right">Call</th>
+          <th class="px-4 py-2 text-right">Credit</th>
+          <th class="px-4 py-2 text-center">Status</th>
+          <th class="px-4 py-2 text-right">P&amp;L</th>
+          <th class="px-4 py-2 text-left">Exit</th>
+        </tr>
+      </thead>
+      <tbody>
+        <template x-for="t in trades" :key="t.trade_num">
+          <tr class="border-t hover:bg-gray-50 cursor-pointer" @click="selected = selected === t.trade_num ? null : t.trade_num">
+            <td class="px-4 py-2 font-mono text-gray-400" x-text="t.trade_num"></td>
+            <td class="px-4 py-2" x-text="t.entry_date"></td>
+            <td class="px-4 py-2" x-text="t.expiration"></td>
+            <td class="px-4 py-2 text-right" x-text="t.put_strike"></td>
+            <td class="px-4 py-2 text-right" x-text="t.call_strike"></td>
+            <td class="px-4 py-2 text-right font-medium" x-text="'$' + t.net_credit.toFixed(0)"></td>
+            <td class="px-4 py-2 text-center">
+              <span :class="'status-' + t.status"
+                    class="px-2 py-0.5 rounded-full text-xs font-medium"
+                    x-text="t.status"></span>
+            </td>
+            <td class="px-4 py-2 text-right"
+                :class="t.pnl >= 0 ? 'text-green-700' : t.pnl < 0 ? 'text-red-600' : 'text-gray-400'">
+              <span x-show="t.pnl !== null" x-text="(t.pnl >= 0 ? '+$' : '-$') + Math.abs(t.pnl ?? 0).toFixed(0)"></span>
+              <span x-show="t.pnl === null" class="text-gray-300">—</span>
+            </td>
+            <td class="px-4 py-2 text-gray-500 text-xs" x-text="t.exit_type || ''"></td>
+          </tr>
+
+          <!-- Expanded row: daily marks chart placeholder -->
+          <tr x-show="selected === t.trade_num" class="bg-gray-50">
+            <td colspan="9" class="px-4 py-3">
+              <div class="text-xs text-gray-500 space-y-1">
+                <div class="flex gap-4">
+                  <span x-show="t.entry_vix">Entry VIX: <strong x-text="t.entry_vix?.toFixed(1)"></strong></span>
+                  <span x-show="t.roll_count">Rolls: <strong x-text="t.roll_count"></strong></span>
+                  <span x-show="t.manual" class="text-purple-600">Manual entry</span>
+                  <span x-show="t.parent_trade_num">
+                    Parent: <a :href="'/ui/trades'" class="underline" x-text="'#' + t.parent_trade_num"></a>
+                  </span>
+                </div>
+                <div x-show="t.daily_marks && t.daily_marks.length > 0" class="text-gray-400">
+                  <span x-text="t.daily_marks.length + ' daily mark(s). Latest mark: '"></span>
+                  <span x-text="'$' + (t.daily_marks.at(-1)?.mark ?? 0).toFixed(2)"></span>
+                </div>
+              </div>
+            </td>
+          </tr>
+        </template>
+      </tbody>
+    </table>
+  </div>
+
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+function tradesPage() {
+  return {
+    trades: [],
+    filter: 'all',
+    loading: false,
+    selected: null,
+
+    get openTrades() { return this.trades.filter(t => t.status === 'open'); },
+    get totalCredit() { return this.openTrades.reduce((s, t) => s + t.net_credit, 0); },
+    get totalPnl() {
+      return this.openTrades.reduce((s, t) => {
+        const last = t.daily_marks?.at(-1)?.mark ?? 0;
+        return s + (t.net_credit - last * 100);
+      }, 0);
+    },
+
+    async init() {
+      if (!getToken()) { window.location.href = '/ui/login'; return; }
+      await this.load();
+    },
+
+    async load() {
+      this.loading = true;
+      try {
+        const qs = this.filter !== 'all' ? '?status=' + this.filter : '';
+        this.trades = await api('GET', '/trades' + qs) || [];
+      } catch(e) {
+        console.error(e);
+      } finally {
+        this.loading = false;
+      }
+    },
+  };
+}
+</script>
+{% endblock %}

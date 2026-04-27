@@ -1,0 +1,154 @@
+{% extends "base.html" %}
+{% block title %}Config{% endblock %}
+{% block nav_config %}text-yellow-300 font-semibold{% endblock %}
+
+{% block content %}
+<div x-data="configPage()" x-init="init()" class="space-y-4 max-w-2xl">
+
+  <h1 class="text-xl font-bold">Runtime Config</h1>
+  <p class="text-sm text-gray-500">
+    Changes are written immediately to <code>data/paper_config.json</code> and picked up by the daemon on its next scheduled cycle.
+  </p>
+
+  <div x-show="loading" class="text-gray-400 text-sm">Loading…</div>
+  <div x-show="saved" class="bg-green-100 text-green-800 text-sm px-4 py-2 rounded-lg">
+    Config saved ✓
+  </div>
+  <div x-show="error" class="bg-red-100 text-red-800 text-sm px-4 py-2 rounded-lg" x-text="error"></div>
+
+  <form @submit.prevent="save()" x-show="!loading" class="bg-white rounded-lg border shadow-sm divide-y">
+
+    <!-- IBKR -->
+    <div class="px-5 py-4 space-y-3">
+      <h3 class="font-semibold text-gray-700 text-sm uppercase tracking-wide">IBKR Connection</h3>
+      <div class="grid grid-cols-2 gap-4">
+        <div>
+          <label class="block text-xs text-gray-500 mb-1">Host</label>
+          <input type="text" x-model="cfg.ibkr_host"
+                 class="w-full border rounded px-3 py-1.5 text-sm focus:ring-2 focus:ring-blue-400 focus:outline-none" />
+        </div>
+        <div>
+          <label class="block text-xs text-gray-500 mb-1">Port</label>
+          <input type="number" x-model.number="cfg.ibkr_port"
+                 class="w-full border rounded px-3 py-1.5 text-sm focus:ring-2 focus:ring-blue-400 focus:outline-none" />
+        </div>
+      </div>
+    </div>
+
+    <!-- Strategy -->
+    <div class="px-5 py-4 space-y-3">
+      <h3 class="font-semibold text-gray-700 text-sm uppercase tracking-wide">Strategy</h3>
+      <div class="grid grid-cols-2 gap-4">
+        <div>
+          <label class="block text-xs text-gray-500 mb-1">Eval time (ET, HH:MM)</label>
+          <input type="text" x-model="cfg.eval_time_et"
+                 class="w-full border rounded px-3 py-1.5 text-sm focus:ring-2 focus:ring-blue-400 focus:outline-none" />
+        </div>
+        <div>
+          <label class="block text-xs text-gray-500 mb-1">Max open trades</label>
+          <input type="number" x-model.number="cfg.max_open_trades"
+                 class="w-full border rounded px-3 py-1.5 text-sm focus:ring-2 focus:ring-blue-400 focus:outline-none" />
+        </div>
+        <div>
+          <label class="block text-xs text-gray-500 mb-1">Heartbeat interval (s)</label>
+          <input type="number" x-model.number="cfg.heartbeat_interval_sec"
+                 class="w-full border rounded px-3 py-1.5 text-sm focus:ring-2 focus:ring-blue-400 focus:outline-none" />
+        </div>
+        <div>
+          <label class="block text-xs text-gray-500 mb-1">IBKR quote timeout (s)</label>
+          <input type="number" x-model.number="cfg.ibkr_quote_timeout_sec"
+                 class="w-full border rounded px-3 py-1.5 text-sm focus:ring-2 focus:ring-blue-400 focus:outline-none" />
+        </div>
+      </div>
+    </div>
+
+    <!-- Notifications -->
+    <div class="px-5 py-4 space-y-3">
+      <h3 class="font-semibold text-gray-700 text-sm uppercase tracking-wide">Notifications</h3>
+      <div class="grid grid-cols-2 gap-4">
+        <div>
+          <label class="block text-xs text-gray-500 mb-1">ntfy topic</label>
+          <input type="text" x-model="cfg.ntfy_topic"
+                 class="w-full border rounded px-3 py-1.5 text-sm focus:ring-2 focus:ring-blue-400 focus:outline-none"
+                 placeholder="(empty = disabled)" />
+        </div>
+        <div>
+          <label class="block text-xs text-gray-500 mb-1">ntfy server</label>
+          <input type="text" x-model="cfg.ntfy_server"
+                 class="w-full border rounded px-3 py-1.5 text-sm focus:ring-2 focus:ring-blue-400 focus:outline-none" />
+        </div>
+        <div class="col-span-2">
+          <label class="block text-xs text-gray-500 mb-1">Log path</label>
+          <input type="text" x-model="cfg.log_path"
+                 class="w-full border rounded px-3 py-1.5 text-sm focus:ring-2 focus:ring-blue-400 focus:outline-none" />
+        </div>
+      </div>
+    </div>
+
+    <!-- Intraday -->
+    <div class="px-5 py-4 space-y-3">
+      <h3 class="font-semibold text-gray-700 text-sm uppercase tracking-wide">Intraday Stop-Loss</h3>
+      <div class="flex items-center gap-3">
+        <input type="checkbox" id="intraday" x-model="cfg.intraday_enabled"
+               class="rounded border-gray-300" />
+        <label for="intraday" class="text-sm">Enable intraday polling</label>
+      </div>
+      <div x-show="cfg.intraday_enabled">
+        <label class="block text-xs text-gray-500 mb-1">Poll interval (minutes)</label>
+        <input type="number" x-model.number="cfg.intraday_poll_minutes"
+               class="w-40 border rounded px-3 py-1.5 text-sm focus:ring-2 focus:ring-blue-400 focus:outline-none" />
+      </div>
+    </div>
+
+    <!-- Save button -->
+    <div class="px-5 py-4 flex justify-end">
+      <button type="submit"
+              :disabled="saving"
+              class="bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white font-semibold px-6 py-2 rounded-lg text-sm">
+        <span x-text="saving ? 'Saving…' : 'Save config'"></span>
+      </button>
+    </div>
+  </form>
+
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+function configPage() {
+  return {
+    cfg: {},
+    loading: true,
+    saving: false,
+    saved: false,
+    error: '',
+
+    async init() {
+      if (!getToken()) { window.location.href = '/ui/login'; return; }
+      try {
+        this.cfg = await api('GET', '/config') || {};
+      } catch(e) {
+        this.error = e.message;
+      } finally {
+        this.loading = false;
+      }
+    },
+
+    async save() {
+      this.saving = true;
+      this.saved = false;
+      this.error = '';
+      try {
+        this.cfg = await api('PUT', '/config', this.cfg);
+        this.saved = true;
+        setTimeout(() => this.saved = false, 3000);
+      } catch(e) {
+        this.error = e.message;
+      } finally {
+        this.saving = false;
+      }
+    },
+  };
+}
+</script>
+{% endblock %}

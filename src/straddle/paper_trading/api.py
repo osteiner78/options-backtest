@@ -5,15 +5,21 @@ All endpoints except /login and /health require Bearer token authentication.
 Usage:
     from straddle.paper_trading.api import create_app
     app = create_app(store=store, config=cfg, config_path="data/paper_config.json")
+    # Optional: pass ui_dir to enable the browser UI
+    app = create_app(store=store, config=cfg, config_path="...", ui_dir="apps/paper-ui")
 """
 
 import json
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any, Dict, Optional
 
 import pandas as pd
-from fastapi import Depends, FastAPI, HTTPException
+from fastapi import Depends, FastAPI, HTTPException, Request
+from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from fastapi.staticfiles import StaticFiles
+from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
 
 from straddle.paper_trading.auth import create_session, destroy_session, verify_password
@@ -42,7 +48,12 @@ class FireRequest(BaseModel):
 # ── App factory ───────────────────────────────────────────────────────────────
 
 
-def create_app(store: StateStore, config: PaperConfig, config_path: str) -> FastAPI:
+def create_app(
+    store: StateStore,
+    config: PaperConfig,
+    config_path: str,
+    ui_dir: Optional[str] = None,
+) -> FastAPI:
     """Return a configured FastAPI app.
 
     Args:
@@ -50,8 +61,21 @@ def create_app(store: StateStore, config: PaperConfig, config_path: str) -> Fast
         config:      Initial PaperConfig (PUT /config updates the in-memory copy
                      and writes to config_path so the daemon picks it up).
         config_path: Path to paper_config.json for persisting config changes.
+        ui_dir:      Optional path to the paper-ui directory (e.g. "apps/paper-ui").
+                     When provided, mounts /static and adds /ui/* template routes.
     """
     app = FastAPI(title="Paper Trading API", version="0.1.0")
+
+    # ── UI static files + templates (optional) ────────────────────────────────
+    _templates: Optional[Jinja2Templates] = None
+    if ui_dir:
+        _ui = Path(ui_dir).resolve()
+        static_dir = _ui / "static"
+        tmpl_dir = _ui / "templates"
+        if static_dir.is_dir():
+            app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
+        if tmpl_dir.is_dir():
+            _templates = Jinja2Templates(directory=str(tmpl_dir))
     _cfg: list[PaperConfig] = [config]   # mutable reference for PUT /config
     _security = HTTPBearer()
 
@@ -245,6 +269,38 @@ def create_app(store: StateStore, config: PaperConfig, config_path: str) -> Fast
         if not store.mark_notification_read(notification_id):
             raise HTTPException(status_code=404, detail="Notification not found")
         return {"ok": True}
+
+    # ── Browser UI routes (only when ui_dir provided) ─────────────────────────
+
+    if _templates:
+
+        @app.get("/", response_class=HTMLResponse, include_in_schema=False)
+        def ui_root():
+            return RedirectResponse(url="/ui/signals")
+
+        @app.get("/ui/login", response_class=HTMLResponse, include_in_schema=False)
+        def ui_login(request: Request):
+            return _templates.TemplateResponse(request, "login.html")
+
+        @app.get("/ui/signals", response_class=HTMLResponse, include_in_schema=False)
+        def ui_signals(request: Request):
+            return _templates.TemplateResponse(request, "signals.html")
+
+        @app.get("/ui/trades", response_class=HTMLResponse, include_in_schema=False)
+        def ui_trades(request: Request):
+            return _templates.TemplateResponse(request, "trades.html")
+
+        @app.get("/ui/account", response_class=HTMLResponse, include_in_schema=False)
+        def ui_account(request: Request):
+            return _templates.TemplateResponse(request, "account.html")
+
+        @app.get("/ui/config", response_class=HTMLResponse, include_in_schema=False)
+        def ui_config_page(request: Request):
+            return _templates.TemplateResponse(request, "config.html")
+
+        @app.get("/ui/fire", response_class=HTMLResponse, include_in_schema=False)
+        def ui_fire(request: Request):
+            return _templates.TemplateResponse(request, "fire.html")
 
     return app
 

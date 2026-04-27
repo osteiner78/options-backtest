@@ -1,0 +1,158 @@
+{% extends "base.html" %}
+{% block title %}Account{% endblock %}
+{% block nav_account %}text-yellow-300 font-semibold{% endblock %}
+
+{% block content %}
+<div x-data="accountPage()" x-init="init()" class="space-y-6">
+
+  <h1 class="text-xl font-bold">Account</h1>
+
+  <!-- Account summary -->
+  <div class="bg-white rounded-lg border shadow-sm p-5 space-y-3">
+    <div class="flex items-center justify-between">
+      <h2 class="font-semibold text-gray-700">IBKR Summary</h2>
+      <span x-show="account.stale"
+            class="text-xs bg-yellow-100 text-yellow-800 px-2 py-0.5 rounded-full">
+        Stale (daemon may be down)
+      </span>
+      <span x-show="!account.stale && account.updated_at"
+            class="text-xs text-gray-400"
+            x-text="'Updated ' + new Date(account.updated_at).toLocaleTimeString()"></span>
+    </div>
+
+    <div x-show="Object.keys(account.summary || {}).length === 0"
+         class="text-gray-400 text-sm">No account data cached yet.</div>
+
+    <dl class="grid grid-cols-2 sm:grid-cols-3 gap-3 text-sm">
+      <template x-for="[k, v] in Object.entries(account.summary || {})" :key="k">
+        <div class="bg-gray-50 rounded px-3 py-2">
+          <dt class="text-xs text-gray-500 truncate" x-text="k"></dt>
+          <dd class="font-semibold" x-text="v"></dd>
+        </div>
+      </template>
+    </dl>
+  </div>
+
+  <!-- Equity curve -->
+  <div class="bg-white rounded-lg border shadow-sm p-5 space-y-3">
+    <div class="flex items-center justify-between">
+      <h2 class="font-semibold text-gray-700">Equity Curve</h2>
+      <div class="flex gap-2 text-xs text-gray-500">
+        <label>From
+          <input type="date" x-model="fromDate" @change="loadEquity()"
+                 class="border rounded px-1 py-0.5 ml-1" />
+        </label>
+      </div>
+    </div>
+
+    <div x-show="equity.length === 0" class="text-gray-400 text-sm">No equity records yet.</div>
+
+    <div x-show="equity.length > 0" class="overflow-x-auto">
+      <table class="w-full text-sm">
+        <thead class="text-xs text-gray-500 uppercase">
+          <tr>
+            <th class="text-left py-1">Date</th>
+            <th class="text-right py-1">NLV</th>
+            <th class="text-right py-1">Cash</th>
+            <th class="text-right py-1">Open trades</th>
+            <th class="text-right py-1">Source</th>
+          </tr>
+        </thead>
+        <tbody>
+          <template x-for="row in equity.slice().reverse()" :key="row.date">
+            <tr class="border-t">
+              <td class="py-1" x-text="row.date"></td>
+              <td class="py-1 text-right font-medium"
+                  x-text="'$' + Number(row.nlv).toLocaleString('en-US', {maximumFractionDigits:0})"></td>
+              <td class="py-1 text-right text-gray-500"
+                  x-text="row.cash != null ? '$' + Number(row.cash).toLocaleString('en-US', {maximumFractionDigits:0}) : '—'"></td>
+              <td class="py-1 text-right text-gray-500" x-text="row.open_trade_count ?? '—'"></td>
+              <td class="py-1 text-right text-xs text-gray-400" x-text="row.source"></td>
+            </tr>
+          </template>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- Notifications -->
+  <div class="bg-white rounded-lg border shadow-sm p-5 space-y-3">
+    <div class="flex items-center justify-between">
+      <h2 class="font-semibold text-gray-700">Notifications</h2>
+      <label class="flex items-center gap-1 text-xs text-gray-500">
+        <input type="checkbox" x-model="unreadOnly" @change="loadNotifs()" />
+        Unread only
+      </label>
+    </div>
+
+    <div x-show="notifs.length === 0" class="text-gray-400 text-sm">No notifications.</div>
+
+    <div class="space-y-2">
+      <template x-for="n in notifs" :key="n.id">
+        <div class="flex items-start gap-3 text-sm"
+             :class="n.read_at ? 'text-gray-400' : 'text-gray-800'">
+          <span :class="{
+                  'text-blue-500': n.level === 'info',
+                  'text-yellow-500': n.level === 'warning',
+                  'text-red-500': n.level === 'error',
+                }" class="mt-0.5">●</span>
+          <div class="flex-1">
+            <span class="font-medium" x-text="n.title"></span>
+            <span x-show="n.body" class="ml-1 text-gray-500" x-text="n.body"></span>
+          </div>
+          <div class="flex items-center gap-2 shrink-0">
+            <span class="text-xs text-gray-400"
+                  x-text="new Date(n.created_at).toLocaleString()"></span>
+            <button x-show="!n.read_at"
+                    @click="ack(n.id)"
+                    class="text-xs text-blue-500 hover:underline">Ack</button>
+          </div>
+        </div>
+      </template>
+    </div>
+  </div>
+
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+function accountPage() {
+  return {
+    account: { summary: {}, stale: true, updated_at: null },
+    equity: [],
+    notifs: [],
+    fromDate: '',
+    unreadOnly: false,
+
+    async init() {
+      if (!getToken()) { window.location.href = '/ui/login'; return; }
+      await Promise.all([this.loadAccount(), this.loadEquity(), this.loadNotifs()]);
+    },
+
+    async loadAccount() {
+      try { this.account = await api('GET', '/account') || {}; } catch(_) {}
+    },
+    async loadEquity() {
+      try {
+        const qs = this.fromDate ? '?from_date=' + this.fromDate : '';
+        this.equity = await api('GET', '/equity' + qs) || [];
+      } catch(_) {}
+    },
+    async loadNotifs() {
+      try {
+        const qs = this.unreadOnly ? '?unread=true' : '';
+        this.notifs = await api('GET', '/notifications' + qs) || [];
+      } catch(_) {}
+    },
+    async ack(id) {
+      try {
+        await api('POST', '/notifications/' + id + '/ack');
+        await this.loadNotifs();
+        Alpine.store('notifications').refresh();
+      } catch(_) {}
+    },
+  };
+}
+</script>
+{% endblock %}

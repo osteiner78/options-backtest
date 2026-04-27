@@ -1,0 +1,217 @@
+{% extends "base.html" %}
+{% block title %}Signals{% endblock %}
+{% block nav_signals %}text-yellow-300 font-semibold{% endblock %}
+
+{% block content %}
+<div x-data="signalsPage()" x-init="init()" class="space-y-4">
+
+  <!-- Header row -->
+  <div class="flex items-center justify-between">
+    <h1 class="text-xl font-bold">Pending Signals</h1>
+    <div class="flex items-center gap-3">
+      <!-- Status filter tabs -->
+      <div class="flex rounded-lg border border-gray-300 overflow-hidden text-sm">
+        <template x-for="tab in ['all','pending','approved','filled','rejected','failed']" :key="tab">
+          <button @click="filter=tab; load()"
+                  :class="filter===tab ? 'bg-blue-600 text-white' : 'bg-white text-gray-700 hover:bg-gray-50'"
+                  class="px-3 py-1.5 border-r last:border-r-0 border-gray-300 capitalize"
+                  x-text="tab">
+          </button>
+        </template>
+      </div>
+      <button @click="load()" class="text-gray-500 hover:text-gray-800 text-xl" title="Refresh">↻</button>
+    </div>
+  </div>
+
+  <!-- Loading / empty states -->
+  <div x-show="loading" class="text-gray-400 text-sm">Loading…</div>
+  <div x-show="!loading && signals.length === 0" class="text-gray-500 text-sm bg-white rounded-lg p-6 text-center border">
+    No signals
+    <span x-show="filter !== 'all'" x-text="'with status ' + filter"></span>.
+  </div>
+
+  <!-- Signal cards -->
+  <template x-for="s in signals" :key="s.id">
+    <div class="bg-white rounded-lg border shadow-sm p-4 space-y-2">
+
+      <!-- Top row: id, type, status, date -->
+      <div class="flex flex-wrap items-center gap-2">
+        <span class="font-mono text-xs text-gray-400" x-text="'#' + s.id"></span>
+        <span class="font-semibold text-sm" x-text="s.signal_type"></span>
+        <span x-show="s.trade_num" class="text-xs text-gray-500"
+              x-text="'trade #' + s.trade_num"></span>
+        <span :class="'status-' + s.status.toLowerCase()"
+              class="px-2 py-0.5 rounded-full text-xs font-medium"
+              x-text="s.status"></span>
+        <span class="ml-auto text-xs text-gray-400"
+              x-text="new Date(s.created_at).toLocaleString()"></span>
+      </div>
+
+      <!-- Payload summary: strikes, pricing -->
+      <div class="grid grid-cols-2 sm:grid-cols-4 gap-2 text-sm">
+        <template x-if="s.payload.put_strike">
+          <div>
+            <span class="text-gray-500 text-xs">Put</span><br>
+            <span x-text="s.payload.put_strike"></span>
+          </div>
+        </template>
+        <template x-if="s.payload.call_strike">
+          <div>
+            <span class="text-gray-500 text-xs">Call</span><br>
+            <span x-text="s.payload.call_strike"></span>
+          </div>
+        </template>
+        <template x-if="s.payload.expiration">
+          <div>
+            <span class="text-gray-500 text-xs">Expiry</span><br>
+            <span x-text="s.payload.expiration"></span>
+          </div>
+        </template>
+        <template x-if="s.payload.net_credit !== null && s.payload.net_credit !== undefined">
+          <div>
+            <span class="text-gray-500 text-xs">Credit</span><br>
+            <span x-text="'$' + s.payload.net_credit?.toFixed(0)"></span>
+          </div>
+        </template>
+      </div>
+
+      <!-- Quote comparison: IBKR vs BS -->
+      <div x-show="s.payload.put_ibkr_mid !== undefined || s.payload.put_bs_mid !== undefined"
+           class="text-xs text-gray-500 bg-gray-50 rounded px-3 py-1.5 flex flex-wrap gap-4">
+        <span>
+          <strong>Put</strong>
+          <span x-show="s.payload.put_ibkr_mid != null">
+            IBKR <span x-text="s.payload.put_ibkr_mid?.toFixed(2)"></span>
+          </span>
+          <span x-show="s.payload.put_bs_mid != null">
+            BS <span x-text="s.payload.put_bs_mid?.toFixed(2)"></span>
+          </span>
+        </span>
+        <span>
+          <strong>Call</strong>
+          <span x-show="s.payload.call_ibkr_mid != null">
+            IBKR <span x-text="s.payload.call_ibkr_mid?.toFixed(2)"></span>
+          </span>
+          <span x-show="s.payload.call_bs_mid != null">
+            BS <span x-text="s.payload.call_bs_mid?.toFixed(2)"></span>
+          </span>
+        </span>
+        <span x-show="s.payload.quote_source">
+          source: <span x-text="s.payload.quote_source"></span>
+        </span>
+      </div>
+
+      <!-- Fill info -->
+      <div x-show="s.fill" class="text-xs text-green-700 bg-green-50 rounded px-3 py-1">
+        Filled @ <span x-text="s.fill?.avg_price?.toFixed(2)"></span>
+        qty <span x-text="s.fill?.qty"></span>
+      </div>
+
+      <!-- Error -->
+      <div x-show="s.error_msg" class="text-xs text-red-600 bg-red-50 rounded px-3 py-1"
+           x-text="s.error_msg"></div>
+
+      <!-- Actions (pending only) -->
+      <div x-show="s.status === 'PENDING'" class="flex gap-2 pt-1">
+        <button @click="approve(s.id)"
+                class="bg-green-600 hover:bg-green-700 text-white text-sm px-4 py-1.5 rounded-lg font-medium">
+          Approve
+        </button>
+        <button @click="openReject(s.id)"
+                class="bg-red-100 hover:bg-red-200 text-red-700 text-sm px-4 py-1.5 rounded-lg font-medium">
+          Reject
+        </button>
+      </div>
+    </div>
+  </template>
+
+  <!-- Reject modal -->
+  <div x-show="rejectModal.open"
+       class="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
+    <div class="bg-white rounded-xl shadow-xl p-6 w-full max-w-sm space-y-4"
+         @click.outside="rejectModal.open=false">
+      <h2 class="text-lg font-semibold">Reject Signal #<span x-text="rejectModal.id"></span></h2>
+      <input type="text"
+             x-model="rejectModal.reason"
+             class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-red-400"
+             placeholder="Reason (optional)" />
+      <div class="flex gap-2 justify-end">
+        <button @click="rejectModal.open=false"
+                class="px-4 py-1.5 rounded-lg text-sm text-gray-600 hover:bg-gray-100">
+          Cancel
+        </button>
+        <button @click="submitReject()"
+                class="px-4 py-1.5 rounded-lg text-sm bg-red-600 hover:bg-red-700 text-white font-medium">
+          Reject
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Toast -->
+  <div x-show="toast" x-transition
+       class="fixed bottom-4 right-4 bg-gray-800 text-white text-sm px-4 py-2 rounded-lg shadow-lg"
+       x-text="toast"></div>
+
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+function signalsPage() {
+  return {
+    signals: [],
+    filter: 'pending',
+    loading: false,
+    toast: '',
+    rejectModal: { open: false, id: null, reason: '' },
+
+    async init() {
+      if (!getToken()) { window.location.href = '/ui/login'; return; }
+      await this.load();
+      // Auto-refresh pending/approved every 5 s
+      setInterval(() => this.load(), 5000);
+    },
+
+    async load() {
+      this.loading = true;
+      try {
+        const qs = this.filter !== 'all' ? '?status=' + this.filter : '';
+        this.signals = await api('GET', '/signals' + qs) || [];
+      } catch(e) {
+        this.showToast('Error: ' + e.message);
+      } finally {
+        this.loading = false;
+      }
+    },
+
+    async approve(id) {
+      try {
+        await api('POST', '/signals/' + id + '/approve');
+        this.showToast('Signal #' + id + ' approved');
+        await this.load();
+      } catch(e) { this.showToast('Error: ' + e.message); }
+    },
+
+    openReject(id) {
+      this.rejectModal = { open: true, id, reason: '' };
+    },
+
+    async submitReject() {
+      try {
+        await api('POST', '/signals/' + this.rejectModal.id + '/reject',
+                  { reason: this.rejectModal.reason });
+        this.rejectModal.open = false;
+        this.showToast('Signal #' + this.rejectModal.id + ' rejected');
+        await this.load();
+      } catch(e) { this.showToast('Error: ' + e.message); }
+    },
+
+    showToast(msg) {
+      this.toast = msg;
+      setTimeout(() => this.toast = '', 3000);
+    },
+  };
+}
+</script>
+{% endblock %}

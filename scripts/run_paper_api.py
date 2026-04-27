@@ -28,11 +28,14 @@ def main() -> None:
     parser.add_argument("--port", type=int, default=8001)
     parser.add_argument("--config", default=str(root / "data" / "paper_config.json"))
     parser.add_argument("--db", default=str(root / "data" / "paper_trades.db"))
+    parser.add_argument("--ui-dir", default=str(root / "apps" / "paper-ui"),
+                        help="Path to paper-ui directory (default: apps/paper-ui)")
     args = parser.parse_args()
 
     config = load_config(args.config)
     store = StateStore(args.db)
-    app = create_app(store=store, config=config, config_path=args.config)
+    app = create_app(store=store, config=config, config_path=args.config,
+                     ui_dir=args.ui_dir)
 
     uvicorn.run(app, host=args.host, port=args.port)
 

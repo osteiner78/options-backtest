@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="en" x-data>
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>{% block title %}Paper Trading{% endblock %} — SPY Strangle</title>
+
+  <!-- Tailwind CDN (no build step) -->
+  <script src="https://cdn.tailwindcss.com"></script>
+
+  <!-- Alpine.js -->
+  <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+
+  <!-- HTMX -->
+  <script src="https://unpkg.com/htmx.org@1.9.12/dist/htmx.min.js"></script>
+
+  <link rel="stylesheet" href="/static/app.css" />
+</head>
+<body class="bg-gray-50 text-gray-900 min-h-screen" x-cloak>
+
+  <!-- Dry-run banner -->
+  <div x-show="$store.health.dryRun"
+       class="bg-yellow-400 text-yellow-900 text-center text-sm font-semibold py-1 px-4">
+    DRY-RUN MODE — signals are logged but no IBKR orders will be placed
+  </div>
+
+  <!-- Nav -->
+  <nav class="bg-gray-900 text-white shadow">
+    <div class="max-w-6xl mx-auto px-4 py-3 flex items-center gap-6">
+      <a href="/ui/signals" class="font-bold text-lg tracking-tight">SPY Strangle</a>
+
+      <div class="flex gap-4 text-sm">
+        <a href="/ui/signals"      class="hover:text-yellow-300 {% block nav_signals %}{% endblock %}">Signals</a>
+        <a href="/ui/trades"       class="hover:text-yellow-300 {% block nav_trades %}{% endblock %}">Trades</a>
+        <a href="/ui/account"      class="hover:text-yellow-300 {% block nav_account %}{% endblock %}">Account</a>
+        <a href="/ui/config"       class="hover:text-yellow-300 {% block nav_config %}{% endblock %}">Config</a>
+        <a href="/ui/fire"         class="hover:text-yellow-300 {% block nav_fire %}{% endblock %}">Fire</a>
+      </div>
+
+      <!-- Status indicators (right side) -->
+      <div class="ml-auto flex items-center gap-4 text-xs">
+        <!-- IBKR dot -->
+        <span class="flex items-center gap-1">
+          <span :class="$store.health.ibkrConnected ? 'text-green-400' : 'text-red-400'"
+                class="text-lg leading-none">●</span>
+          <span x-text="$store.health.ibkrConnected ? 'IBKR' : 'No IBKR'"></span>
+        </span>
+
+        <!-- Heartbeat age -->
+        <span x-show="$store.health.heartbeatAgeSec !== null"
+              :class="$store.health.heartbeatAgeSec > 120 ? 'heartbeat-stale' : 'text-gray-400'">
+          ♥ <span x-text="Math.round($store.health.heartbeatAgeSec) + 's'"></span>
+        </span>
+
+        <!-- Notifications bell -->
+        <a href="/ui/signals" class="relative hover:text-yellow-300"
+           x-show="$store.notifications.unreadCount > 0">
+          🔔
+          <span class="absolute -top-1 -right-2 bg-red-500 text-white text-xs rounded-full w-4 h-4 flex items-center justify-center"
+                x-text="$store.notifications.unreadCount"></span>
+        </a>
+
+        <!-- Logout -->
+        <button onclick="clearToken(); window.location='/ui/login'"
+                class="hover:text-red-400 text-gray-400 ml-2">Logout</button>
+      </div>
+    </div>
+  </nav>
+
+  <!-- Main content -->
+  <main class="max-w-6xl mx-auto px-4 py-6">
+    {% block content %}{% endblock %}
+  </main>
+
+  <script src="/static/app.js"></script>
+  {% block extra_js %}{% endblock %}
+</body>
+</html>

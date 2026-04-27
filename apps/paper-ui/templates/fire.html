@@ -1,0 +1,136 @@
+{% extends "base.html" %}
+{% block title %}Fire{% endblock %}
+{% block nav_fire %}text-yellow-300 font-semibold{% endblock %}
+
+{% block content %}
+<div x-data="firePage()" x-init="init()" class="max-w-lg space-y-4">
+
+  <h1 class="text-xl font-bold">Fire Manual Entry</h1>
+  <p class="text-sm text-gray-500">
+    Enqueues a manual ENTRY signal. The daemon will compute default strikes (16Δ) if you leave them blank.
+    The signal goes into the approval queue — no order is placed until you approve it.
+  </p>
+
+  <div x-show="result" class="bg-green-100 text-green-800 px-4 py-3 rounded-lg text-sm">
+    Signal <strong>#<span x-text="result?.signal_id"></span></strong> enqueued.
+    <a href="/ui/signals" class="underline ml-1">View in queue →</a>
+  </div>
+  <div x-show="error" class="bg-red-100 text-red-800 px-4 py-3 rounded-lg text-sm" x-text="error"></div>
+
+  <form @submit.prevent="submit()"
+        x-show="!result"
+        class="bg-white rounded-lg border shadow-sm divide-y">
+
+    <div class="px-5 py-4 space-y-4">
+      <!-- Expiration -->
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-1">
+          Expiration <span class="text-red-500">*</span>
+        </label>
+        <input type="date" x-model="form.expiration" required
+               class="w-full border rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-400 focus:outline-none" />
+        <p class="text-xs text-gray-400 mt-1">
+          Next 3rd Friday: <strong x-text="nextThirdFriday()"></strong>
+        </p>
+      </div>
+
+      <!-- Strikes (optional) -->
+      <div class="grid grid-cols-2 gap-4">
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">Put strike <span class="text-gray-400 font-normal">(optional)</span></label>
+          <input type="number" x-model.number="form.put_strike" step="0.5"
+                 class="w-full border rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-400 focus:outline-none"
+                 placeholder="16Δ default" />
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">Call strike <span class="text-gray-400 font-normal">(optional)</span></label>
+          <input type="number" x-model.number="form.call_strike" step="0.5"
+                 class="w-full border rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-400 focus:outline-none"
+                 placeholder="16Δ default" />
+        </div>
+      </div>
+
+      <!-- Qty -->
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-1">Contracts</label>
+        <input type="number" x-model.number="form.qty" min="1" max="99"
+               class="w-32 border rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-400 focus:outline-none" />
+      </div>
+    </div>
+
+    <div class="px-5 py-4 flex justify-end gap-3">
+      <a href="/ui/signals"
+         class="px-4 py-2 rounded-lg text-sm text-gray-600 hover:bg-gray-100">
+        Cancel
+      </a>
+      <button type="submit"
+              :disabled="submitting || !form.expiration"
+              class="bg-orange-600 hover:bg-orange-700 disabled:opacity-50 text-white font-semibold px-6 py-2 rounded-lg text-sm">
+        <span x-text="submitting ? 'Enqueueing…' : 'Fire Signal'"></span>
+      </button>
+    </div>
+  </form>
+
+  <!-- Fire another -->
+  <div x-show="result" class="flex gap-3">
+    <button @click="result=null; form={expiration:'',put_strike:null,call_strike:null,qty:1}"
+            class="text-sm text-blue-600 hover:underline">
+      Fire another
+    </button>
+  </div>
+
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+function firePage() {
+  return {
+    form: { expiration: '', put_strike: null, call_strike: null, qty: 1 },
+    submitting: false,
+    result: null,
+    error: '',
+
+    async init() {
+      if (!getToken()) { window.location.href = '/ui/login'; return; }
+      // Pre-fill next 3rd Friday
+      this.form.expiration = this.nextThirdFriday();
+    },
+
+    nextThirdFriday() {
+      // Find the 3rd Friday of the next month (or this month if still future)
+      const today = new Date();
+      const candidates = [0, 1, 2].map(offset => {
+        const d = new Date(today.getFullYear(), today.getMonth() + offset, 1);
+        // Find first Friday
+        let day = 1;
+        while (new Date(d.getFullYear(), d.getMonth(), day).getDay() !== 5) day++;
+        day += 14; // 3rd Friday
+        return new Date(d.getFullYear(), d.getMonth(), day);
+      });
+      const future = candidates.find(d => d > today);
+      const d = future || candidates[2];
+      return d.toISOString().slice(0, 10);
+    },
+
+    async submit() {
+      this.submitting = true;
+      this.error = '';
+      try {
+        const body = {
+          expiration: this.form.expiration,
+          qty: this.form.qty,
+        };
+        if (this.form.put_strike)  body.put_strike  = this.form.put_strike;
+        if (this.form.call_strike) body.call_strike = this.form.call_strike;
+        this.result = await api('POST', '/fire', body);
+      } catch(e) {
+        this.error = e.message;
+      } finally {
+        this.submitting = false;
+      }
+    },
+  };
+}
+</script>
+{% endblock %}
