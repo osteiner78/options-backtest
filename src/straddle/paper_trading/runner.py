@@ -46,6 +46,11 @@ from straddle.strategy import (
 )
 
 
+def today_naive_ny() -> pd.Timestamp:
+    """Return today's date in America/New_York as a tz-naive Timestamp."""
+    return pd.Timestamp.now(tz="America/New_York").normalize().tz_localize(None)
+
+
 class PaperTradingEngine:
     def __init__(
         self,
@@ -136,7 +141,7 @@ class PaperTradingEngine:
         qty: int = 1,
     ) -> int:
         """Enqueue a manual entry signal. Returns signal id."""
-        today = pd.Timestamp.now(tz="America/New_York").normalize().tz_localize(None)
+        today = today_naive_ny()
         market_row = self._snapshot_market(today)
         data_df = self._build_lookback_df(today, market_row)
 
@@ -620,7 +625,7 @@ class PaperTradingEngine:
         meta["overshoot_used"] = payload.get("overshoot_used")
         meta["pnl_pct"] = pnl / pt.net_credit if pt.net_credit else 0.0
 
-        today = pd.Timestamp.now(tz="America/New_York").normalize().tz_localize(None)
+        today = today_naive_ny()
         pt.status = "closed"
         pt.exit_date = today
         pt.exit_type = payload.get("exit_type", "CLOSE")
@@ -641,7 +646,7 @@ class PaperTradingEngine:
         if pt is None:
             raise ValueError(f"Trade {sig.trade_num} not found")
 
-        today = pd.Timestamp.now(tz="America/New_York").normalize().tz_localize(None)
+        today = today_naive_ny()
 
         # Step 1: close the existing strangle
         close_fill = self._ibkr.close_strangle(pt, payload["limit_price"])
