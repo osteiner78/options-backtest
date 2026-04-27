@@ -118,23 +118,29 @@ class PaperTradingEngine:
         )
 
     def process_approved_signals(self) -> None:
+        if self._dry_run:
+            # Price both pending and approved signals so quotes appear before approval
+            for sig in self._store.list_signals(status=SignalStatus.PENDING):
+                self._price_signal_dry_run(sig)
+            for sig in self._store.list_signals(status=SignalStatus.APPROVED):
+                self._price_signal_dry_run(sig)
+            return
         for sig in self._store.list_signals(status=SignalStatus.APPROVED):
-            if self._dry_run:
-                self._price_signal_dry_run(sig)  # never raises; errors logged internally
-            else:
-                try:
-                    self._execute_signal(sig)
-                except Exception as exc:
-                    self._store.update_signal_status(
-                        sig.id, SignalStatus.FAILED, error_msg=str(exc)
-                    )
-                    self._notifier.notify("error", "Signal execution failed", str(exc))
+            try:
+                self._execute_signal(sig)
+            except Exception as exc:
+                self._store.update_signal_status(
+                    sig.id, SignalStatus.FAILED, error_msg=str(exc)
+                )
+                self._notifier.notify("error", "Signal execution failed", str(exc))
 
     def _price_signal_dry_run(self, sig: PendingSignal) -> None:
-        """Dry-run: compute BS-only prices and write back to payload.
+        """Dry-run: fetch yfinance option prices (thread-safe) + BS fallback.
 
-        IBKR calls are intentionally skipped — ib_insync is event-loop-based
-        and deadlocks when called from an APScheduler worker thread.
+        ib_insync is NOT used here — its synchronous wrappers call
+        loop.run_until_complete() which deadlocks when the asyncio event loop
+        is already running in a different thread (as it is inside APScheduler).
+        yfinance is a plain HTTP call and is safe from any thread.
         """
         payload = json.loads(sig.payload_json)
         if payload.get("quote_source", "pending") != "pending":
@@ -165,26 +171,49 @@ class PaperTradingEngine:
             put_bs  = float(self._engine.get_leg_mark(put_k,  S, entry_dte, vix, r, "put",  ctx=ctx))
             call_bs = float(self._engine.get_leg_mark(call_k, S, entry_dte, vix, r, "call", ctx=ctx))
 
+            # Try yfinance for real market mid prices (thread-safe plain HTTP)
+            put_yf = call_yf = None
+            source = "bs"
+            try:
+                import yfinance as yf
+                ticker = yf.Ticker("SPY")
+                exp_str = exp_ts.strftime("%Y-%m-%d")
+                chain = ticker.option_chain(exp_str)
+                def _yf_mid(df, strike):
+                    row = df[df["strike"] == strike]
+                    if row.empty:
+                        return None
+                    bid, ask = float(row.iloc[0]["bid"]), float(row.iloc[0]["ask"])
+                    if bid > 0 and ask >= bid:
+                        return round((bid + ask) / 2, 2)
+                    return None
+                put_yf  = _yf_mid(chain.puts,  put_k)
+                call_yf = _yf_mid(chain.calls, call_k)
+                if put_yf is not None or call_yf is not None:
+                    source = "yfinance"
+            except Exception as yf_exc:
+                logger.debug("[DRY-RUN] yfinance quote failed for signal #%d: %s", sig.id, yf_exc)
+
             payload.update({
                 "put_strike":    put_k,
                 "call_strike":   call_k,
                 "put_bs_mid":    put_bs,
                 "call_bs_mid":   call_bs,
-                "put_ibkr_mid":  None,
-                "call_ibkr_mid": None,
-                "quote_source":  "bs",
+                "put_ibkr_mid":  put_yf,
+                "call_ibkr_mid": call_yf,
+                "quote_source":  source,
                 "entry_vix":     vix,
                 "entry_dte":     entry_dte,
             })
             if not payload.get("entry_date"):
                 payload["entry_date"] = str(today.date())
             if not payload.get("limit_price"):
-                payload["limit_price"] = put_bs + call_bs
+                payload["limit_price"] = (put_yf or put_bs) + (call_yf or call_bs)
 
             self._store.update_signal_payload(sig.id, json.dumps(payload))
             logger.info(
-                "[DRY-RUN] Priced signal #%d put=%.0f bs=%.2f call=%.0f bs=%.2f",
-                sig.id, put_k, put_bs, call_k, call_bs,
+                "[DRY-RUN] Priced signal #%d put=%.0f yf=%s bs=%.2f  call=%.0f yf=%s bs=%.2f  source=%s",
+                sig.id, put_k, put_yf, put_bs, call_k, call_yf, call_bs, source,
             )
         except Exception as exc:
             logger.warning("[DRY-RUN] Failed to price signal #%d: %s", sig.id, exc)

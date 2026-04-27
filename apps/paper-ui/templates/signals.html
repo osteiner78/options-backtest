@@ -81,7 +81,7 @@
         <span>
           <strong>Put</strong>
           <span x-show="s.payload.put_ibkr_mid != null">
-            IBKR <span x-text="s.payload.put_ibkr_mid?.toFixed(2)"></span>
+            mkt <span x-text="s.payload.put_ibkr_mid?.toFixed(2)"></span>
           </span>
           <span x-show="s.payload.put_bs_mid != null">
             BS <span x-text="s.payload.put_bs_mid?.toFixed(2)"></span>
@@ -90,7 +90,7 @@
         <span>
           <strong>Call</strong>
           <span x-show="s.payload.call_ibkr_mid != null">
-            IBKR <span x-text="s.payload.call_ibkr_mid?.toFixed(2)"></span>
+            mkt <span x-text="s.payload.call_ibkr_mid?.toFixed(2)"></span>
           </span>
           <span x-show="s.payload.call_bs_mid != null">
             BS <span x-text="s.payload.call_bs_mid?.toFixed(2)"></span>
@@ -112,7 +112,7 @@
            x-text="s.error_msg"></div>
 
       <!-- Actions (pending only) -->
-      <div x-show="s.status === 'PENDING'" class="flex gap-2 pt-1">
+      <div x-show="s.status === 'pending'" class="flex gap-2 pt-1">
         <button @click="approve(s.id)"
                 class="bg-green-600 hover:bg-green-700 text-white text-sm px-4 py-1.5 rounded-lg font-medium">
           Approve
