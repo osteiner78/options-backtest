@@ -378,6 +378,7 @@ class MockIBKRClient:
         quotes: Optional[dict] = None,
         account_summary: Optional[dict] = None,
         fills: Optional[dict] = None,
+        exceptions: Optional[dict] = None,
         connected: bool = True,
     ) -> None:
         self.spy_close = spy_close
@@ -390,6 +391,7 @@ class MockIBKRClient:
             "MaintMarginReq": "0",
         }
         self._fills: dict = fills or {}
+        self._exceptions: dict = exceptions or {}
         self._connected = connected
 
     @property
@@ -434,6 +436,8 @@ class MockIBKRClient:
         return self._account_summary
 
     def _fill_or_raise(self, method: str) -> Fill:
+        if method in self._exceptions:
+            raise self._exceptions[method]
         if method in self._fills:
             return self._fills[method]
         raise AssertionError(

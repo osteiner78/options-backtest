@@ -80,6 +80,9 @@ class PaperTrade:
     daily_marks_json: str = "[]"
     manual: bool = False
     ibkr_perm_id: Optional[str] = None
+    # Extra strategy.Trade fields not in the main schema (put_mid_ps, call_mid_ps,
+    # entry_vix, max_vix, stop_regime, overshoot_used, current strikes, etc.)
+    metadata_json: str = "{}"
 
 
 @dataclass
@@ -135,6 +138,7 @@ class StateStore:
                     daily_marks_json TEXT NOT NULL DEFAULT '[]',
                     manual BOOLEAN NOT NULL DEFAULT 0,
                     ibkr_perm_id TEXT,
+                    metadata_json TEXT NOT NULL DEFAULT '{}',
                     FOREIGN KEY (parent_trade_num) REFERENCES paper_trades(trade_num)
                 )
             """)
@@ -149,6 +153,7 @@ class StateStore:
                     old_strike REAL NOT NULL,
                     new_strike REAL NOT NULL,
                     debit_paid REAL NOT NULL,
+                    data_json TEXT NOT NULL DEFAULT '{}',
                     FOREIGN KEY (trade_num) REFERENCES paper_trades(trade_num) ON DELETE CASCADE
                 )
             """)
@@ -250,8 +255,9 @@ class StateStore:
                     INSERT INTO paper_trades (
                         entry_date, expiration, put_strike, call_strike,
                         net_credit, parent_trade_num, roll_count, status,
-                        exit_date, exit_type, pnl, daily_marks_json, manual, ibkr_perm_id
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        exit_date, exit_type, pnl, daily_marks_json, manual, ibkr_perm_id,
+                        metadata_json
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """, (
                     trade.entry_date.isoformat(),
                     trade.expiration.isoformat(),
@@ -266,7 +272,8 @@ class StateStore:
                     trade.pnl,
                     trade.daily_marks_json,
                     1 if trade.manual else 0,
-                    trade.ibkr_perm_id
+                    trade.ibkr_perm_id,
+                    trade.metadata_json,
                 ))
                 trade_num = cursor.lastrowid
             else:
@@ -276,7 +283,7 @@ class StateStore:
                         entry_date = ?, expiration = ?, put_strike = ?, call_strike = ?,
                         net_credit = ?, parent_trade_num = ?, roll_count = ?, status = ?,
                         exit_date = ?, exit_type = ?, pnl = ?, daily_marks_json = ?,
-                        manual = ?, ibkr_perm_id = ?
+                        manual = ?, ibkr_perm_id = ?, metadata_json = ?
                     WHERE trade_num = ?
                 """, (
                     trade.entry_date.isoformat(),
@@ -293,7 +300,8 @@ class StateStore:
                     trade.daily_marks_json,
                     1 if trade.manual else 0,
                     trade.ibkr_perm_id,
-                    trade.trade_num
+                    trade.metadata_json,
+                    trade.trade_num,
                 ))
                 trade_num = trade.trade_num
             conn.commit()
@@ -344,7 +352,8 @@ class StateStore:
             pnl=row["pnl"],
             daily_marks_json=row["daily_marks_json"],
             manual=bool(row["manual"]),
-            ibkr_perm_id=row["ibkr_perm_id"]
+            ibkr_perm_id=row["ibkr_perm_id"],
+            metadata_json=row["metadata_json"] if row["metadata_json"] else "{}",
         )
     
     # ===== Signal Operations =====
@@ -689,3 +698,61 @@ class StateStore:
                 }
                 for row in rows
             ]
+
+    # ===== Leg Roll Operations =====
+
+    def save_leg_roll(
+        self,
+        trade_num: int,
+        event_date: pd.Timestamp,
+        side: str,
+        old_strike: float,
+        new_strike: float,
+        debit_paid: float,
+        data_json: str = "{}",
+    ) -> int:
+        """Persist a leg roll event, return row id."""
+        with self._connect() as conn:
+            cursor = conn.execute("""
+                INSERT INTO leg_rolls (trade_num, event_date, side, old_strike, new_strike, debit_paid, data_json)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+            """, (trade_num, event_date.isoformat(), side, old_strike, new_strike, debit_paid, data_json))
+            conn.commit()
+            return cursor.lastrowid
+
+    def load_leg_rolls(self, trade_num: int) -> List[Dict[str, Any]]:
+        """Return all leg roll events for a trade as raw dicts."""
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT * FROM leg_rolls WHERE trade_num = ? ORDER BY event_date",
+                (trade_num,),
+            ).fetchall()
+            return [dict(row) for row in rows]
+
+    # ===== Additional Trade Queries =====
+
+    def load_all_trades(self, status: Optional[str] = None) -> List[PaperTrade]:
+        """Load trades with optional status filter, newest first."""
+        if status:
+            rows = self._connect().execute(
+                "SELECT * FROM paper_trades WHERE status = ? ORDER BY entry_date DESC",
+                (status,),
+            ).fetchall()
+        else:
+            rows = self._connect().execute(
+                "SELECT * FROM paper_trades ORDER BY entry_date DESC"
+            ).fetchall()
+        return [self._row_to_paper_trade(row) for row in rows]
+
+    def load_trades_in_range(
+        self,
+        start_date: pd.Timestamp,
+        end_date: pd.Timestamp,
+    ) -> List[PaperTrade]:
+        """Return trades whose entry_date falls in [start_date, end_date)."""
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT * FROM paper_trades WHERE entry_date >= ? AND entry_date < ? ORDER BY entry_date",
+                (start_date.isoformat(), end_date.isoformat()),
+            ).fetchall()
+            return [self._row_to_paper_trade(row) for row in rows]

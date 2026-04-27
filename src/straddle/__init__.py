@@ -59,6 +59,7 @@ from straddle.paper_trading.state import (
 from straddle.paper_trading.config import PaperConfig
 from straddle.paper_trading.notifications import Notifier
 from straddle.paper_trading.ibkr_client import IBKRClient, MockIBKRClient, Fill, FillTimeout, is_quote_sane
+from straddle.paper_trading.runner import PaperTradingEngine
 
 __all__ = [
     "PARAMS",
@@ -94,4 +95,5 @@ __all__ = [
     "Fill",
     "FillTimeout",
     "is_quote_sane",
+    "PaperTradingEngine",
 ]
