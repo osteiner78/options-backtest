@@ -84,6 +84,7 @@ class PaperTradingEngine:
     # ── Public API ────────────────────────────────────────────────────────────
 
     def run_daily_cycle(self, today: pd.Timestamp) -> None:
+        self._cleanup_expired_signals()
         market_row = self._snapshot_market(today)
         data_df = self._build_lookback_df(today, market_row)
 
@@ -710,11 +711,44 @@ class PaperTradingEngine:
             payload_json=json.dumps(payload),
         ))
 
+    # ── Signal TTL cleanup ────────────────────────────────────────────────────
+
+    def _cleanup_expired_signals(self) -> None:
+        """Reject pending signals that have exceeded their TTL."""
+        from datetime import timezone as _tz
+        entry_ttl_min = self._config.signal_ttl_entry_minutes
+        mgmt_ttl_min  = self._config.signal_ttl_management_minutes
+        now = datetime.now(_tz.utc)
+        for sig in self._store.list_signals(status=SignalStatus.PENDING):
+            ttl_min = entry_ttl_min if sig.signal_type in (
+                SignalType.ENTRY, SignalType.MANUAL
+            ) else mgmt_ttl_min
+            created = sig.created_at
+            if created.tzinfo is None:
+                created = created.replace(tzinfo=_tz.utc)
+            age_min = (now - created).total_seconds() / 60
+            if age_min > ttl_min:
+                self._store.update_signal_status(
+                    sig.id, SignalStatus.REJECTED,
+                    error_msg=f"Auto-expired after {age_min:.0f} min (TTL={ttl_min} min)",
+                )
+                logger.info("Signal #%d auto-expired after %.0f min", sig.id, age_min)
+                self._notifier.notify(
+                    "warning", "Signal expired",
+                    f"#{sig.id} {sig.signal_type.value} expired after {age_min:.0f} min",
+                )
+
     # ── Signal execution ──────────────────────────────────────────────────────
 
     def _execute_signal(self, sig: PendingSignal) -> None:
-        self._store.update_signal_status(sig.id, SignalStatus.SUBMITTING)
         payload = json.loads(sig.payload_json)
+
+        # Revalidate quote before submitting — reject if price drifted too much
+        if sig.signal_type in (SignalType.ENTRY, SignalType.MANUAL, SignalType.OPEN_RECOVERY):
+            if not self._revalidate_signal(sig, payload):
+                return  # status already set to REJECTED inside revalidate
+
+        self._store.update_signal_status(sig.id, SignalStatus.SUBMITTING)
 
         try:
             if sig.signal_type in (SignalType.ENTRY, SignalType.MANUAL):
@@ -732,6 +766,69 @@ class PaperTradingEngine:
             self._notifier.notify("warning", "Order timed out", str(exc))
         except Exception as exc:
             raise
+
+    def _revalidate_signal(self, sig: PendingSignal, payload: dict) -> bool:
+        """Re-quote and reject if price drifted beyond revalidation_max_drift_pct.
+
+        Returns True if the signal should proceed, False if it was rejected.
+        """
+        max_drift = self._config.revalidation_max_drift_pct
+        if max_drift <= 0:
+            return True
+
+        put_strike  = payload.get("put_strike")
+        call_strike = payload.get("call_strike")
+        old_put     = payload.get("put_ibkr_mid") or payload.get("put_bs_mid")
+        old_call    = payload.get("call_ibkr_mid") or payload.get("call_bs_mid")
+
+        if not put_strike or not call_strike or not old_put or not old_call:
+            return True  # not enough info to revalidate; proceed
+
+        exp_str = str(payload.get("expiration", "")).replace("-", "")
+        today   = today_naive_ny()
+        exp_ts  = pd.Timestamp(payload["expiration"])
+        T       = max((exp_ts - today).days / 365.0, 1e-7)
+        try:
+            row = self._snapshot_market(today)
+        except Exception:
+            return True  # market data unavailable; proceed rather than block
+        S, vix, r = row["spy_close"], row["vix_close"], row["risk_free_rate"]
+
+        pq = self._get_quote(put_strike,  exp_str, "P", S, T, r, vix)
+        cq = self._get_quote(call_strike, exp_str, "C", S, T, r, vix)
+        new_put  = pq["limit_price"]
+        new_call = cq["limit_price"]
+
+        put_drift  = abs(new_put  - old_put)  / old_put  if old_put  else 0
+        call_drift = abs(new_call - old_call) / old_call if old_call else 0
+
+        if put_drift > max_drift or call_drift > max_drift:
+            reason = (
+                f"Quote drifted: put {old_put:.2f}→{new_put:.2f} ({put_drift*100:.1f}%), "
+                f"call {old_call:.2f}→{new_call:.2f} ({call_drift*100:.1f}%)"
+            )
+            self._store.update_signal_status(sig.id, SignalStatus.REJECTED, error_msg=reason)
+            logger.info("Signal #%d auto-rejected: %s", sig.id, reason)
+            self._notifier.notify("warning", "Signal auto-rejected (drift)", reason)
+
+            # Re-emit a fresh signal so the user reviews the new price
+            fresh_payload = {**payload,
+                "put_ibkr_mid":  pq.get("ibkr_mid"),
+                "call_ibkr_mid": cq.get("ibkr_mid"),
+                "put_bs_mid":    pq["bs_mid"],
+                "call_bs_mid":   cq["bs_mid"],
+                "quote_source":  pq["source"],
+                "limit_price":   new_put + new_call,
+            }
+            self._store.enqueue_signal(PendingSignal(
+                signal_type=sig.signal_type,
+                trade_num=sig.trade_num,
+                payload_json=json.dumps(fresh_payload),
+                parent_signal_id=sig.id,
+            ))
+            return False
+
+        return True
 
     def _fill_entry_defaults(self, payload: dict) -> dict:
         """Compute default strikes and mids for a /fire signal that omitted them."""
@@ -985,15 +1082,34 @@ class PaperTradingEngine:
             self._store.save_trade(pt)
 
     def _calc_nlv(self, market_row: dict) -> float:
+        """Estimate NLV = account cash + mark-to-market value of open positions.
+
+        Cash comes from the account_cache (set by the 30s IBKR refresh).
+        MTM is the sum of net_credit minus current option cost across open trades.
+        Falls back to MTM-only when no cash is cached (dry-run / no IBKR).
+        """
+        # Cash from account cache
+        cash = 0.0
+        summary, _ = self._store.read_account_cache()
+        if summary:
+            try:
+                cash = float(summary.get("TotalCashValue") or summary.get("NetLiquidation") or 0)
+            except (TypeError, ValueError):
+                pass
+
+        # Mark-to-market P&L on open positions
         total_mtm = 0.0
-        S = market_row["spy_close"]
-        vix = market_row["vix_close"]
-        r = market_row["risk_free_rate"]
         for pt in self._store.load_open_trades():
             marks = json.loads(pt.daily_marks_json)
             if marks:
-                total_mtm += float(marks[-1][1])
-        return total_mtm
+                # marks[-1] is [date, cost_to_close]; P&L = credit received - current cost
+                current_cost = float(marks[-1][1])
+                total_mtm += pt.net_credit - current_cost
+
+        # If no cash cached, return MTM-only as a relative measure
+        if cash == 0.0:
+            return total_mtm
+        return cash + total_mtm
 
     def _intraday_stop_triggered(self, pt: PaperTrade, market_row: dict) -> bool:
         S = market_row["spy_close"]
