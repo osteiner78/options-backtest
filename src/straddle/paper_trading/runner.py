@@ -144,7 +144,7 @@ class PaperTradingEngine:
             exp_ts = pd.Timestamp(payload["expiration"])
             entry_dte = max((exp_ts - today).days, 1)
             T = entry_dte / 365.0
-            row = self._snapshot_market(today)
+            row = self._snapshot_market_no_ibkr(today)
             S, vix, r = row["spy_close"], row["vix_close"], row["risk_free_rate"]
             ctx = PricingContext(eval_date=today, expiration=exp_ts)
 
@@ -302,6 +302,27 @@ class PaperTradingEngine:
             "spy_low": spy_close,
             "vix_close": vix_close,
             "risk_free_rate": risk_free_rate,
+        }
+
+    def _snapshot_market_no_ibkr(self, today: pd.Timestamp) -> dict:
+        """Like _snapshot_market but skips IBKR calls (safe to call from threads)."""
+        risk_free_rate = self._params.get("risk_free_rate", 0.05)
+        lookback_start = str((today - pd.Timedelta(days=7)).date())
+        lookback_end = str((today - pd.Timedelta(days=1)).date())
+        hist = self._data_loader(lookback_start, lookback_end)
+        if hist.empty:
+            raise RuntimeError(f"No market data available for {today}")
+        row = hist.iloc[-1]
+        rf = float(row.get("risk_free_rate", risk_free_rate))
+        if math.isnan(rf):
+            rf = risk_free_rate
+        return {
+            "spy_close": float(row["spy_close"]),
+            "spy_open": float(row["spy_close"]),
+            "spy_high": float(row["spy_close"]),
+            "spy_low": float(row["spy_close"]),
+            "vix_close": float(row["vix_close"]),
+            "risk_free_rate": rf,
         }
 
     def _build_lookback_df(self, today: pd.Timestamp, market_row: dict) -> pd.DataFrame:
