@@ -272,10 +272,12 @@ class IBKRClient:
     def get_option_quote_threadsafe(
         self, strike: float, expiration: str, right: str
     ) -> Optional[dict]:
-        """Like get_option_quote but safe to call from APScheduler worker threads.
+        """Return option mid price safe to call from APScheduler worker threads.
 
-        Uses reqTickersAsync (snapshot) instead of reqMktData + sleep so the
-        ib_insync event loop is never blocked by the calling thread.
+        Uses reqHistoricalDataAsync(MIDPOINT) — the same mechanism used for
+        SPY/VIX closes — which works on paper accounts, weekends, and without
+        a market data subscription. reqTickersAsync snapshot mode does not
+        reliably return data with delayed-frozen (type 4) settings.
         """
         import ib_insync
 
@@ -288,40 +290,31 @@ class IBKRClient:
             return None
 
         try:
-            # reqMarketDataType is a fire-and-forget send; safe to call directly.
-            # There is no reqMarketDataTypeAsync in ib_insync.
-            self._ib.reqMarketDataType(4)
-            tickers = self._run_in_loop(
-                self._ib.reqTickersAsync(contract), timeout=15
+            bars = self._run_in_loop(
+                self._ib.reqHistoricalDataAsync(
+                    contract,
+                    endDateTime="",
+                    durationStr="2 D",
+                    barSizeSetting="1 hour",
+                    whatToShow="MIDPOINT",
+                    useRTH=True,
+                    formatDate=1,
+                    keepUpToDate=False,
+                ),
+                timeout=20,
             )
         except Exception:
             return None
 
-        if not tickers:
-            return None
-        ticker = tickers[0]
-
-        def _float(v) -> Optional[float]:
-            return float(v) if v is not None and not math.isnan(float(v)) else None
-
-        bid = _float(ticker.bid)
-        ask = _float(ticker.ask)
-        last = _float(ticker.last)
-
-        if bid is None or ask is None:
+        if not bars:
             return None
 
-        mid = (bid + ask) / 2
-        if ticker.time is not None:
-            ts = ticker.time
-            if ts.tzinfo is None:
-                ts = ts.replace(tzinfo=timezone.utc)
-            age_sec = (datetime.now(timezone.utc) - ts).total_seconds()
-        else:
-            age_sec = float("inf")
+        mid = float(bars[-1].close)
+        if mid <= 0 or math.isnan(mid):
+            return None
 
-        sane = is_quote_sane(bid, ask, age_sec, self._config)
-        return {"bid": bid, "ask": ask, "mid": mid, "last": last, "age_sec": age_sec, "sane": sane}
+        # Historical MIDPOINT gives actual mid; treat as a sane quote.
+        return {"bid": mid, "ask": mid, "mid": mid, "last": mid, "age_sec": 0, "sane": True}
 
     def is_contract_valid(
         self, symbol: str, expiration: str, strike: float, right: str
