@@ -288,10 +288,9 @@ class IBKRClient:
             return None
 
         try:
-            # reqMarketDataType must run on the event loop too
-            self._run_in_loop(
-                self._ib.reqMarketDataTypeAsync(4), timeout=5
-            )
+            # reqMarketDataType is a fire-and-forget send; safe to call directly.
+            # There is no reqMarketDataTypeAsync in ib_insync.
+            self._ib.reqMarketDataType(4)
             tickers = self._run_in_loop(
                 self._ib.reqTickersAsync(contract), timeout=15
             )

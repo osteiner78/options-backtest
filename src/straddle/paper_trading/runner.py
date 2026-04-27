@@ -189,7 +189,7 @@ class PaperTradingEngine:
                     if put_mkt is not None or call_mkt is not None:
                         source = "ibkr"
                 except Exception as ibkr_exc:
-                    logger.debug("[DRY-RUN] IBKR threadsafe quote failed for signal #%d: %s", sig.id, ibkr_exc)
+                    logger.warning("[DRY-RUN] IBKR threadsafe quote failed for signal #%d: %s", sig.id, ibkr_exc)
 
             if source == "bs":
                 try:
