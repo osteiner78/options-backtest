@@ -115,16 +115,56 @@ class PaperTradingEngine:
         )
 
     def process_approved_signals(self) -> None:
-        if self._dry_run:
-            return
         for sig in self._store.list_signals(status=SignalStatus.APPROVED):
             try:
-                self._execute_signal(sig)
+                if self._dry_run:
+                    self._price_signal_dry_run(sig)
+                else:
+                    self._execute_signal(sig)
             except Exception as exc:
                 self._store.update_signal_status(
                     sig.id, SignalStatus.FAILED, error_msg=str(exc)
                 )
                 self._notifier.notify("error", "Signal execution failed", str(exc))
+
+    def _price_signal_dry_run(self, sig: PendingSignal) -> None:
+        """Dry-run: fetch prices and write back to payload without placing any order."""
+        payload = json.loads(sig.payload_json)
+        if payload.get("quote_source", "pending") != "pending":
+            return  # already priced
+        if sig.signal_type not in (SignalType.ENTRY, SignalType.MANUAL, SignalType.OPEN_RECOVERY):
+            return
+
+        try:
+            if not payload.get("put_strike") or not payload.get("call_strike"):
+                payload = self._fill_entry_defaults(payload)
+            else:
+                today = today_naive_ny()
+                exp_ts = pd.Timestamp(payload["expiration"])
+                T = max((exp_ts - today).days / 365.0, 1e-7)
+                row = self._snapshot_market(today)
+                S, vix, r = row["spy_close"], row["vix_close"], row["risk_free_rate"]
+                exp_str = exp_ts.strftime("%Y%m%d")
+                put_q = self._get_quote(payload["put_strike"], exp_str, "P", S, T, r, vix)
+                call_q = self._get_quote(payload["call_strike"], exp_str, "C", S, T, r, vix)
+                payload.update({
+                    "put_ibkr_mid": put_q["ibkr_mid"],
+                    "call_ibkr_mid": call_q["ibkr_mid"],
+                    "put_bs_mid": put_q["bs_mid"],
+                    "call_bs_mid": call_q["bs_mid"],
+                    "quote_source": put_q["source"],
+                    "entry_vix": vix,
+                })
+            self._store.update_signal_payload(sig.id, json.dumps(payload))
+            logger.info(
+                "[DRY-RUN] Priced signal #%d: put_bs=%.2f call_bs=%.2f source=%s",
+                sig.id,
+                payload.get("put_bs_mid") or 0,
+                payload.get("call_bs_mid") or 0,
+                payload.get("quote_source", "?"),
+            )
+        except Exception as exc:
+            logger.warning("[DRY-RUN] Failed to price signal #%d: %s", sig.id, exc)
 
     def run_intraday_check(self) -> None:
         if not self._config.intraday_enabled:

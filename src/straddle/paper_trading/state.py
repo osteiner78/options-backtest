@@ -464,6 +464,15 @@ class StateStore:
             conn.commit()
             return updated
     
+    def update_signal_payload(self, signal_id: int, payload_json: str) -> None:
+        """Overwrite a signal's payload_json (used by dry-run pricer)."""
+        with self._connect() as conn:
+            conn.execute(
+                "UPDATE pending_signals SET payload_json = ? WHERE id = ?",
+                (payload_json, signal_id),
+            )
+            conn.commit()
+
     def _row_to_pending_signal(self, row: sqlite3.Row) -> PendingSignal:
         """Convert SQLite row to PendingSignal dataclass."""
         return PendingSignal(
