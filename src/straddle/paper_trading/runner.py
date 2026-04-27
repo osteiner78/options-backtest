@@ -111,6 +111,7 @@ class PaperTradingEngine:
         self._store.tick_heartbeat(
             last_eval_at=today,
             ibkr_connected=self._ibkr.is_connected,
+            dry_run=self._dry_run,
         )
 
     def process_approved_signals(self) -> None:
@@ -573,13 +574,57 @@ class PaperTradingEngine:
         except Exception as exc:
             raise
 
+    def _fill_entry_defaults(self, payload: dict) -> dict:
+        """Compute default strikes and mids for a /fire signal that omitted them."""
+        today = today_naive_ny()
+        exp_ts = pd.Timestamp(payload["expiration"])
+        entry_dte = (exp_ts - today).days
+        T = max(entry_dte / 365.0, 1e-7)
+        market_row = self._snapshot_market(today)
+        S = market_row["spy_close"]
+        vix = market_row["vix_close"]
+        r = market_row["risk_free_rate"]
+        ctx = PricingContext(eval_date=today, expiration=exp_ts)
+        kw = build_entry(self._engine, S, T, r, vix, entry_dte, ctx, self._params)
+        if kw is None:
+            raise ValueError("build_entry returned None — no valid strangle for this expiration")
+        exp_str = exp_ts.strftime("%Y%m%d")
+        put_q = self._get_quote(kw["put_strike"], exp_str, "P", S, T, r, vix)
+        call_q = self._get_quote(kw["call_strike"], exp_str, "C", S, T, r, vix)
+        return {
+            **payload,
+            "entry_date": str(today.date()),
+            "put_strike": payload.get("put_strike") or kw["put_strike"],
+            "call_strike": payload.get("call_strike") or kw["call_strike"],
+            "put_mid_ps": kw["put_mid_ps"],
+            "call_mid_ps": kw["call_mid_ps"],
+            "net_credit": kw["net_credit"],
+            "entry_dte": entry_dte,
+            "entry_vix": vix,
+            "limit_price": put_q["limit_price"] + call_q["limit_price"],
+            "put_ibkr_mid": put_q["ibkr_mid"],
+            "call_ibkr_mid": call_q["ibkr_mid"],
+            "put_bs_mid": put_q["bs_mid"],
+            "call_bs_mid": call_q["bs_mid"],
+            "quote_source": put_q["source"],
+        }
+
     def _execute_entry(self, sig: PendingSignal, payload: dict) -> None:
+        # For /fire signals the UI may omit strikes — compute defaults now.
+        if not payload.get("put_strike") or not payload.get("call_strike"):
+            payload = self._fill_entry_defaults(payload)
+
+        # Validate strikes against IBKR's actual listed contracts (snap to nearest).
+        if self._ibkr.is_connected:
+            payload["put_strike"] = self._ibkr.validate_strike(payload["put_strike"])
+            payload["call_strike"] = self._ibkr.validate_strike(payload["call_strike"])
+
         fill = self._ibkr.place_strangle(
             put_strike=payload["put_strike"],
             call_strike=payload["call_strike"],
-            expiration=payload["expiration"].replace("-", ""),
+            expiration=str(payload["expiration"]).replace("-", ""),
             qty=payload.get("qty", 1),
-            limit_price=payload["limit_price"],
+            limit_price=payload["limit_price"] or (payload["put_bs_mid"] or 0) + (payload["call_bs_mid"] or 0),
         )
 
         meta = {

@@ -203,7 +203,7 @@ def _run_scheduler(
 
     # Heartbeat tick
     scheduler.add_job(
-        lambda: store.tick_heartbeat(ibkr_connected=ibkr.is_connected),
+        lambda: store.tick_heartbeat(ibkr_connected=ibkr.is_connected, dry_run=runner._dry_run),
         "interval",
         seconds=cfg.heartbeat_interval_sec,
         id="heartbeat",

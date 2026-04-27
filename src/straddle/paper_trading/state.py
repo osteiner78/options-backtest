@@ -198,7 +198,8 @@ class StateStore:
                     last_eval_at TEXT,
                     ibkr_connected BOOLEAN NOT NULL DEFAULT 0,
                     open_trade_count INTEGER NOT NULL DEFAULT 0,
-                    version TEXT NOT NULL DEFAULT '0.1.0'
+                    version TEXT NOT NULL DEFAULT '0.1.0',
+                    dry_run BOOLEAN NOT NULL DEFAULT 0
                 )
             """)
             
@@ -475,7 +476,8 @@ class StateStore:
         self,
         last_eval_at: Optional[pd.Timestamp] = None,
         ibkr_connected: bool = True,
-        open_trade_count: Optional[int] = None
+        open_trade_count: Optional[int] = None,
+        dry_run: bool = False,
     ) -> None:
         """Update heartbeat row."""
         with self._connect() as conn:
@@ -485,14 +487,15 @@ class StateStore:
                 ).fetchone()[0]
 
             conn.execute("""
-                INSERT OR REPLACE INTO heartbeat (id, last_tick_at, last_eval_at, ibkr_connected, open_trade_count, version)
-                VALUES (1, ?, ?, ?, ?, ?)
+                INSERT OR REPLACE INTO heartbeat (id, last_tick_at, last_eval_at, ibkr_connected, open_trade_count, version, dry_run)
+                VALUES (1, ?, ?, ?, ?, ?, ?)
             """, (
                 datetime.now(timezone.utc).isoformat(),
                 last_eval_at.isoformat() if last_eval_at else None,
                 1 if ibkr_connected else 0,
                 open_trade_count,
-                "0.1.0"
+                "0.1.0",
+                1 if dry_run else 0,
             ))
             conn.commit()
     
@@ -508,7 +511,8 @@ class StateStore:
                 "last_eval_at": datetime.fromisoformat(row["last_eval_at"]) if row["last_eval_at"] else None,
                 "ibkr_connected": bool(row["ibkr_connected"]),
                 "open_trade_count": row["open_trade_count"],
-                "version": row["version"]
+                "version": row["version"],
+                "dry_run": bool(row["dry_run"]),
             }
     
     # ===== Account Cache Operations =====
