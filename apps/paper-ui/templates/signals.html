@@ -47,58 +47,107 @@
               x-text="new Date(s.created_at).toLocaleString()"></span>
       </div>
 
-      <!-- Payload summary: strikes, pricing -->
-      <div class="grid grid-cols-2 sm:grid-cols-4 gap-2 text-sm">
-        <template x-if="s.payload.put_strike">
-          <div>
-            <span class="text-gray-500 text-xs">Put</span><br>
-            <span x-text="s.payload.put_strike"></span>
-          </div>
-        </template>
-        <template x-if="s.payload.call_strike">
-          <div>
-            <span class="text-gray-500 text-xs">Call</span><br>
-            <span x-text="s.payload.call_strike"></span>
-          </div>
-        </template>
-        <template x-if="s.payload.expiration">
-          <div>
-            <span class="text-gray-500 text-xs">Expiry</span><br>
-            <span x-text="s.payload.expiration"></span>
-          </div>
-        </template>
-        <template x-if="s.payload.net_credit !== null && s.payload.net_credit !== undefined">
-          <div>
-            <span class="text-gray-500 text-xs">Credit</span><br>
-            <span x-text="'$' + s.payload.net_credit?.toFixed(0)"></span>
-          </div>
-        </template>
+      <!-- Expiry / DTE / context row -->
+      <div x-show="s.payload.expiration" class="flex flex-wrap gap-3 text-sm text-gray-600">
+        <span>
+          Expiry <strong x-text="s.payload.expiration"></strong>
+        </span>
+        <span x-show="s.payload.entry_dte" class="text-blue-600 font-semibold"
+              x-text="s.payload.entry_dte + ' DTE'"></span>
+        <span x-show="s.payload.entry_vix" class="text-gray-400">
+          VIX <span x-text="s.payload.entry_vix?.toFixed(1)"></span>
+        </span>
+        <span x-show="s.payload.spy_price" class="text-gray-400">
+          SPY $<span x-text="s.payload.spy_price?.toFixed(2)"></span>
+        </span>
       </div>
 
-      <!-- Quote comparison: IBKR vs BS -->
-      <div x-show="s.payload.put_ibkr_mid !== undefined || s.payload.put_bs_mid !== undefined"
-           class="text-xs text-gray-500 bg-gray-50 rounded px-3 py-1.5 flex flex-wrap gap-4">
-        <span>
-          <strong>Put</strong>
-          <span x-show="s.payload.put_ibkr_mid != null">
-            mkt <span x-text="s.payload.put_ibkr_mid?.toFixed(2)"></span>
-          </span>
-          <span x-show="s.payload.put_bs_mid != null">
-            BS <span x-text="s.payload.put_bs_mid?.toFixed(2)"></span>
-          </span>
-        </span>
-        <span>
-          <strong>Call</strong>
-          <span x-show="s.payload.call_ibkr_mid != null">
-            mkt <span x-text="s.payload.call_ibkr_mid?.toFixed(2)"></span>
-          </span>
-          <span x-show="s.payload.call_bs_mid != null">
-            BS <span x-text="s.payload.call_bs_mid?.toFixed(2)"></span>
-          </span>
-        </span>
-        <span x-show="s.payload.quote_source">
-          source: <span x-text="s.payload.quote_source"></span>
-        </span>
+      <!-- Strike / price table -->
+      <div x-show="s.payload.put_strike || s.payload.call_strike"
+           class="overflow-x-auto">
+        <table class="text-sm w-auto min-w-[380px]">
+          <thead>
+            <tr class="text-xs text-gray-400 uppercase">
+              <th class="text-left pr-6 py-1 font-medium w-28"></th>
+              <th class="text-right pr-6 py-1 font-medium">PUT</th>
+              <th class="text-right py-1 font-medium">CALL</th>
+            </tr>
+          </thead>
+          <tbody class="divide-y divide-gray-100">
+            <!-- Strike + % OTM -->
+            <tr>
+              <td class="text-xs text-gray-400 pr-6 py-1">Strike</td>
+              <td class="text-right pr-6 py-1 font-semibold">
+                <span x-text="s.payload.put_strike"></span>
+                <span x-show="s.payload.spy_price && s.payload.put_strike"
+                      class="ml-1 text-xs text-gray-400"
+                      x-text="'(' + (((s.payload.put_strike - s.payload.spy_price) / s.payload.spy_price) * 100).toFixed(1) + '%)'">
+                </span>
+              </td>
+              <td class="text-right py-1 font-semibold">
+                <span x-text="s.payload.call_strike"></span>
+                <span x-show="s.payload.spy_price && s.payload.call_strike"
+                      class="ml-1 text-xs text-gray-400"
+                      x-text="'(+' + (((s.payload.call_strike - s.payload.spy_price) / s.payload.spy_price) * 100).toFixed(1) + '%)'">
+                </span>
+              </td>
+            </tr>
+            <!-- IBKR -->
+            <tr x-show="s.payload.put_ibkr_mid != null || s.payload.call_ibkr_mid != null">
+              <td class="text-xs text-gray-400 pr-6 py-1">IBKR mid</td>
+              <td class="text-right pr-6 py-1 text-green-700">
+                <span x-show="s.payload.put_ibkr_mid != null"
+                      x-text="'$' + s.payload.put_ibkr_mid?.toFixed(2)"></span>
+                <span x-show="s.payload.put_ibkr_mid == null" class="text-gray-300">—</span>
+              </td>
+              <td class="text-right py-1 text-green-700">
+                <span x-show="s.payload.call_ibkr_mid != null"
+                      x-text="'$' + s.payload.call_ibkr_mid?.toFixed(2)"></span>
+                <span x-show="s.payload.call_ibkr_mid == null" class="text-gray-300">—</span>
+              </td>
+            </tr>
+            <!-- yfinance -->
+            <tr x-show="s.payload.put_yf_mid != null || s.payload.call_yf_mid != null">
+              <td class="text-xs text-gray-400 pr-6 py-1">yfinance mid</td>
+              <td class="text-right pr-6 py-1 text-blue-700">
+                <span x-show="s.payload.put_yf_mid != null"
+                      x-text="'$' + s.payload.put_yf_mid?.toFixed(2)"></span>
+                <span x-show="s.payload.put_yf_mid == null" class="text-gray-300">—</span>
+              </td>
+              <td class="text-right py-1 text-blue-700">
+                <span x-show="s.payload.call_yf_mid != null"
+                      x-text="'$' + s.payload.call_yf_mid?.toFixed(2)"></span>
+                <span x-show="s.payload.call_yf_mid == null" class="text-gray-300">—</span>
+              </td>
+            </tr>
+            <!-- BS theoretical -->
+            <tr x-show="s.payload.put_bs_mid != null || s.payload.call_bs_mid != null">
+              <td class="text-xs text-gray-400 pr-6 py-1">BS theoretical</td>
+              <td class="text-right pr-6 py-1 text-gray-500"
+                  x-text="s.payload.put_bs_mid != null ? '$' + s.payload.put_bs_mid?.toFixed(2) : '—'"></td>
+              <td class="text-right py-1 text-gray-500"
+                  x-text="s.payload.call_bs_mid != null ? '$' + s.payload.call_bs_mid?.toFixed(2) : '—'"></td>
+            </tr>
+          </tbody>
+        </table>
+
+        <!-- Net credit summary -->
+        <div x-show="(s.payload.put_ibkr_mid ?? s.payload.put_yf_mid ?? s.payload.put_bs_mid) != null"
+             class="mt-2 text-sm flex flex-wrap gap-4">
+          <template x-if="(s.payload.put_ibkr_mid ?? s.payload.put_yf_mid) != null">
+            <span class="font-semibold text-gray-800">
+              Net credit (mkt):
+              <span class="text-green-700"
+                    x-text="'$' + (((s.payload.put_ibkr_mid ?? s.payload.put_yf_mid ?? 0) + (s.payload.call_ibkr_mid ?? s.payload.call_yf_mid ?? 0)) * 100).toFixed(0) + '/contract'">
+              </span>
+            </span>
+          </template>
+          <template x-if="s.payload.put_bs_mid != null">
+            <span class="text-gray-400 text-xs">
+              BS: $<span x-text="(((s.payload.put_bs_mid ?? 0) + (s.payload.call_bs_mid ?? 0)) * 100).toFixed(0)"></span>/contract
+            </span>
+          </template>
+        </div>
       </div>
 
       <!-- Fill info -->

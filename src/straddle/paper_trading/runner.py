@@ -179,49 +179,57 @@ class PaperTradingEngine:
             put_bs  = float(self._engine.get_leg_mark(put_k,  S, entry_dte, vix, r, "put",  ctx=ctx))
             call_bs = float(self._engine.get_leg_mark(call_k, S, entry_dte, vix, r, "call", ctx=ctx))
 
-            # 1. IBKR via regular synchronous API (safe on main thread)
-            put_mkt = call_mkt = None
-            source = "bs"
             exp_str = exp_ts.strftime("%Y%m%d")
+
+            # Fetch IBKR and yfinance independently so UI can show both
+            put_ibkr = call_ibkr = None
+            put_yf   = call_yf   = None
 
             if self._ibkr.is_connected:
                 try:
                     pq = self._ibkr.get_option_quote(put_k,  exp_str, "P")
                     cq = self._ibkr.get_option_quote(call_k, exp_str, "C")
                     if pq and pq.get("sane"):
-                        put_mkt = round(pq["mid"], 2)
+                        put_ibkr  = round(pq["mid"], 2)
                     if cq and cq.get("sane"):
-                        call_mkt = round(cq["mid"], 2)
-                    if put_mkt is not None or call_mkt is not None:
-                        source = "ibkr"
+                        call_ibkr = round(cq["mid"], 2)
                 except Exception as ibkr_exc:
                     logger.warning("[DRY-RUN] IBKR quote failed for signal #%d: %s", sig.id, ibkr_exc)
 
-            # 2. yfinance fallback
-            if source == "bs":
-                try:
-                    import yfinance as yf
-                    chain = yf.Ticker("SPY").option_chain(exp_ts.strftime("%Y-%m-%d"))
-                    def _yf_mid(df, strike):
-                        r = df[df["strike"] == strike]
-                        if r.empty:
-                            return None
-                        b, a = float(r.iloc[0]["bid"]), float(r.iloc[0]["ask"])
-                        return round((b + a) / 2, 2) if b > 0 and a >= b else None
-                    put_mkt  = _yf_mid(chain.puts,  put_k)
-                    call_mkt = _yf_mid(chain.calls, call_k)
-                    if put_mkt is not None or call_mkt is not None:
-                        source = "yfinance"
-                except Exception as yf_exc:
-                    logger.debug("[DRY-RUN] yfinance fallback failed for signal #%d: %s", sig.id, yf_exc)
+            try:
+                import yfinance as yf
+                chain = yf.Ticker("SPY").option_chain(exp_ts.strftime("%Y-%m-%d"))
+                def _yf_mid(df, strike):
+                    r = df[df["strike"] == strike]
+                    if r.empty:
+                        return None
+                    b, a = float(r.iloc[0]["bid"]), float(r.iloc[0]["ask"])
+                    return round((b + a) / 2, 2) if b > 0 and a >= b else None
+                put_yf  = _yf_mid(chain.puts,  put_k)
+                call_yf = _yf_mid(chain.calls, call_k)
+            except Exception as yf_exc:
+                logger.debug("[DRY-RUN] yfinance failed for signal #%d: %s", sig.id, yf_exc)
+
+            # Primary market price for limit order: IBKR → yfinance → BS
+            put_mkt  = put_ibkr  or put_yf
+            call_mkt = call_ibkr or call_yf
+            if put_ibkr or call_ibkr:
+                source = "ibkr"
+            elif put_yf or call_yf:
+                source = "yfinance"
+            else:
+                source = "bs"
 
             payload.update({
                 "put_strike":    put_k,
                 "call_strike":   call_k,
+                "spy_price":     round(S, 2),
                 "put_bs_mid":    put_bs,
                 "call_bs_mid":   call_bs,
-                "put_ibkr_mid":  put_mkt,
-                "call_ibkr_mid": call_mkt,
+                "put_ibkr_mid":  put_ibkr,
+                "call_ibkr_mid": call_ibkr,
+                "put_yf_mid":    put_yf,
+                "call_yf_mid":   call_yf,
                 "quote_source":  source,
                 "entry_vix":     vix,
                 "entry_dte":     entry_dte,
