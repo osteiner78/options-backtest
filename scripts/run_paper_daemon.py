@@ -210,13 +210,15 @@ def _run_scheduler(
         id="heartbeat",
     )
 
-    # Account cache refresh every 30 s (only if IBKR connected)
-    scheduler.add_job(
-        lambda: _refresh_account(ibkr, store),
-        "interval",
-        seconds=30,
-        id="account_cache",
-    )
+    # Account cache refresh every 30 s (only if IBKR connected and not dry-run)
+    # Skipped in dry-run: ib_insync reqAccountUpdates deadlocks from a background thread.
+    if not runner._dry_run:
+        scheduler.add_job(
+            lambda: _refresh_account(ibkr, store),
+            "interval",
+            seconds=30,
+            id="account_cache",
+        )
 
     # Optional intraday stop-loss polling
     if cfg.intraday_enabled:
