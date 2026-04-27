@@ -18,6 +18,12 @@ Public API::
         calculate_reg_t_strangle_margin,
         run_portfolio_backtest,
         plot_portfolio_backtest,
+        # Paper trading (new):
+        StateStore,
+        PaperTrade,
+        PendingSignal,
+        SignalType,
+        SignalStatus,
     )
 """
 
@@ -34,6 +40,14 @@ from straddle.portfolio import (
     calculate_iron_condor_margin,
     run_portfolio_backtest,
     plot_portfolio_backtest,
+)
+
+from straddle.paper_trading.state import (
+    StateStore,
+    PaperTrade,
+    PendingSignal,
+    SignalType,
+    SignalStatus,
 )
 
 __all__ = [
@@ -57,4 +71,10 @@ __all__ = [
     "calculate_iron_condor_margin",
     "run_portfolio_backtest",
     "plot_portfolio_backtest",
+    # Paper trading
+    "StateStore",
+    "PaperTrade",
+    "PendingSignal",
+    "SignalType",
+    "SignalStatus",
 ]

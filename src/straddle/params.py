@@ -70,6 +70,11 @@ class PortfolioParams(TypedDict, total=False):
     spy_allocation_pct: float   # SPY fraction for "blend" mode
 
 
+class PaperTradingParams(TypedDict, total=False):
+    paper_db_path: str
+    paper_config_path: str
+
+
 # ── Constants ───────────────────────────────────────────────────────────
 
 RISK_FREE_RATE_DEFAULT = 0.045
@@ -169,8 +174,15 @@ PORTFOLIO: PortfolioParams = {
     "spy_allocation_pct": 0.40,   # SPY fraction when cash_investment_mode="blend"
 }
 
+# ── Paper trading runtime files ─────────────────────────────────────────
+
+PAPER_TRADING: PaperTradingParams = {
+    "paper_db_path": "data/paper_trades.db",
+    "paper_config_path": "data/paper_config.json",
+}
+
 # ── Merge into a single flat dict for backward compatibility ─────────────
 # All downstream cells (run_backtest, compute_metrics, plot) read from PARAMS.
 # The sub-dicts are the human-facing interface; PARAMS is the machine interface.
 
-PARAMS: dict = {**BACKTEST, **STRATEGY, **PRICING, **OVERSHOOT, **PORTFOLIO}
+PARAMS: dict = {**BACKTEST, **STRATEGY, **PRICING, **OVERSHOOT, **PORTFOLIO, **PAPER_TRADING}

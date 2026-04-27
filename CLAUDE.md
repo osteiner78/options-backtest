@@ -23,6 +23,10 @@ streamlit run apps/streamlit-ui/app.py
 # API server
 python scripts/run_api.py --port 8000
 
+# Paper trading (phase 1 - state layer implemented)
+python examples/paper_state_demo.py
+pytest tests/test_paper_state.py -v
+
 # Tests
 pytest tests/ -v
 pytest tests/test_engines.py -v   # single test file
@@ -58,6 +62,14 @@ params.py (PARAMS dict)
 
 **`data.py`** — Fetches SPY, VIX, and risk-free rate from Yahoo Finance. Maintains `market_data_master.parquet` with incremental updates. Adds a 90-day buffer before backtest start to ensure valid DTE calculations.
 
+**Paper Trading Architecture (Phase 1 - State Layer Complete)**
+- `src/straddle/paper_trading/state.py` — SQLite persistence for paper trading with WAL mode for concurrent access
+- 8 tables: `paper_trades`, `leg_rolls`, `equity_curve`, `pending_signals`, `heartbeat`, `account_cache`, `notifications`, `auth_sessions`
+- Signal lifecycle: `pending → approved → submitting → filled|cancelled|failed`
+- Support for entry, close, roll, leg-roll, manual, and open-recovery signals
+- Authentication sessions with 7-day TTL
+- Heartbeat monitoring for daemon health
+
 ## Development Conventions
 
 - All strategy parameters belong in `params.py` — never hard-code values in other modules.
@@ -65,3 +77,6 @@ params.py (PARAMS dict)
 - Engine parity tests in `test_engines.py` must pass when touching pricing logic — synthetic and market results should remain reasonably close.
 - `src/straddle/__init__.py` is a clean public API facade — keep it minimal.
 - `tests/conftest.py` holds shared fixtures (`params`, `synthetic_engine`, `sample_trade`, `sample_leg_roll`) — use these in new tests rather than constructing fresh instances.
+- Paper trading follows the 9-milestone implementation plan from `PAPER_TRADING_PLAN.md`.
+- Paper trading database uses SQLite WAL mode for concurrent access — always include `PRAGMA journal_mode=WAL` and appropriate timeouts.
+- Paper trading state should be testable without IBKR connection — use dependency injection for IBKR client.
