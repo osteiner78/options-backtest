@@ -21,7 +21,7 @@ Public API::
     )
 """
 
-from straddle.params import PARAMS
+from straddle.params import PARAMS, MARKET_PRESETS, apply_market_preset
 from straddle.data import load_market_data, validate_market_mode_dates
 from straddle.engines import SyntheticEngine, MarketEngine, make_engine
 from straddle.strategy import run_backtest, Trade, LegRollEvent
@@ -38,6 +38,8 @@ from straddle.portfolio import (
 
 __all__ = [
     "PARAMS",
+    "MARKET_PRESETS",
+    "apply_market_preset",
     "load_market_data",
     "validate_market_mode_dates",
     "SyntheticEngine",

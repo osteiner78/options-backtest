@@ -1,16 +1,16 @@
 """Minimal CLI script — run a full backtest from the command line.
 
 Usage:
-    python -m straddle.scripts.run_backtest
-    python -m straddle.scripts.run_backtest --start 2015-01-01 --end 2024-12-31
-    python -m straddle.scripts.run_backtest --mode synthetic
+    python scripts/run_backtest.py
+    python scripts/run_backtest.py --market bova11 --mode market --start 2015-01-01 --end 2025-12-31
+    python scripts/run_backtest.py --market spy --mode synthetic --start 2024-01-01 --end 2024-12-31
+    python scripts/run_backtest.py --no-plot
 """
 
 import argparse
 import sys
 from pathlib import Path
 
-# Ensure the package is importable when run as a script
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 from straddle import (
@@ -21,29 +21,27 @@ from straddle import (
     plot_backtest,
     run_backtest,
 )
+from straddle.params import apply_market_preset, MARKET_PRESETS
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="SPY Short Strangle Backtest")
-    parser.add_argument(
-        "--start", default=None, help="Start date (YYYY-MM-DD). Overrides PARAMS."
-    )
-    parser.add_argument(
-        "--end", default=None, help="End date (YYYY-MM-DD). Overrides PARAMS."
-    )
-    parser.add_argument(
-        "--mode",
-        choices=["synthetic", "market"],
-        default=None,
-        help="Pricing mode. Overrides PARAMS['mode'].",
-    )
-    parser.add_argument(
-        "--no-plot", action="store_true", help="Skip generating the plot."
-    )
+    parser = argparse.ArgumentParser(description="Short Strangle Backtest")
+    parser.add_argument("--market", choices=list(MARKET_PRESETS), default=None,
+                        help="Underlying market (default: spy). Applies market preset.")
+    parser.add_argument("--start", default=None, help="Start date (YYYY-MM-DD).")
+    parser.add_argument("--end",   default=None, help="End date (YYYY-MM-DD).")
+    parser.add_argument("--mode", choices=["synthetic", "market"], default=None,
+                        help="Pricing mode. Overrides PARAMS['mode'].")
+    parser.add_argument("--no-plot", action="store_true", help="Skip generating the plot.")
     args = parser.parse_args()
 
-    # Build params from defaults, overridden by CLI args
     params = dict(PARAMS)
+
+    # Apply market preset first (sets calendar, db path, vix multiplier, etc.)
+    # then let explicit CLI flags override.
+    market = args.market or params.get("market", "spy")
+    params = apply_market_preset(params, market)
+
     if args.start:
         params["start_date"] = args.start
     if args.end:
@@ -51,6 +49,10 @@ def main() -> None:
     if args.mode:
         params["mode"] = args.mode
 
+    currency = params.get("currency", "USD")
+    sym = params.get("currency_symbol", "$" if currency == "USD" else "R$")
+
+    print(f"Market       : {market.upper()}  ({currency})")
     print(f"Pricing mode : {params['mode']}")
     print(f"Period       : {params['start_date']} → {params['end_date']}")
     print(
@@ -60,14 +62,16 @@ def main() -> None:
     )
     print()
 
-    # Load data
     print("Loading market data...")
-    data = load_market_data(start_date=params["start_date"], end_date=params["end_date"])
+    data = load_market_data(
+        start_date=params["start_date"],
+        end_date=params["end_date"],
+        market=market,
+    )
     print(f"Trading days loaded : {len(data)}")
     print(f"Range               : {data.index[0].date()}  ->  {data.index[-1].date()}")
     print()
 
-    # Create engine and run
     print("Running backtest...")
     engine = make_engine(params)
     try:
@@ -75,35 +79,31 @@ def main() -> None:
             data, params, engine
         )
     finally:
-        # Ensure DB connection is closed (no-op for SyntheticEngine)
         if hasattr(engine, "close"):
             engine.close()
 
-    # Compute metrics
     metrics = compute_metrics(trades, equity_curve, params, data)
 
-    # Print summary
-    final_balance = params["initial_balance"] + sum(t.pnl for t in trades)
+    final_balance = params["initial_balance"] + sum(t.pnl for t in trades if t.pnl)
     total_return = (final_balance - params["initial_balance"]) / params["initial_balance"]
 
     print(f"Trades executed : {len(trades)}")
     print(f"Skipped entries (single-position): {skipped_entries}")
     if params.get("vix_entry_filter_enabled", False):
         print(f"Skipped entries (VIX > {params['vix_entry_max']}): {skipped_vix}")
-    print(f'Initial balance : ${params["initial_balance"]:,.2f}')
-    print(f"Final balance   : ${final_balance:,.2f}")
-    print(f"Total P&L       : ${final_balance - params['initial_balance']:+,.2f}")
+    print(f"Initial balance : {sym}{params['initial_balance']:,.2f}")
+    print(f"Final balance   : {sym}{final_balance:,.2f}")
+    print(f"Total P&L       : {sym}{final_balance - params['initial_balance']:+,.2f}")
     print(f"Total return    : {total_return*100:.1f}%")
     print(f"Sharpe ratio    : {metrics.get('sharpe', 'N/A'):.2f}")
     print(f"Max drawdown    : {metrics.get('mdd', 0)*100:.1f}%")
     print(f"Win rate (chain): {metrics.get('wr_chain', 0)*100:.1f}%")
     print(
-        f"SPY total return: {metrics.get('spy_total_return', 0)*100:.1f}%  "
-        f"(price only, excludes ~1.3%/yr dividends)"
+        f"{market.upper()} total return: "
+        f"{metrics.get('underlying_total_return', 0)*100:.1f}%"
     )
-    print(f"SPY Sharpe      : {metrics.get('spy_sharpe', 'N/A'):.2f}")
+    print(f"{market.upper()} Sharpe      : {metrics.get('underlying_sharpe', 'N/A'):.2f}")
 
-    # Plot
     if not args.no_plot:
         print()
         plot_backtest(trades, equity_curve, data, params)

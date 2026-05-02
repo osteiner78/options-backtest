@@ -1,9 +1,8 @@
 """PARAMS schema, defaults, and validation.
 
-All tunable knobs for the SPY short strangle backtest are defined here.
-The four sub-dicts (BACKTEST, STRATEGY, PRICING, OVERSHOOT) provide a
-human-facing interface; the merged PARAMS dict is the machine interface
-used by all downstream functions.
+All tunable knobs for the short strangle backtest are defined here.
+The sub-dicts provide a human-facing interface; the merged PARAMS dict
+is the machine interface used by all downstream functions.
 """
 
 from typing import TypedDict
@@ -46,11 +45,12 @@ class StrategyParams(TypedDict, total=False):
 
 class PricingParams(TypedDict, total=False):
     mode: str
-    db_path: str
+    options_db_path: str
     risk_free_rate: float
     put_slope: float
     call_slope: float
     vix_to_iv_multiplier: float
+    contract_multiplier: float  # shares per contract (100 for both US and B3 equity options)
 
 
 class OvershootParams(TypedDict, total=False):
@@ -70,6 +70,18 @@ class PortfolioParams(TypedDict, total=False):
     underlying_allocation_pct: float  # underlying fraction for "blend" mode
 
 
+class MarketParams(TypedDict, total=False):
+    market: str               # "spy" | "bova11" | "petr4"
+    market_data_source: str   # "yahoo" | "b3_cotahist"
+    calendar: str             # "NYSE" | "BVMF"
+    currency: str             # "USD" | "BRL"
+
+
+class PaperTradingParams(TypedDict, total=False):
+    paper_db_path: str
+    paper_config_path: str
+
+
 # ── Constants ───────────────────────────────────────────────────────────
 
 RISK_FREE_RATE_DEFAULT = 0.045
@@ -82,95 +94,155 @@ BACKTEST: BacktestParams = {
     "end_date": "2025-11-30",
     "initial_balance": 50_000,
     "commission_per_leg": 1.00,  # $1/contract/leg → $2 open + $2 close = $4/round-trip
-    "vix_low": 15,  # regime reporting thresholds (not used in backtest logic)
+    "vix_low": 15,
     "vix_high": 25,
 }
 
 # ── Strategy rules ───────────────────────────────────────────────────────
 
 STRATEGY: StrategyParams = {
-    # Strategy variant: "short_strangle" sells a naked put + call.
-    # "iron_condor" additionally buys long wings at wing_delta to cap tail risk,
-    # turning the trade into a defined-risk spread.
     "strategy_mode": "short_strangle",
-    "wing_delta": 0.05,  # long-leg delta for iron condor wings (5Δ default)
-    "target_delta": 0.16,  # sell 16Δ put + 16Δ call
-    "dte_min": 30,  # acceptable DTE window for expiry selection
+    "wing_delta": 0.05,
+    "target_delta": 0.16,
+    "dte_min": 30,
     "dte_max": 45,
-    "profit_target_pct": 0.50,  # close when P&L >= 50% of net premium
-    "stop_loss_pct": 2.00,  # close when P&L <= -200% of net premium
-    # Execution cost assumptions — applied to mid in both pricing modes.
-    # Set to 0 in market mode if you prefer to use raw DB bid/ask directly.
-    "open_fill_adj": -0.05,  # receive mid × (1 − 0.05) = 95% of mid
-    "close_fill_adj": +0.05,  # pay    mid × (1 + 0.05) = 105% of mid
-    # 21-DTE roll management
-    "use_price_stop": False,  # False = no price stop (canonical tastytrade); True = legacy stop_loss_pct + overshoot
-    "manage_at_dte": 21,  # DTE threshold for end-of-life management (roll or flat close)
-    "roll_for_credit": True,  # True = roll the whole strangle at manage_at_dte; False = close flat
-    "max_rolls": 3,  # maximum consecutive rolls per original position
-    "roll_dte_max": 60,  # wider DTE window for roll target (at 21 DTE the next 3rd Friday is ~49 DTE)
-    "single_position": True,  # True = skip new monthly entry while a prior chain is still open
-    # VIX-conditional entry filter — applies to both new monthly entries AND
-    # 21-DTE roll continuations. When VIX > vix_entry_max at the 21-DTE
-    # management date, the position is closed flat instead of rolled.
+    "profit_target_pct": 0.50,
+    "stop_loss_pct": 2.00,
+    "open_fill_adj": -0.05,
+    "close_fill_adj": +0.05,
+    "use_price_stop": False,
+    "manage_at_dte": 21,
+    "roll_for_credit": True,
+    "max_rolls": 3,
+    "roll_dte_max": 60,
+    "single_position": True,
     "vix_entry_filter_enabled": True,
-    "vix_entry_max": 35.0,  # skip entries/rolls when entry-day VIX close exceeds this
-    # Defensive leg roll
-    # WARNING: 0.30 trigger is too aggressive for systematic use. Backtesting 2010-2024 shows
-    # it fires ~13x/year and HURTS returns (-17% vs +15%) because rolling the untested leg
-    # toward ATM during a trending move creates compounding losses on reversal (see Feb 2020).
-    # The tastytrade rule is discretionary. Set to False for the baseline strategy.
-    "defensive_leg_roll_enabled": False,  # default OFF — see warning above
-    "defensive_trigger_delta": 0.30,  # |delta| on tested side that triggers roll of the untested leg
-    "leg_roll_target_delta": 0.16,  # delta for the new untested leg (matches entry delta)
-    "max_leg_rolls_per_trade": 2,  # max leg rolls total per trade (put + call combined)
+    "vix_entry_max": 35.0,
+    # Defensive leg roll — default OFF (see warning in strategy.py)
+    "defensive_leg_roll_enabled": False,
+    "defensive_trigger_delta": 0.30,
+    "leg_roll_target_delta": 0.16,
+    "max_leg_rolls_per_trade": 2,
 }
 
 # ── Pricing source + model ───────────────────────────────────────────────
 
 PRICING: PricingParams = {
-    # "market"    → use real bid/ask/mark from the SQLite options DB
-    # "synthetic" → compute everything via Black-Scholes (use for post-2025 simulation)
     "mode": "market",
-    "db_path": "data/Spy Options Database.db",
-    # Synthetic model parameters.
-    # In market mode these are still used for gap-open stop pricing
-    # (DB is EOD-only, so overnight gaps always fall back to BS).
-    "risk_free_rate": RISK_FREE_RATE_DEFAULT,  # fallback when ^IRX data unavailable
-    "put_slope": 0.30,  # 16Δ put skew: vol × (1 + 0.30 × Δ) ≈ vol × 1.10
-    "call_slope": 0.10,  # 16Δ call skew: vol × (1 + 0.10 × Δ) ≈ vol × 1.03
+    "options_db_path": "data/Spy Options Database.db",
+    "risk_free_rate": RISK_FREE_RATE_DEFAULT,
+    "put_slope": 0.30,
+    "call_slope": 0.10,
     "vix_to_iv_multiplier": 1.15,  # SPY IV is typically ~15% higher than VIX
+    "contract_multiplier": 100.0,  # shares per contract
 }
 
 # ── Stop-loss overshoot model ────────────────────────────────────────────
 
 OVERSHOOT: OvershootParams = {
-    # When a stop triggers intraday, the actual fill is worse than the -200% trigger.
-    # The blend fraction controls how far toward the EOD/open mark the fill lands.
-    # Regime is determined by SPY daily range / prev close.
-    "overshoot_orderly": 0.25,  # range < 1.5%
-    "overshoot_normal": 0.50,  # 1.5% ≤ range < 3.0%
-    "overshoot_violent": 0.80,  # range ≥ 3.0%
+    "overshoot_orderly": 0.25,
+    "overshoot_normal": 0.50,
+    "overshoot_violent": 0.80,
     "range_threshold_orderly": 0.015,
     "range_threshold_violent": 0.030,
-    # On gap days VIX at the open is higher than the prior close.
-    # vix_open = vix_prev × (1 + gap_vix_multiplier × |gap_pct|)
-    # e.g. 2% gap → +6% VIX, 5% gap → +15% VIX.
     "gap_vix_multiplier": 3.0,
 }
 
 # ── Portfolio / laddering ────────────────────────────────────────────────
 
 PORTFOLIO: PortfolioParams = {
-    "max_bpr_allocation": 0.30,  # max 30% of starting capital as margin usage
-    "cash_yield_annual": 0.04,  # 4% annual risk-free rate on uninvested cash
-    "entry_cooldown_days": 3,  # minimum trading days between new entries
-    "cash_investment_mode": "underlying",  # "risk_free" | "underlying" | "blend"
-    "underlying_allocation_pct": 0.40,    # underlying fraction when cash_investment_mode="blend"
+    "max_bpr_allocation": 0.30,
+    "cash_yield_annual": 0.04,
+    "entry_cooldown_days": 3,
+    "cash_investment_mode": "underlying",
+    "underlying_allocation_pct": 0.40,
+}
+
+# ── Market selector ──────────────────────────────────────────────────────
+
+MARKET: MarketParams = {
+    "market": "spy",
+    "market_data_source": "yahoo",
+    "calendar": "NYSE",
+    "currency": "USD",
+}
+
+# ── Per-market presets ───────────────────────────────────────────────────
+# apply_market_preset() merges one of these into params before running.
+
+MARKET_PRESETS: dict = {
+    "spy": {
+        "market": "spy",
+        "market_data_source": "yahoo",
+        "options_db_path": "data/Spy Options Database.db",
+        "calendar": "NYSE",
+        "currency": "USD",
+        "vix_to_iv_multiplier": 1.15,
+        "contract_multiplier": 100.0,
+    },
+    "bova11": {
+        "market": "bova11",
+        "market_data_source": "b3_cotahist",
+        "options_db_path": "data/B3/b3_options.db",
+        "calendar": "BVMF",
+        "currency": "BRL",
+        "vix_to_iv_multiplier": 1.00,  # vix_close for B3 IS the actual ATM IV
+        "contract_multiplier": 100.0,
+        # TODO: refit put_slope/call_slope from parsed B3 data
+        # TODO: model dividends for PETR4 (American-style early exercise)
+    },
+    "petr4": {
+        "market": "petr4",
+        "market_data_source": "b3_cotahist",
+        "options_db_path": "data/B3/b3_options.db",
+        "calendar": "BVMF",
+        "currency": "BRL",
+        "vix_to_iv_multiplier": 1.00,
+        "contract_multiplier": 100.0,
+    },
+}
+
+
+def apply_market_preset(params: dict, market: str) -> dict:
+    """Merge per-market defaults into params. Call before make_engine/load_market_data.
+
+    Priority (lowest → highest):
+      1. base PARAMS defaults
+      2. market preset (calendar, currency, db path, vix multiplier, etc.)
+      3. explicit caller overrides (CLI flags, API request fields)
+
+    Because params usually starts as dict(PARAMS), which already contains
+    market-specific defaults for "spy", the preset must override it so
+    that switching to "bova11" correctly sets BRL, BVMF, etc.
+
+    Keys that the caller set *after* the initial PARAMS merge (i.e. explicit
+    CLI/API overrides like --start or --mode) are preserved via `extras`.
+    """
+    preset = MARKET_PRESETS.get(market)
+    if preset is None:
+        raise ValueError(f"Unknown market {market!r}. Valid: {list(MARKET_PRESETS)}")
+    # Keys in params that differ from SPY-market PARAMS are explicit overrides
+    spy_defaults = {k: MARKET_PRESETS["spy"].get(k) for k in preset}
+    extras = {k: v for k, v in params.items() if k not in preset or params[k] != spy_defaults.get(k)}
+    merged = dict(params)          # 1. base (includes PARAMS defaults)
+    merged.update(preset)          # 2. preset wins over PARAMS defaults
+    merged.update({k: v for k, v in extras.items() if k not in preset})  # 3. non-market explicit overrides
+    merged["market"] = market      # always stamp the resolved market
+    return merged
+
+
+# ── Paper trading runtime files ─────────────────────────────────────────
+
+PAPER_TRADING: PaperTradingParams = {
+    "paper_db_path": "data/paper_trades.db",
+    "paper_config_path": "data/paper_config.json",
 }
 
 # ── Merge into a single flat dict for backward compatibility ─────────────
-# All downstream cells (run_backtest, compute_metrics, plot) read from PARAMS.
-# The sub-dicts are the human-facing interface; PARAMS is the machine interface.
+# All downstream functions read from PARAMS.
+# Sub-dicts are the human-facing interface; PARAMS is the machine interface.
 
-PARAMS: dict = {**BACKTEST, **STRATEGY, **PRICING, **OVERSHOOT, **PORTFOLIO}
+PARAMS: dict = {
+    **BACKTEST, **STRATEGY, **PRICING, **OVERSHOOT,
+    **PORTFOLIO, **MARKET, **PAPER_TRADING,
+}

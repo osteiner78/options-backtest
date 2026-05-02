@@ -343,24 +343,42 @@ class MarketEngine:
         import sqlite3 as _sqlite3
         from pathlib import Path
 
-        db_path_raw = params.get("db_path", "data/Spy Options Database.db")
-        # Ensure db_path is relative to project root even if run from apps/
+        # Accept options_db_path (new) or db_path (legacy) for backward compat
+        db_path_raw = params.get(
+            "options_db_path",
+            params.get("db_path", "data/Spy Options Database.db"),
+        )
+        # Resolve relative to project root even when run from apps/
         db_path = Path(db_path_raw)
         if not db_path.is_absolute():
-            # Assume we are in src/straddle/engines.py or similar
             root = Path(__file__).resolve().parent.parent.parent
             db_path = root / db_path_raw
-        
+
         db_path_str = str(db_path)
+        market = params.get("market", "spy")
 
         # Validate date range early to avoid silent synthetic fallback
-        validate_market_mode_dates(params["start_date"], params["end_date"], db_path_str)
+        validate_market_mode_dates(
+            params["start_date"], params["end_date"], db_path_str, market=market
+        )
 
         self._synth = SyntheticEngine(params)
         self._con = _sqlite3.connect(db_path_str, check_same_thread=False)
         self._con.row_factory = _sqlite3.Row
         self.delta = params["target_delta"]
-        print(f"MarketEngine: connected to {db_path_str}")
+        self._market = market
+
+        # Detect whether this DB has the `underlying` column (B3 DB) or not (SPY DB)
+        cols = {
+            row[1]
+            for row in self._con.execute("PRAGMA table_info(options_data)").fetchall()
+        }
+        self._has_underlying_col = "underlying" in cols
+
+        print(
+            f"MarketEngine: connected to {db_path_str} "
+            f"(market={market}, underlying_filter={self._has_underlying_col})"
+        )
 
     def apply_fill_adj(self, mid_ps: float, side: str) -> float:
         """Market mode: fill adjustment is already baked into bid/ask selection.
@@ -465,11 +483,15 @@ class MarketEngine:
             return self._synth.get_daily_delta(strike, S_d, dte_rem, vix_d, r_d, opt, ctx)
         date_str = ctx.eval_date.strftime("%Y-%m-%d")
         exp_str = ctx.expiration.strftime("%Y-%m-%d")
+        und_clause, und_val = self._und_filter()
+        params = [date_str, exp_str, opt, strike]
+        if und_val is not None:
+            params.append(und_val)
         cur = self._con.execute(
-            """SELECT delta FROM options_data
+            f"""SELECT delta FROM options_data
                WHERE date = ? AND expiration = ? AND type = ? AND strike = ?
-               AND mark > 0 LIMIT 1""",
-            (date_str, exp_str, opt, strike),
+               {und_clause} AND mark > 0 LIMIT 1""",
+            params,
         )
         row = cur.fetchone()
         if row and row["delta"] is not None:
@@ -500,11 +522,15 @@ class MarketEngine:
         date_str = ctx.eval_date.strftime("%Y-%m-%d")
         exp_str = ctx.expiration.strftime("%Y-%m-%d")
         col = "bid" if buy_or_sell == "sell" else "ask"
+        und_clause, und_val = self._und_filter()
+        params = [date_str, exp_str, opt, strike]
+        if und_val is not None:
+            params.append(und_val)
         cur = self._con.execute(
             f"""SELECT {col} FROM options_data
                WHERE date = ? AND expiration = ? AND type = ? AND strike = ?
-               AND mark > 0 AND ask >= bid LIMIT 1""",
-            (date_str, exp_str, opt, strike),
+               {und_clause} AND mark > 0 AND ask >= bid LIMIT 1""",
+            params,
         )
         row = cur.fetchone()
         if row and row[col] is not None and row[col] > 0:
@@ -532,12 +558,20 @@ class MarketEngine:
         exp_str = ctx.expiration.strftime("%Y-%m-%d")
         # puts: delta is negative in DB; calls: positive
         signed_target = -target_delta if opt == "put" else target_delta
+        und_clause, und_val = self._und_filter()
+        iv_clause = "AND implied_volatility < 2.0" if self._has_underlying_col else ""
+        params = [date_str, exp_str, opt]
+        if und_val is not None:
+            params.append(und_val)
+        params.append(signed_target)
         cur = self._con.execute(
-            """SELECT strike, bid FROM options_data
+            f"""SELECT strike, bid FROM options_data
                WHERE date = ? AND expiration = ? AND type = ?
+               {und_clause}
                AND mark > 0 AND ask >= bid AND volume > 0
+               AND delta IS NOT NULL {iv_clause}
                ORDER BY ABS(delta - ?) ASC LIMIT 1""",
-            (date_str, exp_str, opt, signed_target),
+            params,
         )
         row = cur.fetchone()
         if row and row["bid"] is not None and row["bid"] > 0:
@@ -558,21 +592,41 @@ class MarketEngine:
 
     # ── private helpers ─────────────────────────────────────────────────
 
+    def _und_filter(self) -> str:
+        """Return the SQL fragment and bind value for the underlying filter.
+
+        Returns ("AND underlying = ?", self._market) when the DB has the
+        underlying column (B3 DB), or ("", None) for the SPY DB.
+        """
+        if self._has_underlying_col:
+            return "AND underlying = ?", self._market
+        return "", None
+
     def _best_row(self, date_str: str, exp_str: str, opt: str, target_delta: float):
         """Return the options_data row whose delta is closest to target_delta.
 
-        Excludes rows where mark <= 0, ask < bid, or volume == 0.
+        Excludes rows where mark <= 0, ask < bid, volume == 0, or delta IS NULL.
+        For B3: also filters implied_volatility < 2.0 to remove stale deep-OTM quotes.
         """
+        und_clause, und_val = self._und_filter()
+        iv_clause = "AND implied_volatility < 2.0" if self._has_underlying_col else ""
+        params = [date_str, exp_str, opt]
+        if und_val is not None:
+            params.append(und_val)
+        params.append(target_delta)
         cur = self._con.execute(
-            """
+            f"""
             SELECT strike, mark, bid, ask, delta, implied_volatility, volume
             FROM options_data
             WHERE date = ? AND expiration = ? AND type = ?
+              {und_clause}
               AND mark > 0 AND ask >= bid AND volume > 0
+              AND delta IS NOT NULL
+              {iv_clause}
             ORDER BY ABS(delta - ?) ASC
             LIMIT 1
             """,
-            (date_str, exp_str, opt, target_delta),
+            params,
         )
         return cur.fetchone()
 
@@ -586,14 +640,19 @@ class MarketEngine:
         """
         if not exp_str:
             return None
+        und_clause, und_val = self._und_filter()
+        params = [date_str, exp_str, opt, strike]
+        if und_val is not None:
+            params.append(und_val)
         cur = self._con.execute(
-            """
+            f"""
             SELECT ask FROM options_data
             WHERE date = ? AND expiration = ? AND type = ? AND strike = ?
+              {und_clause}
               AND mark > 0 AND ask >= bid
             LIMIT 1
             """,
-            (date_str, exp_str, opt, strike),
+            params,
         )
         row = cur.fetchone()
         return float(row["ask"]) if row else None

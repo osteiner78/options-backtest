@@ -380,7 +380,7 @@ def run_portfolio_backtest(
             # expiration from the start and use those marks for both the BPR
             # capacity check and the actual trade entry.
             vix_blocks_entry = vix_filter_enabled and vix_d > vix_entry_max
-            new_exp = get_monthly_expiration(eval_date, params["dte_min"], params["dte_max"])
+            new_exp = get_monthly_expiration(eval_date, params["dte_min"], params["dte_max"], params.get("calendar", "NYSE"))
             if new_exp is not None and vix_blocks_entry:
                 if new_exp not in _vix_blocked_exps:
                     portfolio.vix_blocked_dates.append((eval_date, vix_d))

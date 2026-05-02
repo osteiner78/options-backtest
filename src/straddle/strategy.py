@@ -16,23 +16,48 @@ from straddle.engines import PricingContext
 # ── Calendar utilities ───────────────────────────────────────────────────
 
 def get_third_friday(year: int, month: int) -> pd.Timestamp:
-    """3rd Friday of the given month — standard SPY monthly expiration."""
+    """3rd Friday of the given month — standard monthly option expiration (US and B3)."""
     first = pd.Timestamp(year=year, month=month, day=1)
     return first + pd.Timedelta(days=(4 - first.weekday()) % 7) + pd.Timedelta(weeks=2)
 
 
+def _adjust_for_holiday(date: pd.Timestamp, calendar: str = "NYSE") -> pd.Timestamp:
+    """Roll a date back to the nearest prior trading day if it falls on a holiday.
+
+    Uses pandas_market_calendars when available (supports "NYSE" and "BVMF").
+    Falls back to a simple weekday check otherwise (catches weekends only).
+    """
+    try:
+        import pandas_market_calendars as mcal
+        cal = mcal.get_calendar(calendar)
+        date_str = str(date.date())
+        schedule = cal.schedule(date_str, date_str)
+        if schedule.empty:
+            candidate = date - pd.Timedelta(days=1)
+            for _ in range(7):
+                s = cal.schedule(str(candidate.date()), str(candidate.date()))
+                if not s.empty:
+                    return candidate
+                candidate -= pd.Timedelta(days=1)
+    except Exception:
+        pass
+    return date
+
+
 def get_monthly_expiration(
-    entry: pd.Timestamp, dte_min: int, dte_max: int
+    entry: pd.Timestamp, dte_min: int, dte_max: int, calendar: str = "NYSE"
 ) -> Optional[pd.Timestamp]:
     """Nearest 3rd-Friday expiration with DTE strictly in [dte_min, dte_max].
 
+    When the 3rd Friday falls on a market holiday the listed expiry is the
+    preceding Thursday; _adjust_for_holiday handles this for both NYSE and BVMF.
+
     Returns None if no valid expiration exists for this entry date.
-    The fallback (nearest regardless of window) was removed — it silently
-    produced 46–51 DTE entries on most months, violating the strategy rules.
     """
     for mo in range(0, 5):
         abs_mo = entry.month + mo
         exp = get_third_friday(entry.year + (abs_mo - 1) // 12, (abs_mo - 1) % 12 + 1)
+        exp = _adjust_for_holiday(exp, calendar)
         dte = (exp - entry).days
         if dte_min <= dte <= dte_max:
             return exp
@@ -40,7 +65,12 @@ def get_monthly_expiration(
 
 
 def get_entry_dates(
-    data: pd.DataFrame, start_date: str, end_date: str, dte_min: int, dte_max: int
+    data: pd.DataFrame,
+    start_date: str,
+    end_date: str,
+    dte_min: int,
+    dte_max: int,
+    calendar: str = "NYSE",
 ) -> List[Tuple[pd.Timestamp, pd.Timestamp]]:
     """One trade per calendar month: earliest trading day where a 3rd-Friday
     expiration falls in [dte_min, dte_max] (inclusive, calendar days).
@@ -70,7 +100,7 @@ def get_entry_dates(
         for candidate in trading_days:
             if candidate < start_ts or candidate > end_ts:
                 continue
-            exp = get_monthly_expiration(candidate, dte_min, dte_max)
+            exp = get_monthly_expiration(candidate, dte_min, dte_max, calendar)
             if exp is not None:
                 result.append((candidate, exp))
                 break
@@ -102,6 +132,7 @@ def build_entry(
     slippage (pay ~5% above mid).
     """
     comm = params["commission_per_leg"]
+    mult = params.get("contract_multiplier", 100.0)
     put_k, call_k, put_mid, call_mid, used_db = engine.get_entry_marks(
         S, T, r, vix, ctx=ctx
     )
@@ -132,13 +163,13 @@ def build_entry(
         long_debit_ps = engine.apply_fill_adj(
             long_put_mid + long_call_mid, "close"
         )
-        net_credit = (short_credit_ps - long_debit_ps) * 100.0 - 4.0 * comm
+        net_credit = (short_credit_ps - long_debit_ps) * mult - 4.0 * comm
         kw["long_put_strike"] = long_put_k
         kw["long_call_strike"] = long_call_k
         kw["long_put_mid_ps"] = long_put_mid
         kw["long_call_mid_ps"] = long_call_mid
     else:
-        net_credit = short_credit_ps * 100.0 - 2.0 * comm
+        net_credit = short_credit_ps * mult - 2.0 * comm
 
     if net_credit <= 0.0:
         return None
@@ -355,7 +386,7 @@ def attempt_defensive_leg_roll(
     new_credit_ps = engine.apply_fill_adj(new_open_mark, "open")
 
     # Net credit must be positive (roll for credit only)
-    net_credit_dollar = (new_credit_ps - close_cost_ps) * 100.0 - 2.0 * comm
+    net_credit_dollar = (new_credit_ps - close_cost_ps) * params.get("contract_multiplier", 100.0) - 2.0 * comm
     if net_credit_dollar <= 0:
         return False
 
@@ -499,13 +530,15 @@ def evaluate_trade_step(
         # directions the same way, under-stating the close cost in synthetic
         # mode. Market mode apply_fill_adj is a no-op — bid/ask is already
         # baked into the marks above.
+        _mult = params.get("contract_multiplier", 100.0)
         close_cost = (
             engine.apply_fill_adj(short_mid_d, "close")
             - engine.apply_fill_adj(long_mid_d, "open")
-        ) * 100.0 + 4.0 * comm
+        ) * _mult + 4.0 * comm
     else:
+        _mult = params.get("contract_multiplier", 100.0)
         mid_d = short_mid_d
-        close_cost = engine.apply_fill_adj(mid_d, "close") * 100.0 + 2.0 * comm
+        close_cost = engine.apply_fill_adj(mid_d, "close") * _mult + 2.0 * comm
     pnl = trade.net_credit - close_cost
     pnl_pct = pnl / trade.net_credit
 
@@ -563,7 +596,7 @@ def evaluate_trade_step(
             r_open,
             ctx=ctx,
         )
-        gap_close_cost = engine.apply_fill_adj(open_mid, "close") * 100.0 + 2.0 * comm
+        gap_close_cost = engine.apply_fill_adj(open_mid, "close") * params.get("contract_multiplier", 100.0) + 2.0 * comm
         gap_pnl_dollar = trade.net_credit - gap_close_cost
 
         if gap_pnl_dollar <= trigger_pnl_dollar:
@@ -609,7 +642,7 @@ def evaluate_trade_step(
         )
         if roll_for_credit and trade.roll_count < max_rolls and not _vix_blocks_roll:
             _roll_dte_max = params.get("roll_dte_max", 60)
-            new_exp = get_monthly_expiration(eval_date, params.get("dte_min", 30), _roll_dte_max)
+            new_exp = get_monthly_expiration(eval_date, params.get("dte_min", 30), _roll_dte_max, params.get("calendar", "NYSE"))
             if new_exp is not None:
                 close_cost_old = close_cost
                 old_pnl = trade.net_credit - close_cost_old
@@ -757,7 +790,7 @@ def evaluate_trade(
     else:
         n_comm = 2
     comm = params["commission_per_leg"]
-    cc = engine.apply_fill_adj(intr, "close") * 100.0 + n_comm * comm
+    cc = engine.apply_fill_adj(intr, "close") * params.get("contract_multiplier", 100.0) + n_comm * comm
     pnl = trade.net_credit - cc
     trade.exit_date = expiration
     trade.exit_dte = 0
@@ -818,6 +851,7 @@ def run_backtest(
             params["end_date"],
             params["dte_min"],
             params["dte_max"],
+            calendar=params.get("calendar", "NYSE"),
         ))
         total_entries = len(entries)
         for idx, (entry_date, expiration) in enumerate(tqdm(entries, desc="Running backtest", unit="trade"), start=1):

@@ -15,6 +15,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from straddle import (PARAMS, compute_metrics, compute_portfolio_metrics, load_market_data, make_engine, run_backtest, run_portfolio_backtest)
 from straddle.data import _DB_FIRST, _db_coverage_end
+from straddle.params import apply_market_preset, MARKET_PRESETS
 from straddle.runs_store import init_db, upsert_run, list_runs, get_run, delete_run, patch_label
 
 logging.basicConfig(level=logging.INFO)
@@ -44,6 +45,7 @@ _PARAM_REMAP = {
 
 class BacktestRequest(BaseModel):
     """Per-field validators return 422 with structured field errors on bad input."""
+    market: Optional[str] = Field(default=None, pattern=r"^(spy|bova11|petr4)$")
     start_date: Optional[str] = Field(default=None, pattern=r"^\d{4}-\d{2}-\d{2}$")
     end_date: Optional[str] = Field(default=None, pattern=r"^\d{4}-\d{2}-\d{2}$")
     initial_balance: Optional[float] = Field(default=None, gt=0)
@@ -180,7 +182,11 @@ def _run_backtest_task(run_id: str, params: dict):
         _results[run_id]["progress"] = info
 
     try:
-        data = load_market_data(start_date=params["start_date"], end_date=params["end_date"])
+        data = load_market_data(
+            start_date=params["start_date"],
+            end_date=params["end_date"],
+            market=params.get("market", "spy"),
+        )
         engine = make_engine(params)
         try:
             if is_portfolio:
@@ -287,10 +293,11 @@ def get_config():
         "call_slope":              {"min": 0,    "max": 2.0,  "step": 0.05},
     }
     enums = {
+        "market":               list(MARKET_PRESETS),
         "strategy_mode":        ["short_strangle", "iron_condor"],
         "pricing_mode":         ["synthetic", "market"],
         "portfolio_mode":       ["laddering", "single"],
-        "cash_investment_mode": ["risk_free", "spy", "blend"],
+        "cash_investment_mode": ["risk_free", "underlying", "blend"],
     }
     capabilities = {
         "supports_iron_condor":  True,
@@ -315,6 +322,10 @@ async def run_backtest_api(background_tasks: BackgroundTasks, req: BacktestReque
         if api_key in overrides:
             overrides[internal_key] = overrides.pop(api_key)
     params.update(overrides)
+    # Apply market preset — sets calendar, db path, vix multiplier, currency, etc.
+    # Caller values already merged above take precedence over preset defaults.
+    market = params.get("market", "spy")
+    params = apply_market_preset(params, market)
     _results[run_id] = {"run_id": run_id, "status": "pending", "params": params}
     background_tasks.add_task(_run_backtest_task, run_id, params)
     return BacktestResponse(run_id=run_id, status="pending", params=params)
