@@ -58,8 +58,8 @@ class BacktestRequest(BaseModel):
     portfolio_mode: Optional[str] = Field(default=None, pattern=r"^(laddering|single)$")
     max_bpr_allocation: Optional[float] = Field(default=None, gt=0, le=1.0)
     entry_cooldown_days: Optional[int] = Field(default=None, ge=0, le=30)
-    cash_investment_mode: Optional[str] = Field(default=None, pattern=r"^(risk_free|spy|blend)$")
-    spy_allocation_pct: Optional[float] = Field(default=None, ge=0.0, le=1.0)
+    cash_investment_mode: Optional[str] = Field(default=None, pattern=r"^(risk_free|underlying|blend)$")
+    underlying_allocation_pct: Optional[float] = Field(default=None, ge=0.0, le=1.0)
     risk_free_rate: Optional[float] = Field(default=None, ge=0, le=0.2)
     manage_at_dte: Optional[int] = Field(default=None, ge=0, le=60)
     roll_for_credit: Optional[bool] = None
@@ -116,10 +116,10 @@ class VixRegimeStatRow(BaseModel):
 class MetricsResponse(BaseModel):
     n_trades: int; initial_balance: float; final_balance: float
     total_return: float; annualized_return: float; sharpe: float; max_drawdown: float
-    calmar: float; win_rate: float; avg_pnl: float; spy_total_return: float
-    spy_annualized_return: float; spy_sharpe: float; spy_max_drawdown: float; spy_calmar: float
-    exit_breakdown: Dict[str, int]; ret_options: float; ret_cash_spy: float
-    ret_cash_rf: float; cagr_options: float; cagr_cash_spy: float; cagr_cash_rf: float
+    calmar: float; win_rate: float; avg_pnl: float; underlying_total_return: float
+    underlying_annualized_return: float; underlying_sharpe: float; underlying_max_drawdown: float; underlying_calmar: float
+    exit_breakdown: Dict[str, int]; ret_options: float; ret_cash_underlying: float
+    ret_cash_rf: float; cagr_options: float; cagr_cash_underlying: float; cagr_cash_rf: float
     peak_positions: Optional[int] = None; avg_positions: Optional[float] = None
     avg_bpr_util_pct: Optional[float] = None; peak_bpr_util_pct: Optional[float] = None
     max_streak: Optional[int] = None
@@ -129,7 +129,7 @@ class MetricsResponse(BaseModel):
 class BacktestResponse(BaseModel):
     run_id: str; status: str; params: Dict[str, Any]; metrics: Optional[MetricsResponse] = None
     trades: Optional[List[TradeSummary]] = None; equity_curve: Optional[Dict[str, float]] = None
-    spy_curve: Optional[Dict[str, float]] = None; bpr_curve: Optional[Dict[str, float]] = None
+    underlying_curve: Optional[Dict[str, float]] = None; bpr_curve: Optional[Dict[str, float]] = None
     pos_count_curve: Optional[Dict[str, int]] = None; vix_curve: Optional[Dict[str, float]] = None
     vix_blocked_dates: Optional[List[str]] = None; error: Optional[str] = None
 
@@ -142,26 +142,26 @@ def _build_metrics_response(metrics: dict, params: dict, trades: list, data: pd.
     short_pnl = sum(t.pnl for t in trades if t.pnl is not None)
     cash_yield_total = metrics.get("cash_yield_earned", 0.0)
     cash_mode = params["cash_investment_mode"]
-    spy_alloc = params["spy_allocation_pct"]
-    if cash_mode == "spy": ret_cash_spy, ret_cash_rf = cash_yield_total / init, 0.0
-    elif cash_mode == "risk_free": ret_cash_spy, ret_cash_rf = 0.0, cash_yield_total / init
-    else: ret_cash_spy, ret_cash_rf = (cash_yield_total * spy_alloc) / init, (cash_yield_total * (1 - spy_alloc)) / init
-    spy_window = data.loc[pd.Timestamp(params["start_date"]) : pd.Timestamp(params["end_date"]), "spy_close"]
-    spy_ann, spy_mdd, spy_calmar = 0.0, 0.0, 0.0
-    if not spy_window.empty:
-        s_vals = spy_window.values; spy_tot = (s_vals[-1] - s_vals[0]) / s_vals[0]
-        spy_ann = _ann(spy_tot); pk = np.maximum.accumulate(s_vals)
-        spy_mdd = float(((s_vals - pk) / pk).min()); spy_calmar = spy_ann / abs(spy_mdd) if spy_mdd != 0 else 0.0
+    underlying_alloc = params["underlying_allocation_pct"]
+    if cash_mode == "underlying": ret_cash_underlying, ret_cash_rf = cash_yield_total / init, 0.0
+    elif cash_mode == "risk_free": ret_cash_underlying, ret_cash_rf = 0.0, cash_yield_total / init
+    else: ret_cash_underlying, ret_cash_rf = (cash_yield_total * underlying_alloc) / init, (cash_yield_total * (1 - underlying_alloc)) / init
+    underlying_window = data.loc[pd.Timestamp(params["start_date"]) : pd.Timestamp(params["end_date"]), "underlying_close"]
+    underlying_ann, underlying_mdd, underlying_calmar = 0.0, 0.0, 0.0
+    if not underlying_window.empty:
+        u_vals = underlying_window.values; underlying_tot = (u_vals[-1] - u_vals[0]) / u_vals[0]
+        underlying_ann = _ann(underlying_tot); pk = np.maximum.accumulate(u_vals)
+        underlying_mdd = float(((u_vals - pk) / pk).min()); underlying_calmar = underlying_ann / abs(underlying_mdd) if underlying_mdd != 0 else 0.0
     return MetricsResponse(
         n_trades=metrics.get("n", 0), initial_balance=init, final_balance=metrics.get("final", init),
         total_return=_clean(metrics.get("tot", 0)), annualized_return=_clean(metrics.get("ann", 0)),
         sharpe=_clean(metrics.get("sharpe", 0)), max_drawdown=_clean(metrics.get("mdd", 0)), calmar=_clean(metrics.get("calmar", 0)),
         win_rate=_clean(metrics.get("wr", 0)), avg_pnl=_clean(metrics.get("avg_pnl", 0)),
-        spy_total_return=_clean(metrics.get("spy_total_return", 0)), spy_annualized_return=_clean(spy_ann),
-        spy_sharpe=_clean(metrics.get("spy_sharpe", 0)), spy_max_drawdown=_clean(spy_mdd), spy_calmar=_clean(spy_calmar),
+        underlying_total_return=_clean(metrics.get("underlying_total_return", 0)), underlying_annualized_return=_clean(underlying_ann),
+        underlying_sharpe=_clean(metrics.get("underlying_sharpe", 0)), underlying_max_drawdown=_clean(underlying_mdd), underlying_calmar=_clean(underlying_calmar),
         exit_breakdown={"PROFIT": metrics.get("n_p", 0), "STOP": metrics.get("n_s", 0), "21DTE": metrics.get("n_d", 0), "EXPIRY": metrics.get("n_e", 0), "ROLLED": metrics.get("n_r", 0), "FORCE_CLOSE": metrics.get("n_f", 0)},
-        ret_options=_clean(short_pnl/init), ret_cash_spy=_clean(ret_cash_spy), ret_cash_rf=_clean(ret_cash_rf),
-        cagr_options=_clean(_ann(short_pnl/init)), cagr_cash_spy=_clean(_ann(ret_cash_spy)), cagr_cash_rf=_clean(_ann(ret_cash_rf)),
+        ret_options=_clean(short_pnl/init), ret_cash_underlying=_clean(ret_cash_underlying), ret_cash_rf=_clean(ret_cash_rf),
+        cagr_options=_clean(_ann(short_pnl/init)), cagr_cash_underlying=_clean(_ann(ret_cash_underlying)), cagr_cash_rf=_clean(_ann(ret_cash_rf)),
         peak_positions=metrics.get("peak_positions"), avg_positions=metrics.get("avg_positions"),
         avg_bpr_util_pct=_clean(metrics.get("avg_bpr_util", 0) / 100.0) if "avg_bpr_util" in metrics else None,
         peak_bpr_util_pct=_clean(metrics.get("peak_bpr_util", 0) / 100.0) if "peak_bpr_util" in metrics else None,
@@ -200,11 +200,11 @@ def _run_backtest_task(run_id: str, params: dict):
             start_ts = pd.Timestamp(params["start_date"])
             end_ts   = pd.Timestamp(params["end_date"])
             vix_window = data.loc[start_ts:end_ts, "vix_close"]
-            spy_series = data.loc[start_ts:end_ts, "spy_close"]
-            spy_curve = (
-                {str(k.date()): float(v / float(spy_series.iloc[0]) * params["initial_balance"])
-                 for k, v in spy_series.items()}
-                if not spy_series.empty else {}
+            underlying_series = data.loc[start_ts:end_ts, "underlying_close"]
+            underlying_curve = (
+                {str(k.date()): float(v / float(underlying_series.iloc[0]) * params["initial_balance"])
+                 for k, v in underlying_series.items()}
+                if not underlying_series.empty else {}
             )
             vix_curve = {str(k.date()): float(v) for k, v in vix_window.items()}
 
@@ -233,7 +233,7 @@ def _run_backtest_task(run_id: str, params: dict):
                 "metrics": metrics_resp.model_dump(),
                 "trades": trade_rows,
                 "equity_curve": eq_curve,
-                "spy_curve": spy_curve,
+                "underlying_curve": underlying_curve,
                 "bpr_curve": bpr_curve,
                 "pos_count_curve": pos_curve,
                 "vix_curve": vix_curve,
@@ -334,7 +334,7 @@ def get_backtest_result(run_id: str):
         run_id=run_id, status=stored["status"], params=stored["params"],
         error=result.get("error"),
         **{k: result.get(k) for k in (
-            "metrics", "trades", "equity_curve", "spy_curve",
+            "metrics", "trades", "equity_curve", "underlying_curve",
             "bpr_curve", "pos_count_curve", "vix_curve", "vix_blocked_dates",
         ) if result.get(k) is not None},
     )

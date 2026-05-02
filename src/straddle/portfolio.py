@@ -290,15 +290,15 @@ def run_portfolio_backtest(
         cash_yield_annual = params.get("cash_yield_annual", 0.04)
         daily_rf_rate = cash_yield_annual / 252.0
         cash_investment_mode = params["cash_investment_mode"]
-        spy_allocation_pct = params["spy_allocation_pct"]
-        prev_spy_close: Optional[float] = None
+        underlying_allocation_pct = params["underlying_allocation_pct"]
+        prev_underlying_close: Optional[float] = None
 
         # ── Main daily loop ─────────────────────────────────────────────────
         sim_dates_list = list(sim_dates)
         total_days = len(sim_dates_list)
         for _day_idx, eval_date in enumerate(tqdm(sim_dates_list, desc="Simulating portfolio", unit="day"), start=1):
             row = data.loc[eval_date]
-            spy_close = float(row["spy_close"])
+            underlying_close = float(row["underlying_close"])
             vix_d = float(row["vix_close"])
             r_d = float(row.get("risk_free_rate", RISK_FREE_RATE_DEFAULT))
 
@@ -335,7 +335,7 @@ def run_portfolio_backtest(
                         # Calculate BPR for the new trade.
                         new_bpr = calculate_margin(
                             nt,
-                            spy_close,
+                            underlying_close,
                             put_ask=engine.apply_fill_adj(nt.put_mid_ps, "close"),
                             call_ask=engine.apply_fill_adj(nt.call_mid_ps, "close"),
                         )
@@ -367,7 +367,7 @@ def run_portfolio_backtest(
                     # ignores the ask kwargs; for strangles it varies daily.
                     pos.current_bpr = calculate_margin(
                         t,
-                        spy_close,
+                        underlying_close,
                         put_ask=engine.apply_fill_adj(res.put_mid_d, "close"),
                         call_ask=engine.apply_fill_adj(res.call_mid_d, "close"),
                     )
@@ -390,7 +390,7 @@ def run_portfolio_backtest(
                 T_new = entry_dte / 365.0
                 entry_ctx = PricingContext(eval_date=eval_date, expiration=new_exp)
                 kw = build_entry(
-                    engine, spy_close, T_new, r_d, vix_d, entry_dte, entry_ctx, params
+                    engine, underlying_close, T_new, r_d, vix_d, entry_dte, entry_ctx, params
                 )
                 if kw is not None:
                     # Build a provisional trade to compute margin. trade_num is
@@ -405,7 +405,7 @@ def run_portfolio_backtest(
                     )
                     actual_bpr = calculate_margin(
                         new_trade,
-                        spy_close,
+                        underlying_close,
                         put_ask=engine.apply_fill_adj(kw["put_mid_ps"], "close"),
                         call_ask=engine.apply_fill_adj(kw["call_mid_ps"], "close"),
                     )
@@ -436,23 +436,23 @@ def run_portfolio_backtest(
                             + n_comm * comm_per_leg
                         )
 
-            # ── Step 4: Cash return (risk-free / SPY / blend) ───────────────
+            # ── Step 4: Cash return (risk-free / underlying / blend) ────────
             if portfolio.available_cash > 0:
-                spy_daily_ret = (
-                    (spy_close / prev_spy_close - 1.0) if prev_spy_close is not None else 0.0
+                underlying_daily_ret = (
+                    (underlying_close / prev_underlying_close - 1.0) if prev_underlying_close is not None else 0.0
                 )
-                if cash_investment_mode == "spy":
-                    cash_daily_return = spy_daily_ret
+                if cash_investment_mode == "underlying":
+                    cash_daily_return = underlying_daily_ret
                 elif cash_investment_mode == "blend":
                     cash_daily_return = (
-                        spy_allocation_pct * spy_daily_ret
-                        + (1.0 - spy_allocation_pct) * daily_rf_rate
+                        underlying_allocation_pct * underlying_daily_ret
+                        + (1.0 - underlying_allocation_pct) * daily_rf_rate
                     )
                 else:  # "risk_free"
                     cash_daily_return = daily_rf_rate
                 portfolio.available_cash *= (1.0 + cash_daily_return)
 
-            prev_spy_close = spy_close
+            prev_underlying_close = underlying_close
 
             # ── Step 5: Record daily state ───────────────────────────────────
             portfolio.record_daily_state(eval_date, portfolio.total_unrealized_liability)
@@ -543,13 +543,13 @@ def plot_portfolio_backtest(
         row=1, col=1
     )
     
-    # SPY benchmark
+    # Underlying benchmark
     if data is not None:
-        spy_eq = data.loc[total_dates[0]:total_dates[-1], "spy_close"]
-        if not spy_eq.empty:
-            spy_eq = spy_eq / float(spy_eq.iloc[0]) * params["initial_balance"]
+        underlying_eq = data.loc[total_dates[0]:total_dates[-1], "underlying_close"]
+        if not underlying_eq.empty:
+            underlying_eq = underlying_eq / float(underlying_eq.iloc[0]) * params["initial_balance"]
             fig.add_trace(
-                go.Scatter(x=spy_eq.index, y=spy_eq.values, name="SPY B&H", line=dict(color="#e67e22", width=1.5, dash="dash"), opacity=0.7),
+                go.Scatter(x=underlying_eq.index, y=underlying_eq.values, name="B&H", line=dict(color="#e67e22", width=1.5, dash="dash"), opacity=0.7),
                 row=1, col=1
             )
 

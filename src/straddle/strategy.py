@@ -445,7 +445,7 @@ def evaluate_trade_step(
 
     expiration = trade.expiration
     row_d = data.loc[eval_date]
-    S_d = float(row_d["spy_close"])
+    S_d = float(row_d["underlying_close"])
     vix_d = float(row_d["vix_close"])
     r_d = float(row_d.get("risk_free_rate", r_default))
     trade.max_vix = max(trade.max_vix or 0, vix_d)
@@ -531,30 +531,30 @@ def evaluate_trade_step(
         eod_pnl_dollar = pnl
 
         prev_idx = data.index.get_loc(eval_date)
-        spy_hi = float(row_d.get("spy_high", S_d))
-        spy_lo = float(row_d.get("spy_low", S_d))
-        spy_prev_close = (
-            float(data.iloc[prev_idx - 1]["spy_close"]) if prev_idx > 0 else S_d
+        underlying_hi = float(row_d.get("underlying_high", S_d))
+        underlying_lo = float(row_d.get("underlying_low", S_d))
+        underlying_prev_close = (
+            float(data.iloc[prev_idx - 1]["underlying_close"]) if prev_idx > 0 else S_d
         )
         daily_range_pct = (
-            (spy_hi - spy_lo) / spy_prev_close if spy_prev_close > 0 else 0.0
+            (underlying_hi - underlying_lo) / underlying_prev_close if underlying_prev_close > 0 else 0.0
         )
 
-        spy_open = float(row_d.get("spy_open", S_d))
+        underlying_open = float(row_d.get("underlying_open", S_d))
         vix_prev_raw = (
             float(data.iloc[prev_idx - 1]["vix_close"]) / 100.0
             if prev_idx > 0
             else vix_d / 100.0
         )
         gap_pct = (
-            abs(spy_open - spy_prev_close) / spy_prev_close
-            if spy_prev_close > 0
+            abs(underlying_open - underlying_prev_close) / underlying_prev_close
+            if underlying_prev_close > 0
             else 0.0
         )
 
         r_open = float(row_d.get("risk_free_rate", r_default))
         open_mid = engine.get_gap_open_mark(
-            spy_open,
+            underlying_open,
             vix_prev_raw,
             gap_pct,
             trade.active_put_strike,
@@ -745,7 +745,7 @@ def evaluate_trade(
 
     # Fallback: loop ended without an intra-period exit — price at expiration
     last = data.index[data.index <= expiration][-1]
-    S_e = float(data.loc[last, "spy_close"])
+    S_e = float(data.loc[last, "underlying_close"])
     intr = max(trade.active_put_strike - S_e, 0.0) + max(
         S_e - trade.active_call_strike, 0.0
     )
@@ -827,7 +827,7 @@ def run_backtest(
                 skipped_entries += 1
                 continue  # prior chain still open; skip this monthly entry
             row = data.loc[entry_date]
-            S = float(row["spy_close"])
+            S = float(row["underlying_close"])
             vix = float(row["vix_close"])
             if vix_filter_enabled and vix > vix_entry_max:
                 vix_blocked_dates.append(str(entry_date.date()))

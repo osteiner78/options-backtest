@@ -64,8 +64,8 @@ export function renderPerformanceBar() {
 
   const portPnl = metrics.final_balance - init;
   const optPnl  = metrics.ret_options  * init;
-  const spyPnl  = metrics.ret_cash_spy * init;
-  const rfPnl   = metrics.ret_cash_rf  * init;
+  const underlyingPnl = metrics.ret_cash_underlying * init;
+  const rfPnl         = metrics.ret_cash_rf  * init;
 
   // ── Options component: MaxDD and Calmar derived from cumulative trade P&L curve ──
   // computeOptionsMDD returns a POSITIVE fraction (magnitude of max drawdown).
@@ -73,14 +73,14 @@ export function renderPerformanceBar() {
   const optMDD    = computeOptionsMDD(trades, init);
   const optCalmar = optMDD > 1e-4 ? metrics.cagr_options / optMDD : null;
 
-  // ── SPY component: same underlying returns as SPY B&H, different allocation size ──
-  // Sharpe is scale-invariant → same as SPY B&H.
-  // MaxDD % is the same underlying drawdown sequence → same as SPY B&H.
-  // Calmar uses cagr_cash_spy (component CAGR, differs from SPY B&H CAGR).
-  // spy_max_drawdown is NEGATIVE (standard convention), so use Math.abs for Calmar.
-  const spySharpe  = metrics.spy_sharpe;
-  const spyMDD     = metrics.spy_max_drawdown;  // negative fraction, e.g. -0.254
-  const spyCalmar  = Math.abs(spyMDD) > 1e-4 ? metrics.cagr_cash_spy / Math.abs(spyMDD) : null;
+  // ── Underlying component: same returns as B&H, different allocation size ──
+  // Sharpe is scale-invariant → same as B&H.
+  // MaxDD % is the same underlying drawdown sequence → same as B&H.
+  // Calmar uses cagr_cash_underlying (component CAGR, differs from B&H CAGR).
+  // underlying_max_drawdown is NEGATIVE (standard convention), so use Math.abs for Calmar.
+  const underlyingSharpe = metrics.underlying_sharpe;
+  const underlyingMDD    = metrics.underlying_max_drawdown;  // negative fraction
+  const underlyingCalmar = Math.abs(underlyingMDD) > 1e-4 ? metrics.cagr_cash_underlying / Math.abs(underlyingMDD) : null;
 
   // ── Risk-free: monotonically increasing → MaxDD = 0, Sharpe ≈ 0, Calmar = ∞ ──
   // Not meaningful to display; leave as --
@@ -118,13 +118,13 @@ export function renderPerformanceBar() {
           </tr>
 
           <tr class="pt-sub">
-            <td class="ptl">  o/w SPY</td>
-            <td class="r">${formatSignedPct(metrics.ret_cash_spy)}</td>
-            <td class="r">${formatPct(metrics.cagr_cash_spy)}</td>
-            <td class="r c-amb">${formatNum(spySharpe)}</td>
-            <td class="r c-neg">${formatPct(spyMDD)}</td>
-            <td class="r c-amb">${spyCalmar != null ? formatNum(spyCalmar) : '--'}</td>
-            <td class="r ${spyPnl >= 0 ? 'c-pos' : 'c-neg'}">${formatPnl(spyPnl)}</td>
+            <td class="ptl">  o/w underlying</td>
+            <td class="r">${formatSignedPct(metrics.ret_cash_underlying)}</td>
+            <td class="r">${formatPct(metrics.cagr_cash_underlying)}</td>
+            <td class="r c-amb">${formatNum(underlyingSharpe)}</td>
+            <td class="r c-neg">${formatPct(underlyingMDD)}</td>
+            <td class="r c-amb">${underlyingCalmar != null ? formatNum(underlyingCalmar) : '--'}</td>
+            <td class="r ${underlyingPnl >= 0 ? 'c-pos' : 'c-neg'}">${formatPnl(underlyingPnl)}</td>
           </tr>
 
           <tr class="pt-sub">
@@ -136,13 +136,13 @@ export function renderPerformanceBar() {
           </tr>
 
           <tr class="pt-spy">
-            <td class="ptl c-blue fw6">SPY B&amp;H</td>
-            <td class="r c-blue fw6">${formatSignedPct(metrics.spy_total_return)}</td>
-            <td class="r c-blue fw6">${formatPct(metrics.spy_annualized_return)}</td>
-            <td class="r c-blue fw6">${formatNum(metrics.spy_sharpe)}</td>
-            <td class="r c-blue fw6">${formatPct(metrics.spy_max_drawdown)}</td>
-            <td class="r c-blue fw6">${formatNum(metrics.spy_calmar)}</td>
-            <td class="r c-blue fw6">${formatPnl(init * metrics.spy_total_return)}</td>
+            <td class="ptl c-blue fw6">B&amp;H</td>
+            <td class="r c-blue fw6">${formatSignedPct(metrics.underlying_total_return)}</td>
+            <td class="r c-blue fw6">${formatPct(metrics.underlying_annualized_return)}</td>
+            <td class="r c-blue fw6">${formatNum(metrics.underlying_sharpe)}</td>
+            <td class="r c-blue fw6">${formatPct(metrics.underlying_max_drawdown)}</td>
+            <td class="r c-blue fw6">${formatNum(metrics.underlying_calmar)}</td>
+            <td class="r c-blue fw6">${formatPnl(init * metrics.underlying_total_return)}</td>
           </tr>
         </tbody>
       </table>

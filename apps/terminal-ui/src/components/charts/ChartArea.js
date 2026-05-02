@@ -20,11 +20,11 @@ export function getPlotViewportRect() {
 }
 
 const legends = {
-  equity:    `<div class="leg-item"><div class="leg-rect" style="background:var(--pos)"></div>Portfolio P&L ($)</div><div class="leg-item"><div class="leg-line" style="background:var(--a2);opacity:0.8"></div>SPY B&H P&L ($)</div><div class="leg-item"><div class="leg-rect" style="background:var(--neg);opacity:0.7"></div>Drawdown ($)</div>`,
+  equity:    `<div class="leg-item"><div class="leg-rect" style="background:var(--pos)"></div>Portfolio P&L ($)</div><div class="leg-item"><div class="leg-line" style="background:var(--a2);opacity:0.8"></div>B&H P&L ($)</div><div class="leg-item"><div class="leg-rect" style="background:var(--neg);opacity:0.7"></div>Drawdown ($)</div>`,
   bpr:       `<div class="leg-item"><div class="leg-rect" style="background:var(--a2)"></div>Utilized BPR ($)</div><div class="leg-item"><div class="leg-line" style="background:var(--neg);opacity:0.6;border-top:2px dashed var(--neg)"></div>BPR Cap</div>`,
   positions: `<div class="leg-item"><div class="leg-line" style="background:var(--a4)"></div>Open Positions</div>`,
   vix:       `<div class="leg-item" style="gap:5px;"><div style="width:10px;height:10px;border-radius:50%;background:var(--a2)"></div>Entry</div><div class="leg-item" style="gap:5px;"><div style="width:10px;height:10px;border-radius:50%;border:1.5px solid var(--neg);background:transparent"></div>Skipped</div><div class="leg-item"><div class="leg-line" style="background:var(--neg);opacity:0.7"></div>VIX Max</div><div class="leg-sep"></div><div class="leg-item" style="gap:4px;"><div style="width:8px;height:8px;background:var(--a2);opacity:0.5"></div><span style="font-size:9.5px">LOW &lt;15</span></div><div class="leg-item" style="gap:4px;"><div style="width:8px;height:8px;background:var(--a1);opacity:0.5"></div><span style="font-size:9.5px">NORMAL 15–25</span></div><div class="leg-item" style="gap:4px;"><div style="width:8px;height:8px;background:var(--a3);opacity:0.5"></div><span style="font-size:9.5px">ELEVATED 25–35</span></div><div class="leg-item" style="gap:4px;"><div style="width:8px;height:8px;background:var(--neg);opacity:0.5"></div><span style="font-size:9.5px">HIGH &gt;35</span></div>`,
-  pnl:       `<div class="leg-item"><div class="leg-rect" style="background:var(--pos)"></div>Strangles</div><div class="leg-item"><div class="leg-rect" style="background:var(--a2)"></div>SPY Cash</div><div class="leg-item"><div class="leg-rect" style="background:var(--a3)"></div>Risk-Free Cash</div><span style="font-size:9px;color:var(--dim);margin-left:4px">· SPY/RF split is approximate</span>`,
+  pnl:       `<div class="leg-item"><div class="leg-rect" style="background:var(--pos)"></div>Strangles</div><div class="leg-item"><div class="leg-rect" style="background:var(--a2)"></div>Underlying Cash</div><div class="leg-item"><div class="leg-rect" style="background:var(--a3)"></div>Risk-Free Cash</div><span style="font-size:9px;color:var(--dim);margin-left:4px">· underlying/RF split is approximate</span>`,
 };
 
 export function renderChartArea() {
@@ -209,13 +209,13 @@ export function drawChart() {
   if (activeTab === 'equity') {
     const dates = Object.keys(results.equity_curve);
     const eq    = Object.values(results.equity_curve);
-    const spy   = results.spy_curve ? Object.values(results.spy_curve) : eq.map(() => null);
+    const underlying   = results.underlying_curve ? Object.values(results.underlying_curve) : eq.map(() => null);
     const ts    = dates.map(tsFromDate);
     const init  = results.metrics.initial_balance;
 
     // Convert to P&L ($) relative to initial_balance
-    const eq_pnl  = eq.map(v => v - init);
-    const spy_pnl = spy.map(v => v != null ? v - init : null);
+    const eq_pnl         = eq.map(v => v - init);
+    const underlying_pnl = underlying.map(v => v != null ? v - init : null);
 
     // Drawdown in dollars: current equity minus running peak
     const peak = [eq[0]];
@@ -232,14 +232,14 @@ export function drawChart() {
             positionTip(tip, u, `
               <div class="ctt-date">${fmtDate(ts[i])}</div>
               <div class="ctt-row"><span style="color:var(--pos)">Portfolio P&L</span><span>${fmtPnl(eq_pnl[i])}</span></div>
-              <div class="ctt-row"><span style="color:var(--a2)">SPY B&H P&L</span><span>${spy_pnl[i] != null ? fmtPnl(spy_pnl[i]) : '--'}</span></div>
+              <div class="ctt-row"><span style="color:var(--a2)">B&H P&L</span><span>${underlying_pnl[i] != null ? fmtPnl(underlying_pnl[i]) : '--'}</span></div>
               <div class="ctt-row"><span style="color:var(--neg)">Drawdown</span><span>${fmtPnl(dd_dollars[i])} · ${((dd_dollars[i] / (peak[i] || 1)) * 100).toFixed(1)}%</span></div>
             `);
           }],
           draw: [drawYearSeps],
         },
       },
-      [ts, eq_pnl, spy_pnl, dd_dollars],
+      [ts, eq_pnl, underlying_pnl, dd_dollars],
       mountEl,
     );
     mountEl.addEventListener('mouseleave', () => { tip.style.display = 'none'; });
@@ -358,14 +358,14 @@ export function drawChart() {
     const cum_options = dates.map(d => { optRunning += (dailyOptPnl[d] || 0); return optRunning; });
 
     const cum_cash = cum_total.map((v, i) => v - cum_options[i]);
-    const cashMode = (params.cash_investment_mode || 'spy').toLowerCase();
-    const spyPct   = cashMode === 'spy' ? 1.0 : cashMode === 'risk_free' ? 0.0 : (params.spy_allocation_pct || 0.5);
-    const cum_rf   = cum_cash.map(v => v * (1 - spyPct));
-    const cum_spy  = cum_cash.map(v => v * spyPct);
+    const cashMode       = (params.cash_investment_mode || 'underlying').toLowerCase();
+    const underlyingPct  = cashMode === 'underlying' ? 1.0 : cashMode === 'risk_free' ? 0.0 : (params.underlying_allocation_pct || 0.5);
+    const cum_rf         = cum_cash.map(v => v * (1 - underlyingPct));
+    const cum_underlying = cum_cash.map(v => v * underlyingPct);
 
-    const zeros     = dates.map(() => 0);
-    const stack_rf  = cum_rf;
-    const stack_spy = cum_rf.map((v, i) => v + cum_spy[i]);
+    const zeros              = dates.map(() => 0);
+    const stack_rf           = cum_rf;
+    const stack_underlying   = cum_rf.map((v, i) => v + cum_underlying[i]);
     const dimColor  = getColor('--dim');
 
     const tip = makeTip(mountEl);
@@ -379,8 +379,8 @@ export function drawChart() {
               <div class="ctt-date">${fmtDate(ts[i])}</div>
               <div class="ctt-row"><span style="color:var(--fg3)">Total P&L</span><span>${fmtPnl(cum_total[i])}</span></div>
               <div class="ctt-row"><span style="color:var(--pos)">Strangles</span><span>${fmtPnl(cum_options[i])}</span></div>
-              ${spyPct > 0 ? `<div class="ctt-row"><span style="color:var(--a2)">SPY Cash</span><span>${fmtPnl(cum_spy[i])}</span></div>` : ''}
-              ${spyPct < 1 ? `<div class="ctt-row"><span style="color:var(--a3)">Risk-Free</span><span>${fmtPnl(cum_rf[i])}</span></div>` : ''}
+              ${underlyingPct > 0 ? `<div class="ctt-row"><span style="color:var(--a2)">Underlying Cash</span><span>${fmtPnl(cum_underlying[i])}</span></div>` : ''}
+              ${underlyingPct < 1 ? `<div class="ctt-row"><span style="color:var(--a3)">Risk-Free</span><span>${fmtPnl(cum_rf[i])}</span></div>` : ''}
             `);
           }],
           draw: [
@@ -389,7 +389,7 @@ export function drawChart() {
           ],
         },
       },
-      [ts, zeros, stack_rf, stack_spy, cum_total],
+      [ts, zeros, stack_rf, stack_underlying, cum_total],
       mountEl,
     );
     mountEl.addEventListener('mouseleave', () => { tip.style.display = 'none'; });
@@ -439,7 +439,7 @@ function equityOpts(w, h) {
     series: [
       { label: 'Date' },
       { label: 'Portfolio P&L', stroke: pos, width: 2, fill: pos + '30' },
-      { label: 'SPY B&H P&L',   stroke: a2,  width: 1.5, dash: [6, 4] },
+      { label: 'B&H P&L',       stroke: a2,  width: 1.5, dash: [6, 4] },
       { label: 'Drawdown $',    stroke: neg, width: 1.5, fill: neg + '35' },
     ],
   };
@@ -538,7 +538,7 @@ function pnlOpts(w, h) {
       {},
       { stroke: 'transparent', fill: 'transparent', width: 0 },
       { label: 'RF',      stroke: a3 + 'aa', width: 1, fill: a3 + '55' },
-      { label: 'SPY',     stroke: a2 + 'aa', width: 1, fill: a2 + '55' },
+      { label: 'Underlying', stroke: a2 + 'aa', width: 1, fill: a2 + '55' },
       { label: 'Options', stroke: pos,        width: 2, fill: pos + '44' },
     ],
     bands: [

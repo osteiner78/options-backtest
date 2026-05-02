@@ -267,7 +267,7 @@ class SyntheticEngine:
 
     def get_gap_open_mark(
         self,
-        spy_open: float,
+        underlying_open: float,
         vix_prev_raw: float,
         gap_pct: float,
         put_k: float,
@@ -286,13 +286,13 @@ class SyntheticEngine:
             vix_open = vix_prev * (1 + gap_vix_multiplier * |gap_pct|)
 
         Args:
-            spy_open:     SPY open price on the gap day
-            vix_prev_raw: Prior day VIX sigma (vix_close / 100.0)
-            gap_pct:      |spy_open - spy_prev_close| / spy_prev_close
-            put_k / call_k: strikes
-            T_d:          Time to expiry in years
-            r_open:       Risk-free rate at the open
-            ctx:          Optional PricingContext
+            underlying_open: Underlying open price on the gap day
+            vix_prev_raw:    Prior day VIX sigma (vix_close / 100.0)
+            gap_pct:         |underlying_open - prev_close| / prev_close
+            put_k / call_k:  strikes
+            T_d:             Time to expiry in years
+            r_open:          Risk-free rate at the open
+            ctx:             Optional PricingContext
         """
         vix_open_sigma = (
             vix_prev_raw * (1.0 + self.gap_mult * gap_pct)
@@ -301,8 +301,8 @@ class SyntheticEngine:
         # Estimate actual current deltas at the gap-open price, mirroring
         # get_daily_mark — using the static entry delta (0.16) is wrong when
         # a leg has moved significantly (e.g. from 0.16Δ to 0.45Δ on a crash).
-        d_put_est = bs_delta(spy_open, put_k, T_d, r_open, vix_open_sigma, "put")
-        d_call_est = bs_delta(spy_open, call_k, T_d, r_open, vix_open_sigma, "call")
+        d_put_est = bs_delta(underlying_open, put_k, T_d, r_open, vix_open_sigma, "put")
+        d_call_est = bs_delta(underlying_open, call_k, T_d, r_open, vix_open_sigma, "call")
 
         sigma_put = apply_skew(
             vix_open_sigma, d_put_est, "put", self.put_slope, self.call_slope
@@ -310,8 +310,8 @@ class SyntheticEngine:
         sigma_call = apply_skew(
             vix_open_sigma, d_call_est, "call", self.put_slope, self.call_slope
         )
-        return bs_price(spy_open, put_k, T_d, r_open, sigma_put, "put") + bs_price(
-            spy_open, call_k, T_d, r_open, sigma_call, "call"
+        return bs_price(underlying_open, put_k, T_d, r_open, sigma_put, "put") + bs_price(
+            underlying_open, call_k, T_d, r_open, sigma_call, "call"
         )
 
 
@@ -436,7 +436,7 @@ class MarketEngine:
 
     def get_gap_open_mark(
         self,
-        spy_open: float,
+        underlying_open: float,
         vix_prev_raw: float,
         gap_pct: float,
         put_k: float,
@@ -447,7 +447,7 @@ class MarketEngine:
     ) -> float:
         """Always synthetic -- DB is EOD-only."""
         return self._synth.get_gap_open_mark(
-            spy_open, vix_prev_raw, gap_pct, put_k, call_k, T_d, r_open, ctx
+            underlying_open, vix_prev_raw, gap_pct, put_k, call_k, T_d, r_open, ctx
         )
 
     def get_daily_delta(

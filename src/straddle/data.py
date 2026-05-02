@@ -29,14 +29,15 @@ def load_market_data(
 
     Returns:
         DataFrame indexed by date with columns:
-        ``spy_open``, ``spy_high``, ``spy_low``, ``spy_close``,
+        ``underlying_open``, ``underlying_high``, ``underlying_low``, ``underlying_close``,
         ``vix_close``, ``risk_free_rate``.
     """
     # ── Path Setup ───────────────────────────────────────────────────────
     if cache_dir is None:
         cache_dir = str(Path(__file__).resolve().parent.parent.parent / "data")
     Path(cache_dir).mkdir(parents=True, exist_ok=True)
-    cache_path = Path(cache_dir) / "market_data_master.parquet"
+    # v2 cache uses generic underlying_* column names; old spy_* cache is ignored
+    cache_path = Path(cache_dir) / "market_data_master_v2.parquet"
 
     # ── Load Cache ───────────────────────────────────────────────────────
     master_df = pd.DataFrame()
@@ -102,10 +103,10 @@ def load_market_data(
                 irx_raw = raw
 
             new_data = pd.DataFrame({
-                "spy_open": spy_raw["Open"],
-                "spy_high": spy_raw["High"],
-                "spy_low": spy_raw["Low"],
-                "spy_close": spy_raw["Close"],
+                "underlying_open":  spy_raw["Open"],
+                "underlying_high":  spy_raw["High"],
+                "underlying_low":   spy_raw["Low"],
+                "underlying_close": spy_raw["Close"],
                 "vix_close": vix_raw["Close"],
                 "risk_free_rate": irx_raw["Close"] / 100.0,
             })
@@ -117,7 +118,7 @@ def load_market_data(
 
             # Post-processing (ffill RF rate)
             master_df["risk_free_rate"] = master_df["risk_free_rate"].ffill().bfill().fillna(RISK_FREE_RATE_DEFAULT)
-            master_df = master_df.dropna(subset=["spy_close", "vix_close"])
+            master_df = master_df.dropna(subset=["underlying_close", "vix_close"])
 
             # Save updated master
             master_df.to_parquet(cache_path)

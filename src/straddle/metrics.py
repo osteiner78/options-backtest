@@ -15,30 +15,29 @@ from straddle.params import RISK_FREE_RATE_DEFAULT
 # ── Internal Helpers ─────────────────────────────────────────────────────
 
 def _compute_benchmark_stats(data: pd.DataFrame, params: dict) -> Dict:
-    """Compute SPY benchmark total return and Sharpe."""
-    # Note: spy_close is unadjusted (actual market price), so spy_total_return
-    # reflects price appreciation only -- dividends (~1.3%/yr) are excluded.
-    spy_window = data.loc[
+    """Compute underlying benchmark total return and Sharpe."""
+    # Note: underlying_close is unadjusted (actual market price), so
+    # underlying_total_return reflects price appreciation only.
+    underlying_window = data.loc[
         pd.Timestamp(params["start_date"]) : pd.Timestamp(params["end_date"]),
-        "spy_close",
+        "underlying_close",
     ]
-    if spy_window.empty:
-        return {"spy_total_return": 0.0, "spy_sharpe": 0.0}
+    if underlying_window.empty:
+        return {"underlying_total_return": 0.0, "underlying_sharpe": 0.0}
 
-    spy_start_price = float(spy_window.iloc[0])
-    spy_end_price = float(spy_window.iloc[-1])
-    spy_total_return = (spy_end_price - spy_start_price) / spy_start_price
+    start_price = float(underlying_window.iloc[0])
+    end_price = float(underlying_window.iloc[-1])
+    underlying_total_return = (end_price - start_price) / start_price
 
-    # SPY daily returns for Sharpe (excess of daily risk-free rate)
-    _spy_daily = spy_window.pct_change().dropna()
-    if _spy_daily.empty:
-        return {"spy_total_return": spy_total_return, "spy_sharpe": 0.0}
+    _daily = underlying_window.pct_change().dropna()
+    if _daily.empty:
+        return {"underlying_total_return": underlying_total_return, "underlying_sharpe": 0.0}
 
-    _spy_rf = data.loc[_spy_daily.index, "risk_free_rate"] / 252
-    spy_sharpe = float(
-        ((_spy_daily - _spy_rf).mean() / _spy_daily.std(ddof=1)) * np.sqrt(252)
+    _rf = data.loc[_daily.index, "risk_free_rate"] / 252
+    underlying_sharpe = float(
+        ((_daily - _rf).mean() / _daily.std(ddof=1)) * np.sqrt(252)
     )
-    return {"spy_total_return": spy_total_return, "spy_sharpe": spy_sharpe}
+    return {"underlying_total_return": underlying_total_return, "underlying_sharpe": underlying_sharpe}
 
 
 def _compute_trade_stats(trades: List) -> Dict:

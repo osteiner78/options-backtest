@@ -58,13 +58,13 @@ def sample_data():
     """Minimal market data DataFrame for unit tests (no yfinance calls)."""
     dates = pd.bdate_range("2024-01-02", "2024-03-29")
     np.random.seed(42)
-    spy_close = 470.0 + np.cumsum(np.random.randn(len(dates)) * 2.0)
+    underlying_close = 470.0 + np.cumsum(np.random.randn(len(dates)) * 2.0)
     return pd.DataFrame(
         {
-            "spy_open": spy_close + np.random.randn(len(dates)) * 0.5,
-            "spy_high": spy_close + np.abs(np.random.randn(len(dates)) * 1.5),
-            "spy_low": spy_close - np.abs(np.random.randn(len(dates)) * 1.5),
-            "spy_close": spy_close,
+            "underlying_open":  underlying_close + np.random.randn(len(dates)) * 0.5,
+            "underlying_high":  underlying_close + np.abs(np.random.randn(len(dates)) * 1.5),
+            "underlying_low":   underlying_close - np.abs(np.random.randn(len(dates)) * 1.5),
+            "underlying_close": underlying_close,
             "vix_close": 14.0 + np.random.randn(len(dates)) * 2.0,
             "risk_free_rate": 0.045,
         },

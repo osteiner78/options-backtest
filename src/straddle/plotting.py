@@ -86,19 +86,19 @@ def plot_backtest(
     ax1 = fig.add_subplot(4, 2, (1, 2))
     ax1.plot(eq_dates, eq_vals, color="#2c3e50", lw=2, label="Strangle", zorder=3)
     # SPY buy-and-hold normalised to same starting balance
-    spy_eq = data.loc[
+    underlying_eq = data.loc[
         pd.Timestamp(params["start_date"]) : pd.Timestamp(params["end_date"]),
-        "spy_close",
+        "underlying_close",
     ]
-    spy_eq = spy_eq / float(spy_eq.iloc[0]) * params["initial_balance"]
+    underlying_eq = underlying_eq / float(underlying_eq.iloc[0]) * params["initial_balance"]
     ax1.plot(
-        spy_eq.index,
-        spy_eq.values,
+        underlying_eq.index,
+        underlying_eq.values,
         color="#e67e22",
         lw=1.5,
         ls="--",
         alpha=0.8,
-        label="SPY B&H",
+        label="B&H",
         zorder=2,
     )
     ax1.axhline(params["initial_balance"], color="grey", ls="--", lw=0.8, alpha=0.7)

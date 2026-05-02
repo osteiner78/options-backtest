@@ -35,7 +35,7 @@ class TestComputeMetrics:
             "n_e", "wr_e", "avg_e",
             "n_r", "wr_r", "avg_r",
             "n_chains", "wr_chain", "avg_chain",
-            "spy_total_return", "spy_sharpe",
+            "underlying_total_return", "underlying_sharpe",
         }
         assert expected_keys.issubset(set(metrics.keys()))
 
@@ -74,7 +74,7 @@ class TestComputeMetrics:
         assert metrics["n"] == 4
         assert metrics["wr"] == 0.75  # 3 out of 4
 
-    def test_spy_benchmark_included(self, sample_trade, params, sample_data):
+    def test_underlying_benchmark_included(self, sample_trade, params, sample_data):
         sample_trade.exit_date = pd.Timestamp("2024-02-16")
         sample_trade.exit_type = "PROFIT"
         sample_trade.pnl = 315.0
@@ -89,7 +89,7 @@ class TestComputeMetrics:
 
         metrics = compute_metrics([sample_trade], equity_curve, params, sample_data)
 
-        assert "spy_total_return" in metrics
-        assert "spy_sharpe" in metrics
-        assert isinstance(metrics["spy_total_return"], float)
-        assert isinstance(metrics["spy_sharpe"], float)
+        assert "underlying_total_return" in metrics
+        assert "underlying_sharpe" in metrics
+        assert isinstance(metrics["underlying_total_return"], float)
+        assert isinstance(metrics["underlying_sharpe"], float)

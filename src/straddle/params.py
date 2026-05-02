@@ -66,8 +66,8 @@ class PortfolioParams(TypedDict, total=False):
     max_bpr_allocation: float
     cash_yield_annual: float
     entry_cooldown_days: int
-    cash_investment_mode: str   # "risk_free" | "spy" | "blend"
-    spy_allocation_pct: float   # SPY fraction for "blend" mode
+    cash_investment_mode: str         # "risk_free" | "underlying" | "blend"
+    underlying_allocation_pct: float  # underlying fraction for "blend" mode
 
 
 # ── Constants ───────────────────────────────────────────────────────────
@@ -165,8 +165,8 @@ PORTFOLIO: PortfolioParams = {
     "max_bpr_allocation": 0.30,  # max 30% of starting capital as margin usage
     "cash_yield_annual": 0.04,  # 4% annual risk-free rate on uninvested cash
     "entry_cooldown_days": 3,  # minimum trading days between new entries
-    "cash_investment_mode": "spy",  # "risk_free" | "spy" | "blend"
-    "spy_allocation_pct": 0.40,   # SPY fraction when cash_investment_mode="blend"
+    "cash_investment_mode": "underlying",  # "risk_free" | "underlying" | "blend"
+    "underlying_allocation_pct": 0.40,    # underlying fraction when cash_investment_mode="blend"
 }
 
 # ── Merge into a single flat dict for backward compatibility ─────────────

@@ -27,8 +27,8 @@ const defaultParams = {
   single_position: true,        // single-mode: skip entry while chain open
   max_bpr_allocation: 0.30,
   entry_cooldown_days: 3,
-  cash_investment_mode: 'spy',
-  spy_allocation_pct: 0.40,    // blend mode: SPY fraction of uninvested cash
+  cash_investment_mode: 'underlying',
+  underlying_allocation_pct: 0.40,  // blend mode: underlying fraction of uninvested cash
   // ROLL MGMT
   manage_at_dte: 21,
   roll_for_credit: true,
