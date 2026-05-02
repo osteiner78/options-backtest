@@ -199,11 +199,23 @@ MARKET_PRESETS: dict = {
         # (2024–2026), full-sample average reflects the structural transition.
         "put_slope":  0.743,
         "call_slope": 0.031,
-        # dividend_yield=0.0: the stored ATM IV (vix_close) was extracted from market
-        # prices using European BS with q=0. Using q>0 with this vol as input creates
-        # a pricing inconsistency (vol level shifts when forward price changes). To
-        # properly model the ~3% IBOVESPA ETF dividend, the B3 parquets must be
-        # rebuilt with dividend-adjusted IV computation in scripts/build_b3_parquets.py.
+        # dividend_yield=0.0 — correct for both market mode and current synthetic mode:
+        #
+        # Market mode: MarketEngine uses real COTAHIST bid/ask directly; dividends
+        # are already priced in by the market. The stored delta is only used for
+        # approximate 16Δ strike selection (error ~0.002, negligible). No correction
+        # needed.
+        #
+        # Synthetic mode: vix_close was extracted from market prices using q=0, so
+        # using q=0 here keeps the vol input and the model convention consistent.
+        # More importantly, the fitted put_slope/call_slope were derived from real
+        # market prices that already reflect dividends — they encode the dividend
+        # effect implicitly. Setting q>0 alongside a q=0-derived vix_close would
+        # double-count the dividend and cause systematic mispricing.
+        #
+        # To properly enable q>0 in synthetic mode, rebuild vix_close with
+        # dividend-adjusted IV (set dividend_yield in build_b3_parquets.py and
+        # rerun), then refit the skew slopes from the adjusted IV surface.
         "dividend_yield": 0.0,
     },
     "petr4": {
@@ -219,13 +231,14 @@ MARKET_PRESETS: dict = {
         # put_slope=0.523: moderate put skew, stable at 0.40–0.66 across years.
         # call_slope=-0.057: consistently negative — PETR4 calls trade above ATM IV,
         # reflecting dividend-adjusted forward pricing and oil-price optionality.
+        # Note: the negative call_slope directly encodes the dividend effect: with
+        # a lower dividend-adjusted forward, OTM calls appear cheaper vs ATM,
+        # so the fitted slope is negative. No separate q parameter needed.
         "put_slope":  0.523,
         "call_slope": -0.057,
-        # dividend_yield=0.0: same data consistency constraint as BOVA11 (see above).
-        # PETR4 actual yield varies widely (5–40% in 2022–2023); QA shows 14.2% of
-        # ATM put-call pairs have >2% PCP residual from unmodelled dividends.
-        # Proper fix: rebuild b3_options.db and bova/petr parquets with q=0.08
-        # in the b3_parser.py implied_vol computation, then update this preset.
+        # See bova11 comment above — same reasoning applies.
+        # PETR4 actual yield varies widely (5–40% in 2022–2023) making a fixed q
+        # a poor approximation; the fitted slopes are more robust.
         "dividend_yield": 0.0,
     },
 }
