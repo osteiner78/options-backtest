@@ -188,8 +188,14 @@ MARKET_PRESETS: dict = {
         "currency": "BRL",
         "vix_to_iv_multiplier": 1.00,  # vix_close for B3 IS the actual ATM IV
         "contract_multiplier": 100.0,
-        # TODO: refit put_slope/call_slope from parsed B3 data
-        # TODO: model dividends for PETR4 (American-style early exercise)
+        # Fitted from b3_options.db (2017–2026) via scripts/fit_b3_skew.py.
+        # put_slope=0.743: B3 put skew is ~2.5× steeper than SPY — emerging-market
+        # tail-risk demand drives strong OTM put premiums.
+        # call_slope=0.031: near-flat; shifted from +0.30 (2019–2022) to −0.10
+        # (2024–2026), full-sample average reflects the structural transition.
+        # TODO: model dividends (American-style early exercise bias for puts near ex-div)
+        "put_slope":  0.743,
+        "call_slope": 0.031,
     },
     "petr4": {
         "market": "petr4",
@@ -199,6 +205,13 @@ MARKET_PRESETS: dict = {
         "currency": "BRL",
         "vix_to_iv_multiplier": 1.00,
         "contract_multiplier": 100.0,
+        # Fitted from b3_options.db (2010–2026) via scripts/fit_b3_skew.py.
+        # put_slope=0.523: moderate put skew, stable at 0.40–0.66 across years.
+        # call_slope=-0.057: consistently negative — PETR4 calls trade above ATM IV,
+        # reflecting dividend-adjusted forward pricing and oil-price optionality.
+        # TODO: model dividends explicitly (put-call parity residual ~14% for PETR4)
+        "put_slope":  0.523,
+        "call_slope": -0.057,
     },
 }
 
