@@ -4,11 +4,6 @@ Fetching CDI rates from 2010-01-01 ...
 ============================================================
 Building BOVA11 backtest data
 ============================================================
-  COTAHIST_A2010.TXT ... 247 trading days, 27 ATM option records
-  COTAHIST_A2011.TXT ... 249 trading days, 63 ATM option records
-  COTAHIST_A2012.TXT ... 246 trading days, 32 ATM option records
-  COTAHIST_A2013.TXT ... 248 trading days, 4 ATM option records
-  COTAHIST_A2014.TXT ... 248 trading days, 298 ATM option records
   COTAHIST_A2015.TXT ... 246 trading days, 420 ATM option records
   COTAHIST_A2016.TXT ... 249 trading days, 574 ATM option records
   COTAHIST_A2017.TXT ... 246 trading days, 1,299 ATM option records
@@ -22,7 +17,7 @@ Building BOVA11 backtest data
   COTAHIST_A2025.TXT ... 250 trading days, 21,010 ATM option records
   COTAHIST_A2026.TXT ... 81 trading days, 9,856 ATM option records
 
-  Result: 4048 trading days  |  vix_close coverage 62.1%  |  CDI coverage 100.0%
+  Result: 2810 trading days  |  vix_close coverage 83.2%  |  CDI coverage 100.0%
             underlying_open  underlying_high  ...  vix_close  risk_free_rate
 date                                          ...                           
 2026-04-28           184.13           185.57  ...   0.183707        0.146499
@@ -31,7 +26,7 @@ date                                          ...
 
 [3 rows x 6 columns]
 
-Saved → data/B3/bova11_backtest.parquet  (4048 rows)
+Saved → data/B3/bova11_backtest.parquet  (2810 rows)
 
 ============================================================
 Building PETR4 backtest data
