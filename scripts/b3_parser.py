@@ -49,30 +49,39 @@ def _parse_qty(raw: str) -> int:
         return 0
 
 
-# ── Black-Scholes utilities ───────────────────────────────────────────────────
+# ── Black-Scholes utilities (Merton 1973 with continuous dividend yield q) ─────
+#
+# All functions accept q=0.0 (default) which reduces to standard Black-Scholes.
+# To rebuild b3_options.db with dividend-adjusted IV/delta for PETR4 or BOVA11,
+# pass dividend_yield=0.08 (or 0.03) to parse_cotahist() — it flows through
+# to implied_vol() and compute_greeks() via the _row_greeks closure.
 
-def bs_price(S: float, K: float, T: float, r: float, sigma: float, option_type: str) -> float:
+def bs_price(S: float, K: float, T: float, r: float, sigma: float,
+             option_type: str, q: float = 0.0) -> float:
     if T <= 0 or sigma <= 0:
         return max(0.0, (S - K) if option_type == "call" else (K - S))
-    d1 = (np.log(S / K) + (r + 0.5 * sigma**2) * T) / (sigma * np.sqrt(T))
+    d1 = (np.log(S / K) + (r - q + 0.5 * sigma**2) * T) / (sigma * np.sqrt(T))
     d2 = d1 - sigma * np.sqrt(T)
+    disc_q, disc_r = np.exp(-q * T), np.exp(-r * T)
     if option_type == "call":
-        return S * norm.cdf(d1) - K * np.exp(-r * T) * norm.cdf(d2)
-    return K * np.exp(-r * T) * norm.cdf(-d2) - S * norm.cdf(-d1)
+        return S * disc_q * norm.cdf(d1) - K * disc_r * norm.cdf(d2)
+    return K * disc_r * norm.cdf(-d2) - S * disc_q * norm.cdf(-d1)
 
 
 def implied_vol(
     market_price: float,
     S: float, K: float, T: float, r: float, option_type: str,
     low: float = 1e-6, high: float = 10.0,
+    q: float = 0.0,
 ) -> float:
+    """Back-solve implied vol. Pass q>0 for dividend-adjusted IV extraction."""
     if market_price <= 0 or S <= 0 or K <= 0 or T <= 0:
         return np.nan
     try:
         intrinsic = max(0.0, (S - K) if option_type == "call" else (K - S))
         if market_price <= intrinsic:
             return np.nan
-        f = lambda sigma: bs_price(S, K, T, r, sigma, option_type) - market_price
+        f = lambda sigma: bs_price(S, K, T, r, sigma, option_type, q) - market_price
         if f(low) * f(high) > 0:
             return np.nan
         return brentq(f, low, high, xtol=1e-6, maxiter=200)
@@ -80,20 +89,31 @@ def implied_vol(
         return np.nan
 
 
-def compute_greeks(S: float, K: float, T: float, r: float, sigma: float, option_type: str) -> dict:
+def compute_greeks(S: float, K: float, T: float, r: float, sigma: float,
+                   option_type: str, q: float = 0.0) -> dict:
+    """Compute BS Greeks. Pass q>0 for dividend-adjusted delta/gamma/theta/vega."""
     if T <= 0 or sigma <= 0 or S <= 0:
         return {"delta": np.nan, "gamma": np.nan, "theta": np.nan, "vega": np.nan}
-    d1 = (np.log(S / K) + (r + 0.5 * sigma**2) * T) / (sigma * np.sqrt(T))
+    d1 = (np.log(S / K) + (r - q + 0.5 * sigma**2) * T) / (sigma * np.sqrt(T))
     d2 = d1 - sigma * np.sqrt(T)
     pdf_d1 = norm.pdf(d1)
-    gamma = pdf_d1 / (S * sigma * np.sqrt(T))
-    vega = S * pdf_d1 * np.sqrt(T) / 100
+    disc_q = np.exp(-q * T)
+    gamma = disc_q * pdf_d1 / (S * sigma * np.sqrt(T))
+    vega = S * disc_q * pdf_d1 * np.sqrt(T) / 100
     if option_type == "call":
-        delta = norm.cdf(d1)
-        theta = (-S * pdf_d1 * sigma / (2 * np.sqrt(T)) - r * K * np.exp(-r * T) * norm.cdf(d2)) / 365
+        delta = disc_q * norm.cdf(d1)
+        theta = (
+            -S * disc_q * pdf_d1 * sigma / (2 * np.sqrt(T))
+            + q * S * disc_q * norm.cdf(d1)
+            - r * K * np.exp(-r * T) * norm.cdf(d2)
+        ) / 365
     else:
-        delta = norm.cdf(d1) - 1
-        theta = (-S * pdf_d1 * sigma / (2 * np.sqrt(T)) + r * K * np.exp(-r * T) * norm.cdf(-d2)) / 365
+        delta = disc_q * (norm.cdf(d1) - 1)
+        theta = (
+            -S * disc_q * pdf_d1 * sigma / (2 * np.sqrt(T))
+            - q * S * disc_q * norm.cdf(-d1)
+            + r * K * np.exp(-r * T) * norm.cdf(-d2)
+        ) / 365
     return {"delta": delta, "gamma": gamma, "theta": theta, "vega": vega}
 
 
@@ -246,6 +266,7 @@ def parse_cotahist(
     risk_free_rate: float = 0.1075,
     risk_free_rates: Optional[pd.DataFrame] = None,
     underlying_prices: Optional[pd.DataFrame] = None,
+    dividend_yield: float = 0.0,
     verbose: bool = True,
 ) -> pd.DataFrame:
     """Parse B3 COTAHIST fixed-width file and return a clean options DataFrame."""
@@ -397,10 +418,10 @@ def parse_cotahist(
             if pd.isna(S) or S <= 0:
                 return pd.Series({"iv": np.nan, "delta": np.nan, "gamma": np.nan, "theta": np.nan, "vega": np.nan})
             T = row["dte"] / 365.0
-            iv = implied_vol(row["mid_price"], S, row["strike"], T, r, row["option_type"])
+            iv = implied_vol(row["mid_price"], S, row["strike"], T, r, row["option_type"], q=dividend_yield)
             if pd.isna(iv):
                 return pd.Series({"iv": np.nan, "delta": np.nan, "gamma": np.nan, "theta": np.nan, "vega": np.nan})
-            g = compute_greeks(S, row["strike"], T, r, iv, row["option_type"])
+            g = compute_greeks(S, row["strike"], T, r, iv, row["option_type"], q=dividend_yield)
             return pd.Series({"iv": iv, **g})
 
         if verbose:
@@ -465,6 +486,7 @@ def build_backtest_df(
     dte_max: int = 45,
     atm_moneyness: float = 0.05,
     min_year: int = 0,
+    dividend_yield: float = 0.0,
     verbose: bool = True,
 ) -> pd.DataFrame:
     """Build a backtest-ready DataFrame from all COTAHIST_A*.TXT files in data_dir.
@@ -510,6 +532,7 @@ def build_backtest_df(
             compute_greeks_flag=True,
             risk_free_rates=cdi_rates,
             underlying_prices=eq_prices,
+            dividend_yield=dividend_yield,
             verbose=False,
         )
         if not opts.empty:

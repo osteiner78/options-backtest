@@ -35,6 +35,14 @@ from b3_parser import (
 
 BOVA11_MIN_YEAR = 2015  # skip thin BOVA11 data before this year
 
+# Dividend yields for dividend-adjusted IV computation.
+# Set to 0.0 (current default) for the original DB; pass non-zero to rebuild
+# with dividend-corrected IV/delta (requires DB rebuild + parquet rebuild).
+DIVIDEND_YIELDS = {
+    "bova11": 0.0,  # ~3% in reality; set to 0.03 and rebuild for dividend-adj IV
+    "petr4":  0.0,  # ~8% in reality; set to 0.08 and rebuild for dividend-adj IV
+}
+
 # Map parse_cotahist's underlying label → DB identifier matching params["market"]
 UNDERLYING_MAP = {
     "ISHARES BOVA": "bova11",
@@ -148,6 +156,7 @@ def build(data_dir: Path, db_path: Path, cdi: pd.DataFrame, verbose: bool = True
                 compute_greeks_flag=True,
                 risk_free_rates=cdi,
                 underlying_prices=eq,
+                dividend_yield=DIVIDEND_YIELDS.get(cfg["underlying_id"], 0.0),
                 verbose=False,
             )
             if opts.empty:

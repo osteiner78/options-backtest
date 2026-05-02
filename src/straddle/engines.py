@@ -34,23 +34,33 @@ class PricingContext:
 
 # ── Black-Scholes primitives ─────────────────────────────────────────────
 
-def bs_price(S: float, K: float, T: float, r: float, sigma: float, opt: str) -> float:
-    """Black-Scholes European option price. opt: 'call' or 'put'."""
+def bs_price(S: float, K: float, T: float, r: float, sigma: float, opt: str,
+             q: float = 0.0) -> float:
+    """Merton (1973) European option price with continuous dividend yield q.
+
+    q=0.0 (default) reduces to standard Black-Scholes. opt: 'call' or 'put'.
+    """
     if T <= 1e-7:
         return max(S - K, 0.0) if opt == "call" else max(K - S, 0.0)
-    d1 = (np.log(S / K) + (r + 0.5 * sigma**2) * T) / (sigma * np.sqrt(T))
+    d1 = (np.log(S / K) + (r - q + 0.5 * sigma**2) * T) / (sigma * np.sqrt(T))
     d2 = d1 - sigma * np.sqrt(T)
+    disc_q = np.exp(-q * T)
+    disc_r = np.exp(-r * T)
     if opt == "call":
-        return float(S * norm.cdf(d1) - K * np.exp(-r * T) * norm.cdf(d2))
-    return float(K * np.exp(-r * T) * norm.cdf(-d2) - S * norm.cdf(-d1))
+        return float(S * disc_q * norm.cdf(d1) - K * disc_r * norm.cdf(d2))
+    return float(K * disc_r * norm.cdf(-d2) - S * disc_q * norm.cdf(-d1))
 
 
-def bs_delta(S: float, K: float, T: float, r: float, sigma: float, opt: str) -> float:
-    """Black-Scholes delta (put delta is negative)."""
+def bs_delta(S: float, K: float, T: float, r: float, sigma: float, opt: str,
+             q: float = 0.0) -> float:
+    """Black-Scholes delta with continuous dividend yield q (put delta is negative)."""
     if T <= 1e-7:
         return (1.0 if S > K else 0.0) if opt == "call" else (-1.0 if S < K else 0.0)
-    d1 = (np.log(S / K) + (r + 0.5 * sigma**2) * T) / (sigma * np.sqrt(T))
-    return float(norm.cdf(d1) if opt == "call" else norm.cdf(d1) - 1.0)
+    d1 = (np.log(S / K) + (r - q + 0.5 * sigma**2) * T) / (sigma * np.sqrt(T))
+    disc_q = np.exp(-q * T)
+    if opt == "call":
+        return float(disc_q * norm.cdf(d1))
+    return float(disc_q * (norm.cdf(d1) - 1.0))
 
 
 def strike_from_delta(
@@ -61,10 +71,16 @@ def strike_from_delta(
     target_delta: float,
     opt: str,
     increment: float = 1.0,
+    q: float = 0.0,
 ) -> float:
-    """Analytically compute the strike that achieves target_delta, rounded to increment."""
-    d1 = norm.ppf(target_delta) if opt == "call" else norm.ppf(1.0 - target_delta)
-    K = S * np.exp(-d1 * sigma * np.sqrt(T) + (r + 0.5 * sigma**2) * T)
+    """Analytically compute the strike that achieves target_delta, rounded to increment.
+
+    With continuous dividend yield q the delta is e^(-qT)*N(d1) for calls and
+    e^(-qT)*(N(d1)-1) for puts, so target_delta is adjusted before inversion.
+    """
+    adj = target_delta * np.exp(q * T)  # reverse the e^(-qT) discount on delta
+    d1 = norm.ppf(adj) if opt == "call" else norm.ppf(1.0 - adj)
+    K = S * np.exp(-d1 * sigma * np.sqrt(T) + (r - q + 0.5 * sigma**2) * T)
     return round(K / increment) * increment
 
 
@@ -132,6 +148,7 @@ class SyntheticEngine:
         self.vix_iv_mult = params.get("vix_to_iv_multiplier", 1.0)
         self.o_adj = params.get("open_fill_adj", -0.05)
         self.c_adj = params.get("close_fill_adj", 0.05)
+        self.q = params.get("dividend_yield", 0.0)  # continuous dividend yield
 
     def _get_sigma_t(self, vix_d: float, dte_rem: int) -> Tuple[float, float]:
         """Central helper for volatility scaling and time-to-expiry conversion."""
@@ -157,10 +174,10 @@ class SyntheticEngine:
         sigma_call = apply_skew(
             sigma, target_delta, "call", self.put_slope, self.call_slope
         )
-        put_k = strike_from_delta(S, T, r, sigma_put, target_delta, "put")
-        call_k = strike_from_delta(S, T, r, sigma_call, target_delta, "call")
-        put_mid = bs_price(S, put_k, T, r, sigma_put, "put")
-        call_mid = bs_price(S, call_k, T, r, sigma_call, "call")
+        put_k = strike_from_delta(S, T, r, sigma_put, target_delta, "put", q=self.q)
+        call_k = strike_from_delta(S, T, r, sigma_call, target_delta, "call", q=self.q)
+        put_mid = bs_price(S, put_k, T, r, sigma_put, "put", self.q)
+        call_mid = bs_price(S, call_k, T, r, sigma_call, "call", self.q)
         return put_k, call_k, put_mid, call_mid, False  # used_market_data=False
 
     def get_daily_mark(
@@ -189,8 +206,8 @@ class SyntheticEngine:
         sigma_d, T_d = self._get_sigma_t(vix_d, dte_rem)
 
         # Estimate current deltas using ATM vol to pick the right skew zone
-        d_put_est = bs_delta(S_d, put_k, T_d, r_d, sigma_d, "put")
-        d_call_est = bs_delta(S_d, call_k, T_d, r_d, sigma_d, "call")
+        d_put_est = bs_delta(S_d, put_k, T_d, r_d, sigma_d, "put", self.q)
+        d_call_est = bs_delta(S_d, call_k, T_d, r_d, sigma_d, "call", self.q)
 
         sigma_put = apply_skew(
             sigma_d, d_put_est, "put", self.put_slope, self.call_slope
@@ -198,8 +215,8 @@ class SyntheticEngine:
         sigma_call = apply_skew(
             sigma_d, d_call_est, "call", self.put_slope, self.call_slope
         )
-        return bs_price(S_d, put_k, T_d, r_d, sigma_put, "put") + bs_price(
-            S_d, call_k, T_d, r_d, sigma_call, "call"
+        return bs_price(S_d, put_k, T_d, r_d, sigma_put, "put", self.q) + bs_price(
+            S_d, call_k, T_d, r_d, sigma_call, "call", self.q
         )
 
     def get_daily_delta(
@@ -215,11 +232,11 @@ class SyntheticEngine:
         """Per-leg delta on eval_date (used by defensive leg roll trigger check)."""
         sigma_d, T_d = self._get_sigma_t(vix_d, dte_rem)
         # Estimate delta for skew lookup
-        d_est = bs_delta(S_d, strike, T_d, r_d, sigma_d, opt)
+        d_est = bs_delta(S_d, strike, T_d, r_d, sigma_d, opt, self.q)
         sigma_skewed = apply_skew(
             sigma_d, d_est, opt, self.put_slope, self.call_slope
         )
-        return bs_delta(S_d, strike, T_d, r_d, sigma_skewed, opt)
+        return bs_delta(S_d, strike, T_d, r_d, sigma_skewed, opt, self.q)
 
     def get_leg_mark(
         self,
@@ -239,11 +256,11 @@ class SyntheticEngine:
         fill adjustment in the correct direction.
         """
         sigma_d, T_d = self._get_sigma_t(vix_d, dte_rem)
-        d_est = bs_delta(S_d, strike, T_d, r_d, sigma_d, opt)
+        d_est = bs_delta(S_d, strike, T_d, r_d, sigma_d, opt, self.q)
         sigma_skewed = apply_skew(
             sigma_d, d_est, opt, self.put_slope, self.call_slope
         )
-        return bs_price(S_d, strike, T_d, r_d, sigma_skewed, opt)
+        return bs_price(S_d, strike, T_d, r_d, sigma_skewed, opt, self.q)
 
     def find_strike_at_delta(
         self,
@@ -261,8 +278,8 @@ class SyntheticEngine:
         sigma_skewed = apply_skew(
             sigma_d, target_delta, opt, self.put_slope, self.call_slope
         )
-        strike = strike_from_delta(S_d, T_d, r_d, sigma_skewed, target_delta, opt)
-        mark = bs_price(S_d, strike, T_d, r_d, sigma_skewed, opt)
+        strike = strike_from_delta(S_d, T_d, r_d, sigma_skewed, target_delta, opt, q=self.q)
+        mark = bs_price(S_d, strike, T_d, r_d, sigma_skewed, opt, self.q)
         return strike, mark
 
     def get_gap_open_mark(
@@ -301,8 +318,8 @@ class SyntheticEngine:
         # Estimate actual current deltas at the gap-open price, mirroring
         # get_daily_mark — using the static entry delta (0.16) is wrong when
         # a leg has moved significantly (e.g. from 0.16Δ to 0.45Δ on a crash).
-        d_put_est = bs_delta(underlying_open, put_k, T_d, r_open, vix_open_sigma, "put")
-        d_call_est = bs_delta(underlying_open, call_k, T_d, r_open, vix_open_sigma, "call")
+        d_put_est = bs_delta(underlying_open, put_k, T_d, r_open, vix_open_sigma, "put", self.q)
+        d_call_est = bs_delta(underlying_open, call_k, T_d, r_open, vix_open_sigma, "call", self.q)
 
         sigma_put = apply_skew(
             vix_open_sigma, d_put_est, "put", self.put_slope, self.call_slope
@@ -310,8 +327,8 @@ class SyntheticEngine:
         sigma_call = apply_skew(
             vix_open_sigma, d_call_est, "call", self.put_slope, self.call_slope
         )
-        return bs_price(underlying_open, put_k, T_d, r_open, sigma_put, "put") + bs_price(
-            underlying_open, call_k, T_d, r_open, sigma_call, "call"
+        return bs_price(underlying_open, put_k, T_d, r_open, sigma_put, "put", self.q) + bs_price(
+            underlying_open, call_k, T_d, r_open, sigma_call, "call", self.q
         )
 
 
