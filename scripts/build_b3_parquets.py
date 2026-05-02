@@ -24,10 +24,12 @@ from b3_parser import build_backtest_df, fetch_cdi_rates
 
 def main():
     parser = argparse.ArgumentParser(description="Build B3 backtest parquets from COTAHIST files")
-    parser.add_argument("--data-dir",   default="data/B3",    help="Directory with COTAHIST_A*.TXT files")
-    parser.add_argument("--out-dir",    default="data/B3",    help="Output directory for parquet files")
-    parser.add_argument("--cdi-start",  default="2010-01-01", help="CDI history start date")
-    parser.add_argument("--cdi-end",    default=None,         help="CDI history end date (default: today)")
+    parser.add_argument("--data-dir",          default="data/B3",    help="Directory with COTAHIST_A*.TXT files")
+    parser.add_argument("--out-dir",           default="data/B3",    help="Output directory for parquet files")
+    parser.add_argument("--cdi-start",         default="2010-01-01", help="CDI history start date")
+    parser.add_argument("--cdi-end",           default=None,         help="CDI history end date (default: today)")
+    parser.add_argument("--bova11-min-year",   default=2015, type=int,
+                        help="Skip BOVA11 COTAHIST files before this year (default: 2015 — thin liquidity prior)")
     args = parser.parse_args()
 
     data_dir = Path(args.data_dir)
@@ -52,6 +54,7 @@ def main():
         dte_min=20,
         dte_max=45,
         atm_moneyness=0.05,
+        min_year=args.bova11_min_year,
         verbose=True,
     )
     out_bova = out_dir / "bova11_backtest.parquet"

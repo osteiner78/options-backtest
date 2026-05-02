@@ -464,6 +464,7 @@ def build_backtest_df(
     dte_min: int = 20,
     dte_max: int = 45,
     atm_moneyness: float = 0.05,
+    min_year: int = 0,
     verbose: bool = True,
 ) -> pd.DataFrame:
     """Build a backtest-ready DataFrame from all COTAHIST_A*.TXT files in data_dir.
@@ -471,11 +472,18 @@ def build_backtest_df(
     Returns DataFrame indexed by date with columns:
         underlying_open, underlying_high, underlying_low, underlying_close,
         vix_close, risk_free_rate
+
+    min_year: skip files for calendar years before this value (e.g. 2015 for
+    BOVA11 where earlier data is too thin for reliable 16Δ entries).
     """
     data_dir = Path(data_dir)
     files = sorted(data_dir.glob("COTAHIST_A*.TXT"))
     if not files:
         raise FileNotFoundError(f"No COTAHIST_A*.TXT files found in {data_dir}")
+    if min_year:
+        files = [f for f in files if int(f.stem.replace("COTAHIST_A", "")) >= min_year]
+    if not files:
+        raise ValueError(f"No COTAHIST_A*.TXT files found for year >= {min_year}")
 
     ohlc_parts = []
     opts_parts = []
