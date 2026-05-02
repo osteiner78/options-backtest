@@ -1,0 +1,68 @@
+Fetching CDI rates from 2010-01-01 ...
+  4100 days  |  range 1.90% → 14.90%
+
+============================================================
+Building BOVA11 backtest data
+============================================================
+  COTAHIST_A2010.TXT ... 247 trading days, 27 ATM option records
+  COTAHIST_A2011.TXT ... 249 trading days, 63 ATM option records
+  COTAHIST_A2012.TXT ... 246 trading days, 32 ATM option records
+  COTAHIST_A2013.TXT ... 248 trading days, 4 ATM option records
+  COTAHIST_A2014.TXT ... 248 trading days, 298 ATM option records
+  COTAHIST_A2015.TXT ... 246 trading days, 420 ATM option records
+  COTAHIST_A2016.TXT ... 249 trading days, 574 ATM option records
+  COTAHIST_A2017.TXT ... 246 trading days, 1,299 ATM option records
+  COTAHIST_A2018.TXT ... 245 trading days, 1,331 ATM option records
+  COTAHIST_A2019.TXT ... 248 trading days, 3,083 ATM option records
+  COTAHIST_A2020.TXT ... 249 trading days, 8,735 ATM option records
+  COTAHIST_A2021.TXT ... 247 trading days, 10,181 ATM option records
+  COTAHIST_A2022.TXT ... 250 trading days, 12,065 ATM option records
+  COTAHIST_A2023.TXT ... 248 trading days, 12,929 ATM option records
+  COTAHIST_A2024.TXT ... 251 trading days, 15,959 ATM option records
+  COTAHIST_A2025.TXT ... 250 trading days, 21,010 ATM option records
+  COTAHIST_A2026.TXT ... 81 trading days, 9,856 ATM option records
+
+  Result: 4048 trading days  |  vix_close coverage 62.1%  |  CDI coverage 100.0%
+            underlying_open  underlying_high  ...  vix_close  risk_free_rate
+date                                          ...                           
+2026-04-28           184.13           185.57  ...   0.183707        0.146499
+2026-04-29           184.00           184.21  ...   0.188965        0.146499
+2026-04-30           182.78           184.66  ...   0.194533        0.144001
+
+[3 rows x 6 columns]
+
+Saved → data/B3/bova11_backtest.parquet  (4048 rows)
+
+============================================================
+Building PETR4 backtest data
+============================================================
+  COTAHIST_A2010.TXT ... 247 trading days, 2,106 ATM option records
+  COTAHIST_A2011.TXT ... 249 trading days, 2,929 ATM option records
+  COTAHIST_A2012.TXT ... 246 trading days, 3,682 ATM option records
+  COTAHIST_A2013.TXT ... 248 trading days, 6,320 ATM option records
+  COTAHIST_A2014.TXT ... 248 trading days, 8,688 ATM option records
+  COTAHIST_A2015.TXT ... 246 trading days, 6,795 ATM option records
+  COTAHIST_A2016.TXT ... 249 trading days, 7,476 ATM option records
+  COTAHIST_A2017.TXT ... 246 trading days, 8,279 ATM option records
+  COTAHIST_A2018.TXT ... 245 trading days, 12,577 ATM option records
+  COTAHIST_A2019.TXT ... 248 trading days, 16,418 ATM option records
+  COTAHIST_A2020.TXT ... 249 trading days, 17,997 ATM option records
+  COTAHIST_A2021.TXT ... 247 trading days, 20,953 ATM option records
+  COTAHIST_A2022.TXT ... 250 trading days, 28,747 ATM option records
+  COTAHIST_A2023.TXT ... 248 trading days, 25,569 ATM option records
+  COTAHIST_A2024.TXT ... 251 trading days, 28,220 ATM option records
+  COTAHIST_A2025.TXT ... 250 trading days, 25,073 ATM option records
+  COTAHIST_A2026.TXT ... 81 trading days, 11,563 ATM option records
+
+  Result: 4048 trading days  |  vix_close coverage 85.8%  |  CDI coverage 100.0%
+            underlying_open  underlying_high  ...  vix_close  risk_free_rate
+date                                          ...                           
+2026-04-28            47.65            48.04  ...   0.336193        0.146499
+2026-04-29            48.10            49.30  ...   0.381022        0.146499
+2026-04-30            48.81            49.38  ...   0.332620        0.144001
+
+[3 rows x 6 columns]
+
+Saved → data/B3/petr4_backtest.parquet  (4048 rows)
+
+✓  Both parquets built successfully.
