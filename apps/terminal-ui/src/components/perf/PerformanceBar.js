@@ -1,5 +1,5 @@
 import { store } from '../../store.js';
-import { formatPct, formatNum, formatSignedPct, formatPnl } from '../../utils/format.js';
+import { formatPct, formatNum, formatSignedPct, formatPnl, currencySymbol } from '../../utils/format.js';
 
 // ── Client-side metric derivations for sub-components ──────────────────────
 
@@ -49,7 +49,10 @@ function curveMetrics(values, cagr, rfAnnual = 0) {
 // ───────────────────────────────────────────────────────────────────────────
 
 export function renderPerformanceBar() {
-  const { results } = store;
+  const { results, params } = store;
+  const market = (params.market || 'spy').toUpperCase();
+  const sym    = currencySymbol(params.market);
+  const fp     = (v) => formatPnl(v, sym);
   if (!results) {
     return `
       <div class="perf-bar">
@@ -104,7 +107,7 @@ export function renderPerformanceBar() {
             <td class="r c-amb fw6">${formatNum(metrics.sharpe)}</td>
             <td class="r c-neg fw6">${formatPct(metrics.max_drawdown)}</td>
             <td class="r c-amb fw6">${formatNum(metrics.calmar)}</td>
-            <td class="r c-pos fw6">${formatPnl(portPnl)}</td>
+            <td class="r c-pos fw6">${fp(portPnl)}</td>
           </tr>
 
           <tr class="pt-sub">
@@ -114,17 +117,17 @@ export function renderPerformanceBar() {
             ${na}
             <td class="r c-neg">${optMDD > 0 ? formatPct(-optMDD) : '--'}</td>
             <td class="r c-amb">${optCalmar != null ? formatNum(optCalmar) : '--'}</td>
-            <td class="r ${optPnl >= 0 ? 'c-pos' : 'c-neg'}">${formatPnl(optPnl)}</td>
+            <td class="r ${optPnl >= 0 ? 'c-pos' : 'c-neg'}">${fp(optPnl)}</td>
           </tr>
 
           <tr class="pt-sub">
-            <td class="ptl">  o/w underlying</td>
+            <td class="ptl">  o/w ${market}</td>
             <td class="r">${formatSignedPct(metrics.ret_cash_underlying)}</td>
             <td class="r">${formatPct(metrics.cagr_cash_underlying)}</td>
             <td class="r c-amb">${formatNum(underlyingSharpe)}</td>
             <td class="r c-neg">${formatPct(underlyingMDD)}</td>
             <td class="r c-amb">${underlyingCalmar != null ? formatNum(underlyingCalmar) : '--'}</td>
-            <td class="r ${underlyingPnl >= 0 ? 'c-pos' : 'c-neg'}">${formatPnl(underlyingPnl)}</td>
+            <td class="r ${underlyingPnl >= 0 ? 'c-pos' : 'c-neg'}">${fp(underlyingPnl)}</td>
           </tr>
 
           <tr class="pt-sub">
@@ -132,17 +135,17 @@ export function renderPerformanceBar() {
             <td class="r">${formatSignedPct(metrics.ret_cash_rf)}</td>
             <td class="r">${formatPct(metrics.cagr_cash_rf)}</td>
             ${na}${na}${na}
-            <td class="r ${rfPnl >= 0 ? 'c-pos' : 'c-neg'}">${formatPnl(rfPnl)}</td>
+            <td class="r ${rfPnl >= 0 ? 'c-pos' : 'c-neg'}">${fp(rfPnl)}</td>
           </tr>
 
           <tr class="pt-spy">
-            <td class="ptl c-blue fw6">B&amp;H</td>
+            <td class="ptl c-blue fw6">${market} B&amp;H</td>
             <td class="r c-blue fw6">${formatSignedPct(metrics.underlying_total_return)}</td>
             <td class="r c-blue fw6">${formatPct(metrics.underlying_annualized_return)}</td>
             <td class="r c-blue fw6">${formatNum(metrics.underlying_sharpe)}</td>
             <td class="r c-blue fw6">${formatPct(metrics.underlying_max_drawdown)}</td>
             <td class="r c-blue fw6">${formatNum(metrics.underlying_calmar)}</td>
-            <td class="r c-blue fw6">${formatPnl(init * metrics.underlying_total_return)}</td>
+            <td class="r c-blue fw6">${fp(init * metrics.underlying_total_return)}</td>
           </tr>
         </tbody>
       </table>

@@ -6,6 +6,8 @@ const PARAMS_KEY = 'straddle_params';
 const THEME_KEY  = 'straddle_theme';
 
 const defaultParams = {
+  // MARKET
+  market: 'spy',                // 'spy' | 'bova11' | 'petr4'
   // BACKTEST
   start_date: '2021-01-01',
   end_date: '2025-11-30',
@@ -43,7 +45,7 @@ const defaultParams = {
   vix_entry_max: 35.0,
 };
 
-const ENUM_FIELDS = ['mode', 'cash_investment_mode', 'portfolio_mode', 'strategy_mode'];
+const ENUM_FIELDS = ['market', 'mode', 'cash_investment_mode', 'portfolio_mode', 'strategy_mode'];
 
 function loadParams() {
   const saved = localStorage.getItem(PARAMS_KEY);

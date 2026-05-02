@@ -19,18 +19,22 @@ export function getPlotViewportRect() {
   };
 }
 
-const legends = {
-  equity:    `<div class="leg-item"><div class="leg-rect" style="background:var(--pos)"></div>Portfolio P&L ($)</div><div class="leg-item"><div class="leg-line" style="background:var(--a2);opacity:0.8"></div>B&H P&L ($)</div><div class="leg-item"><div class="leg-rect" style="background:var(--neg);opacity:0.7"></div>Drawdown ($)</div>`,
-  bpr:       `<div class="leg-item"><div class="leg-rect" style="background:var(--a2)"></div>Utilized BPR ($)</div><div class="leg-item"><div class="leg-line" style="background:var(--neg);opacity:0.6;border-top:2px dashed var(--neg)"></div>BPR Cap</div>`,
-  positions: `<div class="leg-item"><div class="leg-line" style="background:var(--a4)"></div>Open Positions</div>`,
-  vix:       `<div class="leg-item" style="gap:5px;"><div style="width:10px;height:10px;border-radius:50%;background:var(--a2)"></div>Entry</div><div class="leg-item" style="gap:5px;"><div style="width:10px;height:10px;border-radius:50%;border:1.5px solid var(--neg);background:transparent"></div>Skipped</div><div class="leg-item"><div class="leg-line" style="background:var(--neg);opacity:0.7"></div>VIX Max</div><div class="leg-sep"></div><div class="leg-item" style="gap:4px;"><div style="width:8px;height:8px;background:var(--a2);opacity:0.5"></div><span style="font-size:9.5px">LOW &lt;15</span></div><div class="leg-item" style="gap:4px;"><div style="width:8px;height:8px;background:var(--a1);opacity:0.5"></div><span style="font-size:9.5px">NORMAL 15–25</span></div><div class="leg-item" style="gap:4px;"><div style="width:8px;height:8px;background:var(--a3);opacity:0.5"></div><span style="font-size:9.5px">ELEVATED 25–35</span></div><div class="leg-item" style="gap:4px;"><div style="width:8px;height:8px;background:var(--neg);opacity:0.5"></div><span style="font-size:9.5px">HIGH &gt;35</span></div>`,
-  pnl:       `<div class="leg-item"><div class="leg-rect" style="background:var(--pos)"></div>Strangles</div><div class="leg-item"><div class="leg-rect" style="background:var(--a2)"></div>Underlying Cash</div><div class="leg-item"><div class="leg-rect" style="background:var(--a3)"></div>Risk-Free Cash</div><span style="font-size:9px;color:var(--dim);margin-left:4px">· underlying/RF split is approximate</span>`,
-};
+function getLegends(market) {
+  const m = (market || 'spy').toUpperCase();
+  return {
+    equity:    `<div class="leg-item"><div class="leg-rect" style="background:var(--pos)"></div>Portfolio P&L</div><div class="leg-item"><div class="leg-line" style="background:var(--a2);opacity:0.8"></div>${m} B&H P&L</div><div class="leg-item"><div class="leg-rect" style="background:var(--neg);opacity:0.7"></div>Drawdown</div>`,
+    bpr:       `<div class="leg-item"><div class="leg-rect" style="background:var(--a2)"></div>Utilized BPR</div><div class="leg-item"><div class="leg-line" style="background:var(--neg);opacity:0.6;border-top:2px dashed var(--neg)"></div>BPR Cap</div>`,
+    positions: `<div class="leg-item"><div class="leg-line" style="background:var(--a4)"></div>Open Positions</div>`,
+    vix:       `<div class="leg-item" style="gap:5px;"><div style="width:10px;height:10px;border-radius:50%;background:var(--a2)"></div>Entry</div><div class="leg-item" style="gap:5px;"><div style="width:10px;height:10px;border-radius:50%;border:1.5px solid var(--neg);background:transparent"></div>Skipped</div><div class="leg-item"><div class="leg-line" style="background:var(--neg);opacity:0.7"></div>VIX Max</div><div class="leg-sep"></div><div class="leg-item" style="gap:4px;"><div style="width:8px;height:8px;background:var(--a2);opacity:0.5"></div><span style="font-size:9.5px">LOW &lt;15</span></div><div class="leg-item" style="gap:4px;"><div style="width:8px;height:8px;background:var(--a1);opacity:0.5"></div><span style="font-size:9.5px">NORMAL 15–25</span></div><div class="leg-item" style="gap:4px;"><div style="width:8px;height:8px;background:var(--a3);opacity:0.5"></div><span style="font-size:9.5px">ELEVATED 25–35</span></div><div class="leg-item" style="gap:4px;"><div style="width:8px;height:8px;background:var(--neg);opacity:0.5"></div><span style="font-size:9.5px">HIGH &gt;35</span></div>`,
+    pnl:       `<div class="leg-item"><div class="leg-rect" style="background:var(--pos)"></div>Strangles</div><div class="leg-item"><div class="leg-rect" style="background:var(--a2)"></div>${m} Cash</div><div class="leg-item"><div class="leg-rect" style="background:var(--a3)"></div>Risk-Free Cash</div><span style="font-size:9px;color:var(--dim);margin-left:4px">· ${m}/RF split is approximate</span>`,
+  };
+}
 
 export function renderChartArea() {
-  const { activeTab, results } = store;
+  const { activeTab, results, params } = store;
   const portfolioOnly = activeTab === 'bpr' || activeTab === 'positions';
   const disabled = portfolioOnly && results && !results.has_portfolio_curves;
+  const legends = getLegends(params.market);
 
   const tab = (key, label) => `<div class="chart-tab ${activeTab === key ? 'active' : ''}" data-tab="${key}">${label}</div>`;
 
@@ -111,9 +115,9 @@ function fmtDate(ts) {
   return new Date(ts * 1000).toISOString().slice(0, 10);
 }
 
-function fmtPnl(v) {
+function fmtPnl(v, sym = '$') {
   if (v == null) return '--';
-  return (v >= 0 ? '+' : '−') + '$' + Math.abs(Math.round(v)).toLocaleString();
+  return (v >= 0 ? '+' : '−') + sym + Math.abs(Math.round(v)).toLocaleString();
 }
 
 // ── Year separator lines on every chart ──
@@ -201,6 +205,10 @@ export function drawChart() {
     return;
   }
 
+  const market = (params.market || 'spy').toUpperCase();
+  const sym    = (params.market === 'bova11' || params.market === 'petr4') ? 'R$' : '$';
+  const p = (v) => fmtPnl(v, sym);
+
   const w = mountEl.clientWidth;
   const h = mountEl.clientHeight;
   if (!w || !h) return;
@@ -225,15 +233,15 @@ export function drawChart() {
     const tip = makeTip(mountEl);
     chart = new uPlot(
       {
-        ...equityOpts(w, h),
+        ...equityOpts(w, h, market),
         hooks: {
           setCursor: [(u) => {
             const i = u.cursor.idx;
             positionTip(tip, u, `
               <div class="ctt-date">${fmtDate(ts[i])}</div>
-              <div class="ctt-row"><span style="color:var(--pos)">Portfolio P&L</span><span>${fmtPnl(eq_pnl[i])}</span></div>
-              <div class="ctt-row"><span style="color:var(--a2)">B&H P&L</span><span>${underlying_pnl[i] != null ? fmtPnl(underlying_pnl[i]) : '--'}</span></div>
-              <div class="ctt-row"><span style="color:var(--neg)">Drawdown</span><span>${fmtPnl(dd_dollars[i])} · ${((dd_dollars[i] / (peak[i] || 1)) * 100).toFixed(1)}%</span></div>
+              <div class="ctt-row"><span style="color:var(--pos)">Portfolio P&L</span><span>${p(eq_pnl[i])}</span></div>
+              <div class="ctt-row"><span style="color:var(--a2)">${market} B&H P&L</span><span>${underlying_pnl[i] != null ? p(underlying_pnl[i]) : '--'}</span></div>
+              <div class="ctt-row"><span style="color:var(--neg)">Drawdown</span><span>${p(dd_dollars[i])} · ${((dd_dollars[i] / (peak[i] || 1)) * 100).toFixed(1)}%</span></div>
             `);
           }],
           draw: [drawYearSeps],
@@ -371,16 +379,16 @@ export function drawChart() {
     const tip = makeTip(mountEl);
     chart = new uPlot(
       {
-        ...pnlOpts(w, h),
+        ...pnlOpts(w, h, market),
         hooks: {
           setCursor: [(u) => {
             const i = u.cursor.idx;
             positionTip(tip, u, `
               <div class="ctt-date">${fmtDate(ts[i])}</div>
-              <div class="ctt-row"><span style="color:var(--fg3)">Total P&L</span><span>${fmtPnl(cum_total[i])}</span></div>
-              <div class="ctt-row"><span style="color:var(--pos)">Strangles</span><span>${fmtPnl(cum_options[i])}</span></div>
-              ${underlyingPct > 0 ? `<div class="ctt-row"><span style="color:var(--a2)">Underlying Cash</span><span>${fmtPnl(cum_underlying[i])}</span></div>` : ''}
-              ${underlyingPct < 1 ? `<div class="ctt-row"><span style="color:var(--a3)">Risk-Free</span><span>${fmtPnl(cum_rf[i])}</span></div>` : ''}
+              <div class="ctt-row"><span style="color:var(--fg3)">Total P&L</span><span>${p(cum_total[i])}</span></div>
+              <div class="ctt-row"><span style="color:var(--pos)">Strangles</span><span>${p(cum_options[i])}</span></div>
+              ${underlyingPct > 0 ? `<div class="ctt-row"><span style="color:var(--a2)">${market} Cash</span><span>${p(cum_underlying[i])}</span></div>` : ''}
+              ${underlyingPct < 1 ? `<div class="ctt-row"><span style="color:var(--a3)">Risk-Free</span><span>${p(cum_rf[i])}</span></div>` : ''}
             `);
           }],
           draw: [
@@ -416,20 +424,21 @@ function baseAxes() {
   };
 }
 
-function equityOpts(w, h) {
+function equityOpts(w, h, market = 'SPY') {
   const base = baseAxes();
   const pos = getColor('--pos');
   const a2  = getColor('--a2');
   const neg = getColor('--neg');
   const dim = getColor('--dim');
   const bg3 = getColor('--bg3');
+  const sym = (market === 'BOVA11' || market === 'PETR4') ? 'R$' : '$';
   return {
     width: w, height: h, ...base,
     axes: [
       base.axes[0],
       {
         ...base.axes[1],
-        values: (_, splits) => splits.map(v => (v >= 0 ? '+$' : '-$') + Math.round(Math.abs(v) / 1000) + 'k'),
+        values: (_, splits) => splits.map(v => (v >= 0 ? `+${sym}` : `-${sym}`) + Math.round(Math.abs(v) / 1000) + 'k'),
       },
     ],
     scales: {
@@ -438,9 +447,9 @@ function equityOpts(w, h) {
     },
     series: [
       { label: 'Date' },
-      { label: 'Portfolio P&L', stroke: pos, width: 2, fill: pos + '30' },
-      { label: 'B&H P&L',       stroke: a2,  width: 1.5, dash: [6, 4] },
-      { label: 'Drawdown $',    stroke: neg, width: 1.5, fill: neg + '35' },
+      { label: 'Portfolio P&L',  stroke: pos, width: 2, fill: pos + '30' },
+      { label: `${market} B&H`,  stroke: a2,  width: 1.5, dash: [6, 4] },
+      { label: 'Drawdown',       stroke: neg, width: 1.5, fill: neg + '35' },
     ],
   };
 }
@@ -522,24 +531,25 @@ function vixOpts(w, h) {
   };
 }
 
-function pnlOpts(w, h) {
+function pnlOpts(w, h, market = 'SPY') {
   const base = baseAxes();
   const pos  = getColor('--pos');
   const a2   = getColor('--a2');
   const a3   = getColor('--a3');
+  const sym  = (market === 'BOVA11' || market === 'PETR4') ? 'R$' : '$';
   return {
     width: w, height: h, ...base,
     axes: [
       base.axes[0],
-      { ...base.axes[1], values: (_, splits) => splits.map(v => (v >= 0 ? '+$' : '-$') + Math.round(Math.abs(v) / 1000) + 'k') },
+      { ...base.axes[1], values: (_, splits) => splits.map(v => (v >= 0 ? `+${sym}` : `-${sym}`) + Math.round(Math.abs(v) / 1000) + 'k') },
     ],
     scales: { y: { range: (u, dmin, dmax) => [Math.min(dmin, 0), dmax] } },
     series: [
       {},
       { stroke: 'transparent', fill: 'transparent', width: 0 },
-      { label: 'RF',      stroke: a3 + 'aa', width: 1, fill: a3 + '55' },
-      { label: 'Underlying', stroke: a2 + 'aa', width: 1, fill: a2 + '55' },
-      { label: 'Options', stroke: pos,        width: 2, fill: pos + '44' },
+      { label: 'RF',          stroke: a3 + 'aa', width: 1, fill: a3 + '55' },
+      { label: `${market}`,   stroke: a2 + 'aa', width: 1, fill: a2 + '55' },
+      { label: 'Options',     stroke: pos,        width: 2, fill: pos + '44' },
     ],
     bands: [
       { series: [1, 2], fill: a3 + '55' },

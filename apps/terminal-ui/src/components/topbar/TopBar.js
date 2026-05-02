@@ -6,6 +6,7 @@ import { renderButton } from '../primitives/Button.js';
 export function renderTopBar() {
   const { params, status, lastRun, progress } = store;
   const running = status === 'running';
+  const market  = (params.market || 'spy').toUpperCase();
 
   let runLabel = 'No runs yet';
   if (running && progress) {
@@ -18,7 +19,7 @@ export function renderTopBar() {
 
   return `
     <header class="topbar">
-      <span class="brand">▸ SPY BACKTEST</span>
+      <span class="brand">▸ ${market} BACKTEST</span>
       <span class="spacer"></span>
       <span class="topbar-meta">${runLabel}</span>
       ${renderButton({ id: 'btn-history', label: '◷ HISTORY' })}

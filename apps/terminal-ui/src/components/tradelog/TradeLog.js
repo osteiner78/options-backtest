@@ -1,5 +1,5 @@
 import { store, toggleTradeLog, setTradeLogFilter } from '../../store.js';
-import { formatPnl, formatPct, formatNum } from '../../utils/format.js';
+import { formatPnl, formatPct, formatNum, currencySymbol } from '../../utils/format.js';
 
 const EXIT_COLORS = {
   PROFIT: 'c-pos', ROLLED: 'c-pur', '21DTE': 'c-blue',
@@ -14,7 +14,9 @@ function filterTrades(trades, filter) {
 }
 
 export function renderTradeLog() {
-  const { results, tradeLogOpen, tradeLogFilter } = store;
+  const { results, tradeLogOpen, tradeLogFilter, params } = store;
+  const sym = currencySymbol(params.market);
+  const fp  = (v) => formatPnl(v, sym);
   const allTrades = results ? results.trades : [];
   const trades = filterTrades(allTrades, tradeLogFilter);
 
@@ -79,7 +81,7 @@ function renderRow(t, hasIC) {
       <td class="r">$${formatNum(t.net_credit, 2)}</td>
       <td>${t.exit_date || '--'}</td>
       <td class="${EXIT_COLORS[t.exit_type] || ''} fw6">${t.exit_type || '--'}</td>
-      <td class="r ${t.pnl >= 0 ? 'c-pos' : 'c-neg'}">${t.pnl != null ? formatPnl(t.pnl) : '--'}</td>
+      <td class="r ${t.pnl >= 0 ? 'c-pos' : 'c-neg'}">${t.pnl != null ? fp(t.pnl) : '--'}</td>
       <td class="r ${t.pnl_pct >= 0 ? 'c-pos' : 'c-neg'}">${t.pnl_pct != null ? formatPct(t.pnl_pct) : '--'}</td>
     </tr>
   `;

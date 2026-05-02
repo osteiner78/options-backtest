@@ -1,5 +1,5 @@
 import { store } from '../../store.js';
-import { formatPct, formatPnl } from '../../utils/format.js';
+import { formatPct, formatPnl, currencySymbol } from '../../utils/format.js';
 import { computeExitStats, computeVixRegimeStats, VIX_REGIMES } from '../../utils/derive.js';
 
 const EXIT_COLORS = {
@@ -8,7 +8,9 @@ const EXIT_COLORS = {
 };
 
 export function renderTableGrid() {
-  const { results } = store;
+  const { results, params } = store;
+  const sym = currencySymbol(params.market);
+  const fp  = (v) => formatPnl(v, sym);
   if (!results || !results.trades) {
     return `
       <div class="tables-row">
@@ -48,15 +50,15 @@ export function renderTableGrid() {
                 <td class="r">${d.n}</td>
                 <td class="r c-dim">${(d.pct * 100).toFixed(0)}%</td>
                 <td class="r ${winRateClass(d.winRate)}">${(d.winRate * 100).toFixed(0)}%</td>
-                <td class="r ${d.avgPnl >= 0 ? 'c-pos' : 'c-neg'}">${formatPnl(d.avgPnl)}</td>
-                <td class="r ${d.totalPnl >= 0 ? 'c-pos' : 'c-neg'}">${formatPnl(d.totalPnl)}</td>
+                <td class="r ${d.avgPnl >= 0 ? 'c-pos' : 'c-neg'}">${fp(d.avgPnl)}</td>
+                <td class="r ${d.totalPnl >= 0 ? 'c-pos' : 'c-neg'}">${fp(d.totalPnl)}</td>
               </tr>
             `).join('')}
             <tr class="tot">
               <td>TOTAL</td><td class="r">${totalN}</td><td class="r">100%</td>
               <td class="r c-pos">${(metrics.win_rate * 100).toFixed(0)}%</td>
-              <td class="r c-pos">${formatPnl(metrics.avg_pnl)}</td>
-              <td class="r c-pos">${formatPnl(optionsTotalPnl)}</td>
+              <td class="r c-pos">${fp(metrics.avg_pnl)}</td>
+              <td class="r c-pos">${fp(optionsTotalPnl)}</td>
             </tr>
             <!-- SKIPPED row: below TOTAL, not included in % or P&L accounting -->
             <tr class="skipped-sep"><td colspan="6"></td></tr>
@@ -94,8 +96,8 @@ export function renderTableGrid() {
             <tr class="tot">
               <td>TOTAL</td><td class="r"></td><td class="r">${totalN}</td>
               <td class="r c-pos">${(metrics.win_rate * 100).toFixed(0)}%</td>
-              <td class="r c-pos">${formatPnl(metrics.avg_pnl)}</td>
-              <td class="r c-pos">${formatPnl(optionsTotalPnl)}</td>
+              <td class="r c-pos">${fp(metrics.avg_pnl)}</td>
+              <td class="r c-pos">${fp(optionsTotalPnl)}</td>
             </tr>
           </tbody>
         </table>

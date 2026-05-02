@@ -18,12 +18,17 @@ export const parameterSections = [
   {
     id: 'BACKTEST', title: 'BACKTEST',
     params: [
+      { key: 'market', label: 'market', color: 'amber',
+        transform: v => String(v).toUpperCase(),
+        options: ['spy', 'bova11', 'petr4'],
+        tooltip: 'Underlying market. SPY (US): Yahoo Finance + SPY options DB. BOVA11 / PETR4 (B3 Brazil): COTAHIST parquet + B3 options DB.' },
       { key: 'start_date',      label: 'start',   color: 'amber', type: 'date',
-        tooltip: 'Backtest start date. Market mode requires data from 2008 onwards.' },
+        tooltip: 'Backtest start date. SPY market mode requires ≥ 2008. BOVA11 ≥ 2015. PETR4 ≥ 2010.' },
       { key: 'end_date',        label: 'end',     color: 'amber', type: 'date',
         tooltip: 'Backtest end date.' },
-      { key: 'initial_balance', label: 'balance', format: v => '$' + Number(v).toLocaleString(),
-        tooltip: 'Starting portfolio value in dollars.' },
+      { key: 'initial_balance', label: 'balance',
+        format: v => Number(v).toLocaleString(),
+        tooltip: 'Starting portfolio value (in the selected market currency: USD for SPY, BRL for B3).' },
     ],
   },
 
