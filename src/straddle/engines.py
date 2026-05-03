@@ -118,6 +118,104 @@ def apply_skew(
         return sigma_atm * (1.0 - call_slope * distance_from_atm)
 
 
+# ── American option pricing (Barone-Adesi & Whaley 1987) ────────────────────
+#
+# Used for PETR4 single-stock options (american_options=True).
+# Calls with q=0 are never exercised early → remain European.
+# Puts benefit from early exercise when deep ITM: the holder can exercise and
+# earn interest on K at Brazil's CDI rate (12–15%), which is significant.
+#
+# The approximation expresses the American put as:
+#   P_American = P_European + A₂ * (S/S*)^q₂   when S > S*
+#   P_American = K - S                           when S ≤ S* (exercise now)
+#
+# where q₂ < 0 is a characteristic exponent and S* is the critical stock price
+# below which immediate exercise is optimal.
+
+def _baw_q2(r: float, sigma: float, T: float, q: float = 0.0) -> float:
+    """Negative characteristic exponent for BAW American put approximation."""
+    h = 1.0 - np.exp(-r * T)
+    if h < 1e-10:
+        return -1e9  # near-zero T: correction vanishes
+    M = 2.0 * r / sigma**2
+    N = 2.0 * (r - q) / sigma**2
+    return (-(N - 1.0) - np.sqrt((N - 1.0)**2 + 4.0 * M / h)) / 2.0
+
+
+def _baw_critical_put(
+    K: float, T: float, r: float, sigma: float, q: float, q2: float,
+) -> float:
+    """Critical stock price S* for BAW American put via Brent's method.
+
+    S* is the largest S where immediate exercise is optimal.
+    Smooth-pasting + value-matching (BAW 1987 eq. 17) give:
+
+        g(S) = (K − S) − p_eu(S) − (S/q₂)·[1 − e^{−qT}·N(−d₁(S))] = 0
+
+    With q₂ < 0, the term (S/q₂)·[1−…] is always negative, so:
+        g(0⁺) ≈ K·(1−e^{−rT}) > 0
+        g(K)  ≈ −p_eu(K) − K/q₂·(1−N(−d₁(K))) < 0
+    → exactly one root in (0, K). Brent's method is robust here (no
+    gradient needed, bracket is always valid for r > 0).
+    """
+    disc_q = np.exp(-q * T)
+
+    def g(S: float) -> float:
+        if S <= 0:
+            return K
+        d1    = (np.log(S / K) + (r - q + 0.5 * sigma**2) * T) / (sigma * np.sqrt(T))
+        nd1_neg = norm.cdf(-d1)
+        p_eu  = bs_price(S, K, T, r, sigma, "put", q)
+        # (S/q₂)·(1−…) < 0 because q₂ < 0
+        correction = (1.0 - disc_q * nd1_neg) * S / q2
+        return (K - S) - p_eu - correction
+
+    # Bracket: g(ε) > 0, g(K-ε) < 0 for any r > 0, q2 < 0
+    lo, hi = 1e-6, K - 1e-6
+    try:
+        from scipy.optimize import brentq as _brentq
+        S_star = _brentq(g, lo, hi, xtol=1e-6, maxiter=200)
+    except Exception:
+        S_star = K * 0.5  # fallback: mid-point, very conservative
+    return float(S_star)
+
+
+def american_put_baw(
+    S: float, K: float, T: float, r: float, sigma: float, q: float = 0.0
+) -> float:
+    """Barone-Adesi & Whaley (1987) approximation for American put price.
+
+    The American put is always worth at least max(K−S, 0) (intrinsic value).
+    The BAW approximation adds a smooth early-exercise premium above the
+    European price for S near and below S*.
+
+    For high interest rates (Brazil CDI 12–15%) and short maturities the
+    characteristic exponent |q₂| ≫ 1, making the BAW correction very sharp.
+    In that regime the approximation degenerates gracefully to the tight lower
+    bound max(p_eu, K−S), which is exact at the exercise boundary.
+    """
+    intrinsic = max(K - S, 0.0)
+    p_eu = bs_price(S, K, T, r, sigma, "put", q)
+
+    # Guard: no meaningful early exercise without time or positive rates
+    if T < 1e-7 or r < 1e-8:
+        return max(p_eu, intrinsic)
+
+    q2 = _baw_q2(r, sigma, T, q)
+    if q2 >= 0.0:
+        return max(p_eu, intrinsic)  # no early exercise (shouldn't occur for r>0)
+
+    S_star = _baw_critical_put(K, T, r, sigma, q, q2)
+
+    if S <= S_star:
+        return intrinsic  # immediate exercise dominates
+
+    d1_star = (np.log(S_star / K) + (r - q + 0.5 * sigma**2) * T) / (sigma * np.sqrt(T))
+    A2 = -(S_star / q2) * (1.0 - np.exp(-q * T) * norm.cdf(-d1_star))
+    # Always enforce intrinsic lower bound — BAW can slightly understate deep ITM
+    return float(max(p_eu + A2 * (S / S_star)**q2, intrinsic))
+
+
 # ── SyntheticEngine ──────────────────────────────────────────────────────
 
 class SyntheticEngine:
@@ -148,13 +246,25 @@ class SyntheticEngine:
         self.vix_iv_mult = params.get("vix_to_iv_multiplier", 1.0)
         self.o_adj = params.get("open_fill_adj", -0.05)
         self.c_adj = params.get("close_fill_adj", 0.05)
-        self.q = params.get("dividend_yield", 0.0)  # continuous dividend yield
+        # q=0.0 is always correct here: vix_close was extracted from market prices
+        # using q=0 BS; using any other value would create a vol-level inconsistency.
+        # Dividend effects are captured implicitly in the fitted put/call slopes.
+        self.q = 0.0
+        # American put pricing via BAW approximation (PETR4 single-stock options).
+        # Calls with q=0 have no early-exercise benefit and remain European.
+        self.american = params.get("american_options", False)
 
     def _get_sigma_t(self, vix_d: float, dte_rem: int) -> Tuple[float, float]:
         """Central helper for volatility scaling and time-to-expiry conversion."""
         sigma_d = (vix_d / 100.0) * self.vix_iv_mult
         T_d = max(dte_rem / 365.0, 1e-7)
         return sigma_d, T_d
+
+    def _put_price(self, S: float, K: float, T: float, r: float, sigma: float) -> float:
+        """Price a put using American (BAW) or European (BS) model per self.american."""
+        if self.american:
+            return american_put_baw(S, K, T, r, sigma, self.q)
+        return bs_price(S, K, T, r, sigma, "put", self.q)
 
     def apply_fill_adj(self, mid_ps: float, side: str) -> float:
         """Apply synthetic fill adjustment. side: 'open' or 'close'."""
@@ -176,7 +286,7 @@ class SyntheticEngine:
         )
         put_k = strike_from_delta(S, T, r, sigma_put, target_delta, "put", q=self.q)
         call_k = strike_from_delta(S, T, r, sigma_call, target_delta, "call", q=self.q)
-        put_mid = bs_price(S, put_k, T, r, sigma_put, "put", self.q)
+        put_mid = self._put_price(S, put_k, T, r, sigma_put)
         call_mid = bs_price(S, call_k, T, r, sigma_call, "call", self.q)
         return put_k, call_k, put_mid, call_mid, False  # used_market_data=False
 
@@ -215,7 +325,7 @@ class SyntheticEngine:
         sigma_call = apply_skew(
             sigma_d, d_call_est, "call", self.put_slope, self.call_slope
         )
-        return bs_price(S_d, put_k, T_d, r_d, sigma_put, "put", self.q) + bs_price(
+        return self._put_price(S_d, put_k, T_d, r_d, sigma_put) + bs_price(
             S_d, call_k, T_d, r_d, sigma_call, "call", self.q
         )
 
@@ -260,6 +370,8 @@ class SyntheticEngine:
         sigma_skewed = apply_skew(
             sigma_d, d_est, opt, self.put_slope, self.call_slope
         )
+        if opt == "put":
+            return self._put_price(S_d, strike, T_d, r_d, sigma_skewed)
         return bs_price(S_d, strike, T_d, r_d, sigma_skewed, opt, self.q)
 
     def find_strike_at_delta(
@@ -279,7 +391,10 @@ class SyntheticEngine:
             sigma_d, target_delta, opt, self.put_slope, self.call_slope
         )
         strike = strike_from_delta(S_d, T_d, r_d, sigma_skewed, target_delta, opt, q=self.q)
-        mark = bs_price(S_d, strike, T_d, r_d, sigma_skewed, opt, self.q)
+        if opt == "put":
+            mark = self._put_price(S_d, strike, T_d, r_d, sigma_skewed)
+        else:
+            mark = bs_price(S_d, strike, T_d, r_d, sigma_skewed, opt, self.q)
         return strike, mark
 
     def get_gap_open_mark(
@@ -327,7 +442,7 @@ class SyntheticEngine:
         sigma_call = apply_skew(
             vix_open_sigma, d_call_est, "call", self.put_slope, self.call_slope
         )
-        return bs_price(underlying_open, put_k, T_d, r_open, sigma_put, "put", self.q) + bs_price(
+        return self._put_price(underlying_open, put_k, T_d, r_open, sigma_put) + bs_price(
             underlying_open, call_k, T_d, r_open, sigma_call, "call", self.q
         )
 

@@ -51,7 +51,7 @@ class PricingParams(TypedDict, total=False):
     call_slope: float
     vix_to_iv_multiplier: float
     contract_multiplier: float  # shares per contract (100 for both US and B3 equity options)
-    dividend_yield: float       # continuous dividend yield q (0.0 = standard BS)
+    american_options: bool      # True → use BAW approximation for put pricing (PETR4)
 
 
 class OvershootParams(TypedDict, total=False):
@@ -180,8 +180,8 @@ MARKET_PRESETS: dict = {
         "currency": "USD",
         "vix_to_iv_multiplier": 1.15,
         "contract_multiplier": 100.0,
-        "commission_per_leg": 1.00,   # USD per leg
-        "dividend_yield": 0.0,        # kept at 0 — existing SPY results unchanged
+        "commission_per_leg": 1.00,    # USD per leg
+        "american_options": False,     # SPY options are European-style (cash-settled)
     },
     "bova11": {
         "market": "bova11",
@@ -189,34 +189,18 @@ MARKET_PRESETS: dict = {
         "options_db_path": "data/B3/b3_options.db",
         "calendar": "BVMF",
         "currency": "BRL",
-        "vix_to_iv_multiplier": 1.00,   # vix_close for B3 IS the actual ATM IV
+        "vix_to_iv_multiplier": 1.00,  # vix_close for B3 IS the actual ATM IV
         "contract_multiplier": 100.0,
-        "commission_per_leg": 1.00,     # R$ per leg (typical B3 retail: R$0.50–1.50)
+        "commission_per_leg": 1.00,    # R$ per leg (typical B3 retail: R$0.50–1.50)
         # Fitted from b3_options.db (2017–2026) via scripts/fit_b3_skew.py.
         # put_slope=0.743: B3 put skew is ~2.5× steeper than SPY — emerging-market
         # tail-risk demand drives strong OTM put premiums.
         # call_slope=0.031: near-flat; shifted from +0.30 (2019–2022) to −0.10
         # (2024–2026), full-sample average reflects the structural transition.
+        # Slopes encode dividend effects implicitly — no separate q parameter.
         "put_slope":  0.743,
         "call_slope": 0.031,
-        # dividend_yield=0.0 — correct for both market mode and current synthetic mode:
-        #
-        # Market mode: MarketEngine uses real COTAHIST bid/ask directly; dividends
-        # are already priced in by the market. The stored delta is only used for
-        # approximate 16Δ strike selection (error ~0.002, negligible). No correction
-        # needed.
-        #
-        # Synthetic mode: vix_close was extracted from market prices using q=0, so
-        # using q=0 here keeps the vol input and the model convention consistent.
-        # More importantly, the fitted put_slope/call_slope were derived from real
-        # market prices that already reflect dividends — they encode the dividend
-        # effect implicitly. Setting q>0 alongside a q=0-derived vix_close would
-        # double-count the dividend and cause systematic mispricing.
-        #
-        # To properly enable q>0 in synthetic mode, rebuild vix_close with
-        # dividend-adjusted IV (set dividend_yield in build_b3_parquets.py and
-        # rerun), then refit the skew slopes from the adjusted IV surface.
-        "dividend_yield": 0.0,
+        "american_options": False,     # BOVA11 is an ETF — options are European-style
     },
     "petr4": {
         "market": "petr4",
@@ -226,20 +210,20 @@ MARKET_PRESETS: dict = {
         "currency": "BRL",
         "vix_to_iv_multiplier": 1.00,
         "contract_multiplier": 100.0,
-        "commission_per_leg": 1.00,     # R$ per leg
+        "commission_per_leg": 1.00,    # R$ per leg
         # Fitted from b3_options.db (2010–2026) via scripts/fit_b3_skew.py.
         # put_slope=0.523: moderate put skew, stable at 0.40–0.66 across years.
         # call_slope=-0.057: consistently negative — PETR4 calls trade above ATM IV,
         # reflecting dividend-adjusted forward pricing and oil-price optionality.
-        # Note: the negative call_slope directly encodes the dividend effect: with
-        # a lower dividend-adjusted forward, OTM calls appear cheaper vs ATM,
-        # so the fitted slope is negative. No separate q parameter needed.
+        # Slopes encode dividend effects implicitly — no separate q parameter.
         "put_slope":  0.523,
         "call_slope": -0.057,
-        # See bova11 comment above — same reasoning applies.
-        # PETR4 actual yield varies widely (5–40% in 2022–2023) making a fixed q
-        # a poor approximation; the fitted slopes are more robust.
-        "dividend_yield": 0.0,
+        # PETR4 options are American-style (B3 single-stock equity options).
+        # Early exercise of puts is optimal when deep ITM, driven by the interest
+        # earned on K at Brazil's high CDI rate (12–15%). The BAW approximation
+        # (Barone-Adesi & Whaley 1987) is used in SyntheticEngine for put pricing.
+        # Calls with q=0 have no early-exercise benefit → remain European.
+        "american_options": True,
     },
 }
 
