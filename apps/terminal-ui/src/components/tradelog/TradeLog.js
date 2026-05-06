@@ -46,7 +46,7 @@ export function renderTradeLog() {
             <th>Exit Date</th><th>Type</th><th class="r">P&L $</th><th class="r">P&L %</th>
           </tr></thead>
           <tbody>
-            ${trades.map(t => renderRow(t, hasIC)).join('')}
+            ${trades.map(t => renderRow(t, hasIC, fp, sym)).join('')}
           </tbody>
         </table>
       </div>
@@ -54,7 +54,7 @@ export function renderTradeLog() {
   `;
 }
 
-function renderRow(t, hasIC) {
+function renderRow(t, hasIC, fp, sym) {
   const rollBadge = t.roll_count > 0
     ? `<span class="tl-tag c-pur" title="Rolled ${t.roll_count}×">R${t.roll_count}</span>`
     : '';
@@ -78,7 +78,7 @@ function renderRow(t, hasIC) {
       <td class="r">${t.put_strike}</td>
       <td class="r">${t.call_strike}</td>
       ${wings}
-      <td class="r">$${formatNum(t.net_credit, 2)}</td>
+      <td class="r">${sym}${formatNum(t.net_credit, 2)}</td>
       <td>${t.exit_date || '--'}</td>
       <td class="${EXIT_COLORS[t.exit_type] || ''} fw6">${t.exit_type || '--'}</td>
       <td class="r ${t.pnl >= 0 ? 'c-pos' : 'c-neg'}">${t.pnl != null ? fp(t.pnl) : '--'}</td>

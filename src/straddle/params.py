@@ -189,7 +189,9 @@ MARKET_PRESETS: dict = {
         "options_db_path": "data/B3/b3_options.db",
         "calendar": "BVMF",
         "currency": "BRL",
-        "vix_to_iv_multiplier": 1.00,  # vix_close for B3 IS the actual ATM IV
+        # vix_close for B3 is loaded as percentage points (ATM IV × 100) so
+        # vix_to_iv_multiplier=1.0 and the /100 in SyntheticEngine cancel correctly.
+        "vix_to_iv_multiplier": 1.00,
         "contract_multiplier": 100.0,
         "commission_per_leg": 1.00,    # R$ per leg (typical B3 retail: R$0.50–1.50)
         # Fitted from b3_options.db (2017–2026) via scripts/fit_b3_skew.py.
@@ -201,6 +203,9 @@ MARKET_PRESETS: dict = {
         "put_slope":  0.743,
         "call_slope": 0.031,
         "american_options": False,     # BOVA11 is an ETF — options are European-style
+        # BOVA11 ATM IV is typically 15–35 VIX units; cap at 50 to avoid blocking
+        # most of the backtest in high-vol regimes that are normal for Brazil.
+        "vix_entry_max": 50.0,
     },
     "petr4": {
         "market": "petr4",
@@ -224,6 +229,9 @@ MARKET_PRESETS: dict = {
         # (Barone-Adesi & Whaley 1987) is used in SyntheticEngine for put pricing.
         # Calls with q=0 have no early-exercise benefit → remain European.
         "american_options": True,
+        # PETR4 ATM IV is typically 25–60 VIX units; cap at 80 to avoid blocking
+        # most entries — crisis spikes (>80) are still filtered.
+        "vix_entry_max": 80.0,
     },
 }
 

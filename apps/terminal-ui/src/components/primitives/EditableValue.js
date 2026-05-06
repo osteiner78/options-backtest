@@ -5,7 +5,7 @@ export function renderEditableValue({ key, value, color = '', displayValue, type
 
 /**
  * Delegated edit binding. On click of any `.pv[data-key]` inside `root`,
- * replace its text with an <input> (text or date). Commit on blur/Enter/change.
+ * replace its text with an <input>. Commit on blur or Enter; Escape cancels.
  */
 export function bindEditableValues(root, onCommit) {
   const rootEl = typeof root === 'string' ? document.querySelector(root) : root;
@@ -22,13 +22,13 @@ export function bindEditableValues(root, onCommit) {
     const originalText = pv.textContent;
     const input = document.createElement('input');
     input.className = type === 'date' ? 'pv-input pv-date' : 'pv-input';
-    input.value = type === 'date' ? String(pv.textContent).trim() : originalText;
-    if (type === 'date') input.type = 'date';
+    input.value = originalText;
+    if (type === 'date') input.placeholder = 'YYYY-MM-DD';
 
     pv.textContent = '';
     pv.appendChild(input);
     input.focus();
-    if (type !== 'date') input.select();
+    input.select();
 
     let committed = false;
     const finish = (commit) => {
@@ -40,14 +40,7 @@ export function bindEditableValues(root, onCommit) {
       else pv.textContent = originalText;
     };
 
-    if (type === 'date') {
-      // Date inputs commit on change (calendar selection) or Enter.
-      // Blur can fire spuriously when the native calendar opens — guard with committed flag.
-      input.addEventListener('change', () => finish(true));
-      input.addEventListener('blur',   () => finish(false)); // cancel on blur (don't overwrite on tab)
-    } else {
-      input.onblur = () => finish(true);
-    }
+    input.onblur = () => finish(true);
 
     input.onkeydown = (ev) => {
       if (ev.key === 'Enter')  { ev.preventDefault(); finish(true); }

@@ -15,6 +15,25 @@ from straddle.engines import PricingContext
 
 # ── Calendar utilities ───────────────────────────────────────────────────
 
+# Module-level cache: built once per calendar name, valid 2005–2030.
+# Avoids creating mcal calendar objects and querying single-day schedules
+# inside the hot backtest loop (get_monthly_expiration is called every
+# trading day during roll management).
+_TRADING_DAY_SETS: dict = {}  # calendar_name -> frozenset[pd.Timestamp]
+
+
+def _get_trading_day_set(calendar: str) -> frozenset:
+    if calendar not in _TRADING_DAY_SETS:
+        try:
+            import pandas_market_calendars as mcal
+            cal = mcal.get_calendar(calendar)
+            days = cal.valid_days("2005-01-01", "2030-12-31")
+            _TRADING_DAY_SETS[calendar] = frozenset(d.normalize() for d in days)
+        except Exception:
+            _TRADING_DAY_SETS[calendar] = frozenset()
+    return _TRADING_DAY_SETS[calendar]
+
+
 def get_third_friday(year: int, month: int) -> pd.Timestamp:
     """3rd Friday of the given month — standard monthly option expiration (US and B3)."""
     first = pd.Timestamp(year=year, month=month, day=1)
@@ -24,23 +43,19 @@ def get_third_friday(year: int, month: int) -> pd.Timestamp:
 def _adjust_for_holiday(date: pd.Timestamp, calendar: str = "NYSE") -> pd.Timestamp:
     """Roll a date back to the nearest prior trading day if it falls on a holiday.
 
-    Uses pandas_market_calendars when available (supports "NYSE" and "BVMF").
-    Falls back to a simple weekday check otherwise (catches weekends only).
+    Uses a pre-fetched frozenset of valid trading days (O(1) lookup) rather than
+    per-call schedule queries, which were the main backtest performance bottleneck.
     """
-    try:
-        import pandas_market_calendars as mcal
-        cal = mcal.get_calendar(calendar)
-        date_str = str(date.date())
-        schedule = cal.schedule(date_str, date_str)
-        if schedule.empty:
-            candidate = date - pd.Timedelta(days=1)
-            for _ in range(7):
-                s = cal.schedule(str(candidate.date()), str(candidate.date()))
-                if not s.empty:
-                    return candidate
-                candidate -= pd.Timedelta(days=1)
-    except Exception:
-        pass
+    trading_days = _get_trading_day_set(calendar)
+    if not trading_days:
+        return date  # fallback: no calendar data, return as-is
+    d = date.normalize()
+    if d in trading_days:
+        return date
+    for _ in range(7):
+        d -= pd.Timedelta(days=1)
+        if d in trading_days:
+            return d
     return date
 
 
