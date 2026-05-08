@@ -26,6 +26,7 @@ from straddle.strategy import (
     evaluate_trade_step,
     TradeStepResult,
     build_entry,
+    is_vol_blocked,
 )
 
 
@@ -281,11 +282,11 @@ def run_portfolio_backtest(
 
         trades: List[Trade] = []
         trade_num = 0
-        _vix_blocked_exps: set = set()  # unique expiration dates blocked by VIX filter
+        _vol_blocked_exps: set = set()
         comm_per_leg = params.get("commission_per_leg", 1.0)
 
-        vix_filter_enabled = params.get("vix_entry_filter_enabled", False)
-        vix_entry_max = params.get("vix_entry_max", 30.0)
+        if "vix_entry_filter_enabled" in params:
+            pass  # handled by is_vol_blocked for backward compat
 
         cash_yield_annual = params.get("cash_yield_annual", 0.04)
         daily_rf_rate = cash_yield_annual / 252.0
@@ -379,13 +380,13 @@ def run_portfolio_backtest(
             # then again with the real expiration). We price with the real
             # expiration from the start and use those marks for both the BPR
             # capacity check and the actual trade entry.
-            vix_blocks_entry = vix_filter_enabled and vix_d > vix_entry_max
+            vol_blocks_entry = is_vol_blocked(eval_date, vix_d, params, data)
             new_exp = get_monthly_expiration(eval_date, params["dte_min"], params["dte_max"], params.get("calendar", "NYSE"))
-            if new_exp is not None and vix_blocks_entry:
-                if new_exp not in _vix_blocked_exps:
+            if new_exp is not None and vol_blocks_entry:
+                if new_exp not in _vol_blocked_exps:
                     portfolio.vix_blocked_dates.append((eval_date, vix_d))
-                _vix_blocked_exps.add(new_exp)
-            if new_exp is not None and not vix_blocks_entry:
+                _vol_blocked_exps.add(new_exp)
+            if new_exp is not None and not vol_blocks_entry:
                 entry_dte = (new_exp - eval_date).days
                 T_new = entry_dte / 365.0
                 entry_ctx = PricingContext(eval_date=eval_date, expiration=new_exp)
@@ -485,7 +486,7 @@ def run_portfolio_backtest(
         if not equity_df.empty:
             equity_df.set_index("date", inplace=True)
 
-        return trades, equity_df, portfolio, len(_vix_blocked_exps)
+        return trades, equity_df, portfolio, len(_vol_blocked_exps)
     finally:
         if created_engine and hasattr(engine, "close"):
             engine.close()

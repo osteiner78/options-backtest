@@ -39,6 +39,14 @@ _ALPHA_DEFAULTS: dict[str, float] = {
     "alpha_sharpe": 0.0,
 }
 
+_CHAIN_DEFAULTS: dict[str, object] = {
+    "n_chains": 0,
+    "n_rolls_total": 0,
+    "avg_rolls_per_chain": 0.0,
+    "max_rolls_per_chain": 0,
+    "chain_length_dist": {},
+}
+
 _SQRT252 = 15.874507866387544
 
 
@@ -47,17 +55,33 @@ def _apply_grid_overrides(combo: dict) -> dict:
     for key in GRID_DIMS:
         val = combo[key]
         if key == "vix_filter":
-            if val == "OFF":
-                overrides["vix_entry_filter_enabled"] = False
-                overrides["vix_entry_max"] = 999.0
-            else:
-                overrides["vix_entry_filter_enabled"] = True
-                overrides["vix_entry_max"] = float(val)
+            overrides = _apply_vol_filter(val, overrides)
         elif key == "defensive_leg_roll":
             overrides["defensive_leg_roll_enabled"] = bool(val)
         else:
             overrides[key] = val
     overrides["dte_min"] = DTE_MIN_BY_DTE_MAX[combo["dte_max"]]
+    return overrides
+
+
+def _apply_vol_filter(val: object, overrides: dict) -> dict:
+    s = str(val)
+    if s.upper() == "OFF":
+        overrides["vol_filter_mode"] = "off"
+        overrides["vol_filter_threshold"] = 0.0
+        overrides["vix_entry_filter_enabled"] = False
+        overrides["vix_entry_max"] = 999.0
+    elif s.startswith("rv_pct:"):
+        overrides["vol_filter_mode"] = "rv_pct"
+        overrides["vol_filter_threshold"] = float(s.split(":")[1])
+    elif s.startswith("ivr:"):
+        overrides["vol_filter_mode"] = "ivr"
+        overrides["vol_filter_threshold"] = float(s.split(":")[1])
+    else:
+        overrides["vol_filter_mode"] = "vix"
+        overrides["vol_filter_threshold"] = float(s)
+        overrides["vix_entry_filter_enabled"] = True
+        overrides["vix_entry_max"] = float(s)
     return overrides
 
 
@@ -90,6 +114,34 @@ def _compute_alpha(equity_df: pd.DataFrame, data: pd.DataFrame,
         - float(metrics.get("underlying_total_return", 0.0))
     )
     return {"alpha_vs_bh": alpha_vs_bh, "alpha_sharpe": alpha_sr}
+
+
+def _compute_chain_diagnostics(trades: list) -> dict[str, object]:
+    roots = [t for t in trades if getattr(t, "parent_trade_num", None) is None]
+    n_chains = len(roots)
+    n_rolls = len(trades) - n_chains
+    chain_lengths: dict[int, int] = {}
+    for t in roots:
+        depth = 0
+        child = t
+        while getattr(child, "child_trade_num", None) is not None:
+            child_num = child.child_trade_num
+            matches = [tr for tr in trades if tr.trade_num == child_num]
+            if matches:
+                child = matches[0]
+                depth += 1
+            else:
+                break
+        chain_lengths[depth] = chain_lengths.get(depth, 0) + 1
+    max_chain = max(chain_lengths) if chain_lengths else 0
+    avg_rolls = n_rolls / n_chains if n_chains > 0 else 0.0
+    return {
+        "n_chains": n_chains,
+        "n_rolls_total": n_rolls,
+        "avg_rolls_per_chain": avg_rolls,
+        "max_rolls_per_chain": max_chain,
+        "chain_length_dist": str(chain_lengths),
+    }
 
 
 def _run_one(market: str, period_label: str, start_date: str, end_date: str,
@@ -128,6 +180,7 @@ def _run_one(market: str, period_label: str, start_date: str, end_date: str,
         for out_key, src_key, default in METRICS_KEYS:
             row[out_key] = metrics.get(src_key, default)
         row.update(_compute_alpha(equity_df, data, metrics, params))
+        row.update(_compute_chain_diagnostics(trades))
         row["error"] = None
         return row
     except Exception as e:
@@ -139,6 +192,7 @@ def _run_one(market: str, period_label: str, start_date: str, end_date: str,
         for out_key, src_key, default in METRICS_KEYS:
             row[out_key] = 0 if default == 0 else 0.0
         row.update(_ALPHA_DEFAULTS)
+        row.update(_CHAIN_DEFAULTS)
         row["error"] = str(e)
         return row
 

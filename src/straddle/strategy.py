@@ -7,10 +7,80 @@ entry/exit logic, position tracking, roll management, and defensive leg rolls.
 from dataclasses import dataclass, field
 from typing import List, Optional, Tuple
 
+import numpy as np
 import pandas as pd
 from tqdm import tqdm
 from straddle.params import RISK_FREE_RATE_DEFAULT
 from straddle.engines import PricingContext
+
+
+# ── Volatility filter cache ───────────────────────────────────────────────
+
+_VOL_CACHE: dict = {}  # key: (id(data), mode, threshold) → bool Series
+
+
+def _build_vol_filter(data: pd.DataFrame, params: dict) -> pd.Series:
+    """Return a boolean Series: True = entry/roll BLOCKED on that date."""
+    mode = str(params.get("vol_filter_mode", "vix"))
+    threshold = float(params.get("vol_filter_threshold", 30.0))
+
+    cache_key = (id(data), mode, threshold)
+    if cache_key in _VOL_CACHE:
+        return _VOL_CACHE[cache_key]
+
+    prices = data["underlying_close"]
+    dates = prices.index
+
+    if mode == "off":
+        result = pd.Series(False, index=dates)
+
+    elif mode == "vix":
+        max_vix = float(params.get("vix_entry_max", 30.0))
+        vix_enabled = bool(params.get("vix_entry_filter_enabled", True))
+        if not vix_enabled:
+            result = pd.Series(False, index=dates)
+        else:
+            result = data.get("vix_close", pd.Series(0, index=dates)) > max_vix
+
+    elif mode == "rv_pct":
+        log_ret = np.log(prices / prices.shift(1))
+        rv = log_ret.rolling(20).std() * np.sqrt(252)
+        result = pd.Series(False, index=dates)
+        for i in range(252, len(rv)):
+            window = rv.iloc[max(0, i - 252):i + 1]
+            pct_rank = (rv.iloc[i] > window.values).mean()
+            result.iloc[i] = pct_rank > (threshold / 100.0)
+
+    elif mode == "ivr":
+        atm_iv = data.get("vix_close", pd.Series(0, index=dates))
+        result = pd.Series(True, index=dates)
+        for i in range(252, len(atm_iv)):
+            window = atm_iv.iloc[max(0, i - 252):i + 1]
+            ivr_val = (atm_iv.iloc[i] < window.values).mean()
+            result.iloc[i] = ivr_val < (threshold / 100.0)
+
+    else:
+        result = pd.Series(False, index=dates)
+
+    _VOL_CACHE[cache_key] = result
+    return result
+
+
+def is_vol_blocked(eval_date: pd.Timestamp, vix_d: float,
+                   params: dict, data: pd.DataFrame) -> bool:
+    """Check whether a new entry or roll should be blocked by the vol filter."""
+    mode = str(params.get("vol_filter_mode", "vix"))
+    if mode == "off":
+        return False
+    if mode == "vix":
+        if not params.get("vix_entry_filter_enabled", True):
+            return False
+        return vix_d > float(params.get("vix_entry_max", 30.0))
+
+    blocked = _build_vol_filter(data, params)
+    if eval_date in blocked.index:
+        return bool(blocked.loc[eval_date])
+    return False
 
 
 # ── Calendar utilities ───────────────────────────────────────────────────
@@ -649,13 +719,8 @@ def evaluate_trade_step(
 
     # C. 21-DTE / Roll
     elif dte_rem <= manage_at_dte:
-        # VIX filter applies to rolls too: if VIX is above the entry threshold,
-        # close flat instead of rolling into a new position.
-        _vix_blocks_roll = (
-            params.get("vix_entry_filter_enabled", False)
-            and vix_d > params.get("vix_entry_max", 30.0)
-        )
-        if roll_for_credit and trade.roll_count < max_rolls and not _vix_blocks_roll:
+        if roll_for_credit and trade.roll_count < max_rolls \
+                and not is_vol_blocked(eval_date, vix_d, params, data):
             _roll_dte_max = params.get("roll_dte_max", 60)
             new_exp = get_monthly_expiration(eval_date, params.get("dte_min", 30), _roll_dte_max, params.get("calendar", "NYSE"))
             if new_exp is not None:

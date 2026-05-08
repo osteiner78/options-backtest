@@ -119,6 +119,11 @@ STRATEGY: StrategyParams = {
     "single_position": True,
     "vix_entry_filter_enabled": True,
     "vix_entry_max": 35.0,
+    # Unified vol filter (replaces VIX-only with B3-native RV/IVR modes).
+    # Mode: "vix" (backward compat), "rv_pct", "ivr", "off".
+    # Threshold: VIX cap for "vix", percentile for "rv_pct", min IVR for "ivr".
+    "vol_filter_mode": "vix",
+    "vol_filter_threshold": 35.0,
     # Defensive leg roll — default OFF (see warning in strategy.py)
     "defensive_leg_roll_enabled": False,
     "defensive_trigger_delta": 0.30,

@@ -163,6 +163,52 @@ def _compute_equity_stats(equity_series: pd.Series, params: dict) -> Dict:
     }
 
 
+def _compute_mtm_equity(trades: list, params: dict) -> pd.Series:
+    """Build a daily MTM equity curve from individual trade daily_marks.
+
+    For each trade, compute daily P&L deltas from consecutive marks;
+    sum across all trades open on each day; accumulate into equity.
+    """
+    init = float(params.get("initial_balance", 50_000))
+    if not trades:
+        return pd.Series(dtype=float)
+
+    records: list[dict] = []
+    for t in trades:
+        marks = getattr(t, "daily_marks", []) or []
+        for date, mark in marks:
+            records.append({"date": date, "trade": t.trade_num, "mark": mark})
+
+    if not records:
+        return pd.Series(dtype=float)
+
+    df = pd.DataFrame(records).sort_values(["trade", "date"])
+    df["prev"] = df.groupby("trade")["mark"].shift(1).fillna(0.0)
+    df["delta"] = df["mark"] - df["prev"]
+
+    daily_pnl = df.groupby("date")["delta"].sum().sort_index()
+    equity = init + daily_pnl.cumsum()
+    return equity
+
+
+def _compute_sharpe_from_daily_pnl(daily_pnl: pd.Series, init: float) -> float:
+    """Sharpe ratio from a daily absolute-P&L series."""
+    if len(daily_pnl) < 2:
+        return 0.0
+    daily_ret = daily_pnl / init
+    if daily_ret.std(ddof=1) <= 0:
+        return 0.0
+    return float(daily_ret.mean() / daily_ret.std(ddof=1) * np.sqrt(252))
+
+
+def _compute_mdd_from_daily_pnl(daily_pnl: pd.Series, init: float) -> float:
+    """Max drawdown from a daily absolute-P&L series."""
+    cum = init + daily_pnl.cumsum()
+    pk = np.maximum.accumulate(cum.values)
+    dd = (cum.values - pk) / pk
+    return float(dd.min()) if len(dd) else 0.0
+
+
 def _compute_exit_stats(trades: List) -> List[Dict]:
     """Per-exit-type breakdown: count, pct of total, win%, avg P&L, total P&L.
 
@@ -308,8 +354,22 @@ def compute_portfolio_metrics(
     if equity_df.empty:
         return {}
 
-    # Equity stats from the provided total_equity column
+    # Equity stats from the provided total_equity column (correct for total_return)
     results = _compute_equity_stats(equity_df["total_equity"], params)
+
+    # Recompute Sharpe, MDD, Calmar from trade-level daily MTM marks.
+    # The portfolio equity curve mixes cash flows with unrealized P&L,
+    # producing noisy daily returns. Trade daily_marks are built directly
+    # from engine.get_daily_mark() each day and give clean MTM P&L deltas.
+    mtm_equity = _compute_mtm_equity(trades, params)
+    if not mtm_equity.empty and len(mtm_equity) > 1:
+        daily_pnl = mtm_equity.diff().dropna()
+        init = float(params.get("initial_balance", 50_000))
+        results["sharpe"] = _compute_sharpe_from_daily_pnl(daily_pnl, init)
+        results["mdd"] = _compute_mdd_from_daily_pnl(daily_pnl, init)
+        ann = float(results.get("ann", 0.0))
+        mdd = float(results.get("mdd", 0.0))
+        results["calmar"] = ann / abs(mdd) if mdd and mdd != 0 else 0.0
     
     # Include all trades so exit breakdown counts (including ROLLED) are correct.
     results.update(_compute_trade_stats(trades))
