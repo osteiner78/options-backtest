@@ -35,12 +35,12 @@ def _build_vol_filter(data: pd.DataFrame, params: dict) -> pd.Series:
         result = pd.Series(False, index=dates)
 
     elif mode == "vix":
-        max_vix = float(params.get("vix_entry_max", 30.0))
-        vix_enabled = bool(params.get("vix_entry_filter_enabled", True))
-        if not vix_enabled:
+        if not params.get("vix_entry_filter_enabled", True):
             result = pd.Series(False, index=dates)
         else:
-            result = data.get("vix_close", pd.Series(0, index=dates)) > max_vix
+            cap = float(params.get("vol_filter_threshold",
+                        params.get("vix_entry_max", 30.0)))
+            result = data.get("vix_close", pd.Series(0, index=dates)) > cap
 
     elif mode == "rv_pct":
         log_ret = np.log(prices / prices.shift(1))
@@ -75,7 +75,9 @@ def is_vol_blocked(eval_date: pd.Timestamp, vix_d: float,
     if mode == "vix":
         if not params.get("vix_entry_filter_enabled", True):
             return False
-        return vix_d > float(params.get("vix_entry_max", 30.0))
+        threshold = float(params.get("vol_filter_threshold",
+                          params.get("vix_entry_max", 30.0)))
+        return vix_d > threshold
 
     blocked = _build_vol_filter(data, params)
     if eval_date in blocked.index:
@@ -915,9 +917,6 @@ def run_backtest(
         # Used to skip new monthly entries while a prior position is open.
         latest_open_exit = pd.Timestamp.min
 
-        vix_filter_enabled = params.get("vix_entry_filter_enabled", False)
-        vix_entry_max = params.get("vix_entry_max", 30.0)
-
         end_ts = pd.Timestamp(params["end_date"])
 
         trades: List[Trade] = []
@@ -943,9 +942,9 @@ def run_backtest(
             row = data.loc[entry_date]
             S = float(row["underlying_close"])
             vix = float(row["vix_close"])
-            if vix_filter_enabled and vix > vix_entry_max:
+            if is_vol_blocked(entry_date, vix, params, data):
                 vix_blocked_dates.append(str(entry_date.date()))
-                continue  # VIX too high; skip this entry
+                continue
 
             entry_dte = (expiration - entry_date).days
             T = entry_dte / 365.0

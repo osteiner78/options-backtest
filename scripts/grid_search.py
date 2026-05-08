@@ -91,16 +91,34 @@ def _is_valid(combo: dict) -> bool:
 
 
 def _compute_alpha(equity_df: pd.DataFrame, data: pd.DataFrame,
-                   metrics: dict, params: dict) -> dict[str, float]:
+                   metrics: dict, params: dict, trades: list) -> dict[str, float]:
     import numpy as np
 
     start = pd.Timestamp(params["start_date"])
     end = pd.Timestamp(params["end_date"])
-    eq = equity_df["total_equity"].loc[start:end]
-    ul = data["underlying_close"].loc[start:end]
 
-    strangle_daily = eq.pct_change().fillna(0.0).replace(
-        [np.inf, -np.inf], 0.0)
+    # Build daily MTM P&L from trade daily_marks, consistent with
+    # _compute_mtm_equity used by compute_portfolio_metrics for Sharpe.
+    records: list[dict] = []
+    for t in trades:
+        marks = getattr(t, "daily_marks", []) or []
+        for date, mark in marks:
+            records.append({"date": date, "trade": t.trade_num, "mark": mark})
+    if records:
+        df_marks = pd.DataFrame(records).sort_values(["trade", "date"])
+        df_marks["prev"] = df_marks.groupby("trade")["mark"].shift(1).fillna(0.0)
+        df_marks["delta"] = df_marks["mark"] - df_marks["prev"]
+        daily_pnl = df_marks.groupby("date")["delta"].sum().sort_index()
+        init = float(params.get("initial_balance", 50_000))
+        mtm_equity = (init + daily_pnl.cumsum()).loc[start:end]
+        strangle_daily = mtm_equity.pct_change().fillna(0.0).replace(
+            [np.inf, -np.inf], 0.0)
+    else:
+        eq = equity_df["total_equity"].loc[start:end]
+        strangle_daily = eq.pct_change().fillna(0.0).replace(
+            [np.inf, -np.inf], 0.0)
+
+    ul = data["underlying_close"].loc[start:end]
     underlying_daily = ul.pct_change().fillna(0.0)
 
     common = strangle_daily.index.intersection(underlying_daily.index)
@@ -179,7 +197,7 @@ def _run_one(market: str, period_label: str, start_date: str, end_date: str,
         row["end_date"] = end_date
         for out_key, src_key, default in METRICS_KEYS:
             row[out_key] = metrics.get(src_key, default)
-        row.update(_compute_alpha(equity_df, data, metrics, params))
+        row.update(_compute_alpha(equity_df, data, metrics, params, trades))
         row.update(_compute_chain_diagnostics(trades))
         row["error"] = None
         return row
@@ -291,7 +309,7 @@ if __name__ == "__main__":
         if hasattr(engine, "close"):
             engine.close()
 
-    direct_alpha = _compute_alpha(equity_df, data, direct, params)
+    direct_alpha = _compute_alpha(equity_df, data, direct, params, trades)
 
     assert worker["error"] is None, f"worker errored: {worker['error']}"
     assert worker["n_trades"] == direct["n"], \
