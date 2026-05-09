@@ -1,0 +1,23 @@
+{
+  "ibkr_host": "127.0.0.1",
+  "ibkr_port": 4002,
+  "ibkr_client_id": 17,
+  "eval_time_et": "16:30",
+  "intraday_enabled": false,
+  "intraday_poll_minutes": 15,
+  "order_limit_slippage": 0.05,
+  "fill_timeout_sec": 60,
+  "signal_ttl_entry_minutes": 240,
+  "signal_ttl_management_minutes": 1080,
+  "revalidation_max_drift_pct": 0.01,
+  "quote_max_spread_pct": 0.25,
+  "quote_min_bid": 0.05,
+  "quote_max_age_sec": 90,
+  "ntfy_topic": null,
+  "ntfy_server": "https://ntfy.sh",
+  "log_path": "data/paper_trading.log",
+  "heartbeat_interval_sec": 60,
+  "heartbeat_alert_after_sec": 300,
+  "password_hash": "$2b$12$DfpelNL0z7IMJs/E3lRkuOpCQEcxjMG9vJcMOgsKEb8UR9U9GNSjq",
+  "session_ttl_days": 7
+}

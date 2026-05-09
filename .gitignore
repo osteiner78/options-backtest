@@ -21,6 +21,9 @@ env/
 # OS
 .DS_Store
 
+# Claude local config
+.claude/
+
 # Data files (large, tracked elsewhere)
 data/*.db
 
@@ -35,3 +38,13 @@ backtest_results.png
 
 # Reports
 reports/
+
+# B3 raw data (large)
+data/B3/COTAHIST_*.TXT
+
+# Paper trading artifacts
+data/paper_trades.db-*
+data/paper_trading.log
+
+# Notebook/script outputs
+output/
