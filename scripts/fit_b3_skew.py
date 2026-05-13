@@ -31,7 +31,7 @@ except ImportError:
     HAS_PLT = False
 
 
-DB_PATH   = Path("data/B3/b3_options.db")
+DB_PATH   = Path("data/B3/b3_options_rb3.db")
 OUT_DIR   = Path("data/B3")
 
 # ── Model constants ──────────────────────────────────────────────────────────
@@ -56,12 +56,12 @@ def load_chain(underlying: str, min_year: int = 0) -> pd.DataFrame:
     df = pd.read_sql_query(
         """
         SELECT date, expiration, type, strike, volume,
-               delta, implied_volatility AS iv
+               delta_cdi AS delta, implied_volatility_cdi AS iv
         FROM options_data
         WHERE underlying = ?
-          AND delta IS NOT NULL
-          AND implied_volatility IS NOT NULL
-          AND implied_volatility < 2.0
+          AND delta_cdi IS NOT NULL
+          AND implied_volatility_cdi IS NOT NULL
+          AND implied_volatility_cdi < 2.0
           AND volume > 0
           AND bid > 0
           AND ask >= bid

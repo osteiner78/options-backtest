@@ -584,30 +584,13 @@ def evaluate_trade_step(
 
     ctx = PricingContext(eval_date=eval_date, expiration=expiration)
 
-    # 2. Daily marks (with source tracking merged into single DB query)
-    use_source = hasattr(engine, 'get_leg_mark_with_source')
-    if use_source:
-        put_mid_d, put_src = engine.get_leg_mark_with_source(
-            trade.active_put_strike, S_d, dte_rem, vix_d, r_d, "put", ctx=ctx,
-        )
-        call_mid_d, call_src = engine.get_leg_mark_with_source(
-            trade.active_call_strike, S_d, dte_rem, vix_d, r_d, "call", ctx=ctx,
-        )
-    else:
-        put_mid_d = engine.get_leg_mark(
-            trade.active_put_strike, S_d, dte_rem, vix_d, r_d, "put", ctx=ctx,
-        )
-        call_mid_d = engine.get_leg_mark(
-            trade.active_call_strike, S_d, dte_rem, vix_d, r_d, "call", ctx=ctx,
-        )
-        # Fallback: separate source query
-        put_src = "unknown"
-        call_src = "unknown"
-        if hasattr(engine, '_source_for_strike') and ctx is not None:
-            date_str = eval_date.strftime("%Y-%m-%d")
-            exp_str = trade.expiration.strftime("%Y-%m-%d") if trade.expiration else None
-            put_src = engine._source_for_strike(date_str, exp_str, "put", trade.active_put_strike)
-            call_src = engine._source_for_strike(date_str, exp_str, "call", trade.active_call_strike)
+    # 2. Daily marks (with source tracking merged into single query)
+    put_mid_d, put_src = engine.get_leg_mark_with_source(
+        trade.active_put_strike, S_d, dte_rem, vix_d, r_d, "put", ctx=ctx,
+    )
+    call_mid_d, call_src = engine.get_leg_mark_with_source(
+        trade.active_call_strike, S_d, dte_rem, vix_d, r_d, "call", ctx=ctx,
+    )
     short_mid_d = put_mid_d + call_mid_d
 
     # Source tracking for daily MTM
@@ -637,15 +620,23 @@ def evaluate_trade_step(
         # directions the same way, under-stating the close cost in synthetic
         # mode. Market mode apply_fill_adj is a no-op — bid/ask is already
         # baked into the marks above.
+        # Skip fill adjustment at expiry (dte_rem=0): options trade at
+        # intrinsic value with no bid-ask spread.
         _mult = params.get("contract_multiplier", 100.0)
-        close_cost = (
-            engine.apply_fill_adj(short_mid_d, "close")
-            - engine.apply_fill_adj(long_mid_d, "open")
-        ) * _mult + 4.0 * comm
+        if dte_rem > 0:
+            close_cost = (
+                engine.apply_fill_adj(short_mid_d, "close")
+                - engine.apply_fill_adj(long_mid_d, "open")
+            ) * _mult + 4.0 * comm
+        else:
+            close_cost = (short_mid_d - long_mid_d) * _mult + 4.0 * comm
     else:
         _mult = params.get("contract_multiplier", 100.0)
         mid_d = short_mid_d
-        close_cost = engine.apply_fill_adj(mid_d, "close") * _mult + 2.0 * comm
+        if dte_rem > 0:
+            close_cost = engine.apply_fill_adj(mid_d, "close") * _mult + 2.0 * comm
+        else:
+            close_cost = mid_d * _mult + 2.0 * comm
     pnl = trade.net_credit - close_cost
     pnl_pct = pnl / trade.net_credit
 
@@ -897,7 +888,9 @@ def evaluate_trade(
     else:
         n_comm = 2
     comm = params["commission_per_leg"]
-    cc = engine.apply_fill_adj(intr, "close") * params.get("contract_multiplier", 100.0) + n_comm * comm
+    # At expiry, options trade at intrinsic with no bid-ask spread
+    mult = params.get("contract_multiplier", 100.0)
+    cc = intr * mult + n_comm * comm
     pnl = trade.net_credit - cc
     trade.exit_date = expiration
     trade.exit_dte = 0
@@ -964,7 +957,7 @@ def run_backtest(
         for idx, (entry_date, expiration) in enumerate(entry_iter, start=1):
             if entry_date not in data.index:
                 continue
-            if single_position and entry_date < latest_open_exit:
+            if single_position and entry_date <= latest_open_exit:
                 skipped_entries += 1
                 continue  # prior chain still open; skip this monthly entry
             row = data.loc[entry_date]

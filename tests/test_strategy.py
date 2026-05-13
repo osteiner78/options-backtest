@@ -246,14 +246,14 @@ class TestSourceTracking:
             assert t.mtm_source_days >= 0
             assert t.mtm_source_days <= t.mtm_total_days
 
-    def test_synthetic_backtest_exit_source_unknown(self, params, sample_data, synthetic_engine):
+    def test_synthetic_backtest_exit_source_synthetic(self, params, sample_data, synthetic_engine):
         from straddle.strategy import run_backtest
 
         trades, _, _, _ = run_backtest(sample_data, params, synthetic_engine)
         for t in trades:
             if t.exit_type is not None:
-                assert t.exit_source == "unknown", (
-                    f"Trade {t.trade_num} exit_source should be 'unknown' in synthetic mode"
+                assert t.exit_source == "synthetic", (
+                    f"Trade {t.trade_num} exit_source should be 'synthetic' in synthetic mode"
                 )
 
     def test_metrics_includes_source_stats(self, params, sample_data, synthetic_engine):

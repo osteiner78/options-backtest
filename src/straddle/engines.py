@@ -365,14 +365,36 @@ class SyntheticEngine:
         here — synthetic mode returns the raw BS mid and the caller applies the
         fill adjustment in the correct direction.
         """
+        return self.get_leg_mark_with_source(
+            strike, S_d, dte_rem, vix_d, r_d, opt, ctx=ctx, buy_or_sell=buy_or_sell
+        )[0]
+
+    def get_leg_mark_with_source(
+        self,
+        strike: float,
+        S_d: float,
+        dte_rem: int,
+        vix_d: float,
+        r_d: float,
+        opt: str,
+        ctx: PricingContext = None,
+        buy_or_sell: str = "buy",
+    ) -> tuple[float, str]:
+        """Per-share BS mid for a single leg, with source tracking.
+
+        Synthetic mode always returns source='synthetic'. Exists for interface
+        parity with MarketEngine so callers can use a single code path.
+        """
         sigma_d, T_d = self._get_sigma_t(vix_d, dte_rem)
         d_est = bs_delta(S_d, strike, T_d, r_d, sigma_d, opt, self.q)
         sigma_skewed = apply_skew(
             sigma_d, d_est, opt, self.put_slope, self.call_slope
         )
         if opt == "put":
-            return self._put_price(S_d, strike, T_d, r_d, sigma_skewed)
-        return bs_price(S_d, strike, T_d, r_d, sigma_skewed, opt, self.q)
+            mark = self._put_price(S_d, strike, T_d, r_d, sigma_skewed)
+        else:
+            mark = bs_price(S_d, strike, T_d, r_d, sigma_skewed, opt, self.q)
+        return mark, "synthetic"
 
     def find_strike_at_delta(
         self,
@@ -541,7 +563,10 @@ class MarketEngine:
     ) -> tuple:
         """Nearest-delta strike and mark from DB at entry."""
         if ctx is None or ctx.eval_date is None or ctx.expiration is None or ctx.eval_date < self._DB_START:
-            return self._synth.get_entry_marks(S, T, r, vix, ctx)  # used_market_data=False
+            pk, ck, pm, cm, _ = self._synth.get_entry_marks(S, T, r, vix, ctx)
+            adj_combined = self._synth.apply_fill_adj(pm + cm, "open")
+            factor = adj_combined / (pm + cm) if (pm + cm) > 0 else 1.0
+            return pk, ck, pm * factor, cm * factor, False
 
         date_str = ctx.eval_date.strftime("%Y-%m-%d")
         exp_str = ctx.expiration.strftime("%Y-%m-%d")
@@ -552,7 +577,12 @@ class MarketEngine:
 
         if put_row is None or call_row is None:
             # No valid DB row -- fall back to synthetic
-            return self._synth.get_entry_marks(S, T, r, vix, ctx)  # used_market_data=False
+            pk, ck, pm, cm, _ = self._synth.get_entry_marks(S, T, r, vix, ctx)
+            # Apply entry fill adjustment (MarketEngine.apply_fill_adj is a no-op,
+            # so the caller won't re-apply — we must bake it in here).
+            adj_combined = self._synth.apply_fill_adj(pm + cm, "open")
+            factor = adj_combined / (pm + cm) if (pm + cm) > 0 else 1.0
+            return pk, ck, pm * factor, cm * factor, False
 
         return (
             float(put_row["strike"]),
@@ -586,12 +616,14 @@ class MarketEngine:
         put_mark = self._strike_ask(date_str, exp_str, "put", put_k)
         call_mark = self._strike_ask(date_str, exp_str, "call", call_k)
 
-        # Per-leg synthetic fallback
+        # Per-leg synthetic fallback — apply fill adj for consistency
         if put_mark is None:
             put_mark = self._synth.get_leg_mark(put_k, S_d, dte_rem, vix_d, r_d, "put", ctx)
+            put_mark = self._synth.apply_fill_adj(put_mark, "close")
 
         if call_mark is None:
             call_mark = self._synth.get_leg_mark(call_k, S_d, dte_rem, vix_d, r_d, "call", ctx)
+            call_mark = self._synth.apply_fill_adj(call_mark, "close")
 
         return float(put_mark) + float(call_mark)
 
@@ -685,6 +717,9 @@ class MarketEngine:
         """
         if ctx is None or ctx.eval_date is None or ctx.eval_date < self._DB_START or ctx.expiration is None:
             synth = self._synth.get_leg_mark(strike, S_d, dte_rem, vix_d, r_d, opt, ctx)
+            synth = self._synth.apply_fill_adj(
+                synth, "open" if buy_or_sell == "sell" else "close"
+            )
             return synth, "synthetic"
         date_str = ctx.eval_date.strftime("%Y-%m-%d")
         exp_str = ctx.expiration.strftime("%Y-%m-%d")
@@ -703,6 +738,9 @@ class MarketEngine:
         if row and row[col] is not None and row[col] > 0:
             return float(row[col]), "db"
         synth = self._synth.get_leg_mark(strike, S_d, dte_rem, vix_d, r_d, opt, ctx)
+        synth = self._synth.apply_fill_adj(
+            synth, "open" if buy_or_sell == "sell" else "close"
+        )
         return synth, "synthetic"
 
     def find_strike_at_delta(
@@ -783,7 +821,7 @@ class MarketEngine:
         iv_clause = "AND implied_volatility < 2.0" if self._has_underlying_col else ""
         delta_col = "delta_cdi" if self._use_cdi and self._has_cdi_cols else "delta"
         iv_where = "AND implied_volatility_cdi < 2.0" if (self._use_cdi and self._has_cdi_cols) else iv_clause
-        use_cdi = self._use_cdi and self._has_cdi_cols
+        iv_col = "implied_volatility_cdi" if self._use_cdi and self._has_cdi_cols else "implied_volatility"
         params = [date_str, exp_str, opt]
         if und_val is not None:
             params.append(und_val)
@@ -791,7 +829,7 @@ class MarketEngine:
         cur = self._con.execute(
             f"""
             SELECT strike, mark, bid, ask, {delta_col} AS delta,
-                   CASE WHEN {use_cdi} THEN implied_volatility_cdi ELSE implied_volatility END AS implied_volatility,
+                   {iv_col} AS implied_volatility,
                    volume
             FROM options_data
             WHERE date = ? AND expiration = ? AND type = ?

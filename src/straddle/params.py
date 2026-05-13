@@ -208,18 +208,24 @@ MARKET_PRESETS: dict = {
         "vix_to_iv_multiplier": 1.00,
         "contract_multiplier": 100.0,
         "commission_per_leg": 1.00,    # R$ per leg (typical B3 retail: R$0.50–1.50)
-        # Fitted from b3_options.db (2017–2026) via scripts/fit_b3_skew.py.
-        # put_slope=0.743: B3 put skew is ~2.5× steeper than SPY — emerging-market
+        # Fitted from b3_options_rb3.db (2017–2025) via scripts/fit_b3_skew.py,
+        # using CDI-based IVs and deltas (delta_cdi, implied_volatility_cdi).
+        # put_slope=0.746: B3 put skew is ~2.7× steeper than SPY — emerging-market
         # tail-risk demand drives strong OTM put premiums.
-        # call_slope=0.031: near-flat; shifted from +0.30 (2019–2022) to −0.10
-        # (2024–2026), full-sample average reflects the structural transition.
+        # call_slope=0.074: modest call skew; 2024–2025 turned slightly negative
+        # as BOVA11 experienced structural price appreciation.
         # Slopes encode dividend effects implicitly — no separate q parameter.
-        "put_slope":  0.743,
-        "call_slope": 0.031,
+        "put_slope":  0.746,
+        "call_slope": 0.074,
         "american_options": False,     # BOVA11 is an ETF — options are European-style
         # BOVA11 ATM IV is typically 15–35 VIX units; cap at 50 to avoid blocking
         # most of the backtest in high-vol regimes that are normal for Brazil.
         "vix_entry_max": 50.0,
+        # Gap VIX multiplier: not yet calibrated for B3. The SPY default of 3.0
+        # is used as a placeholder. Brazilian single-stocks and ETFs may exhibit
+        # different gap/vol dynamics (political events, BRL/USD shocks).
+        # TODO: calibrate against B3 intraday gap data.
+        "gap_vix_multiplier": 3.0,
     },
     "petr4": {
         "market": "petr4",
@@ -230,13 +236,14 @@ MARKET_PRESETS: dict = {
         "vix_to_iv_multiplier": 1.00,
         "contract_multiplier": 100.0,
         "commission_per_leg": 1.00,    # R$ per leg
-        # Fitted from b3_options.db (2010–2026) via scripts/fit_b3_skew.py.
-        # put_slope=0.523: moderate put skew, stable at 0.40–0.66 across years.
-        # call_slope=-0.057: consistently negative — PETR4 calls trade above ATM IV,
-        # reflecting dividend-adjusted forward pricing and oil-price optionality.
+        # Fitted from b3_options_rb3.db (2017–2025) via scripts/fit_b3_skew.py,
+        # using CDI-based IVs and deltas (delta_cdi, implied_volatility_cdi).
+        # put_slope=0.522: moderate put skew, stable at 0.40–0.68 across years.
+        # call_slope=-0.046: slightly negative — calls trade near or slightly
+        # above ATM IV, reflecting dividend-adjusted forward pricing.
         # Slopes encode dividend effects implicitly — no separate q parameter.
-        "put_slope":  0.523,
-        "call_slope": -0.057,
+        "put_slope":  0.522,
+        "call_slope": -0.046,
         # PETR4 options are American-style (B3 single-stock equity options).
         # Early exercise of puts is optimal when deep ITM, driven by the interest
         # earned on K at Brazil's high CDI rate (12–15%). The BAW approximation
@@ -246,6 +253,10 @@ MARKET_PRESETS: dict = {
         # PETR4 ATM IV is typically 25–60 VIX units; cap at 80 to avoid blocking
         # most entries — crisis spikes (>80) are still filtered.
         "vix_entry_max": 80.0,
+        # Gap VIX multiplier: not yet calibrated for B3 single-stocks.
+        # PETR4 gaps are driven by oil prices, BRL/USD, and political events.
+        # TODO: calibrate against B3 intraday gap data.
+        "gap_vix_multiplier": 3.0,
     },
 }
 

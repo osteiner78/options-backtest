@@ -201,3 +201,104 @@ class TestSyntheticEngine:
         result1 = synthetic_engine.get_entry_marks(S, T, r, vix)
         result2 = synthetic_engine.get_entry_marks(S, T, r, vix)
         assert result1 == result2
+
+
+class TestMarketEngineFillAdj:
+    """Verify that MarketEngine applies fill adjustment on synthetic fallback."""
+
+    @pytest.fixture
+    def market_engine(self, params):
+        """MarketEngine with BOVA11 preset, or Skip if DB unavailable."""
+        from straddle.engines import MarketEngine
+        from straddle.params import apply_market_preset
+        params = apply_market_preset(dict(params), "bova11")
+        params["mode"] = "market"
+        params["use_cdi_ivs"] = False
+        try:
+            engine = MarketEngine(params)
+            yield engine
+            engine.close()
+        except (FileNotFoundError, Exception) as e:
+            pytest.skip(f"MarketEngine unavailable: {e}")
+
+    @pytest.fixture
+    def synth(self, params):
+        from straddle.engines import SyntheticEngine
+        from straddle.params import apply_market_preset
+        params = apply_market_preset(dict(params), "bova11")
+        return SyntheticEngine(params)
+
+    # ── DB marks are untouched ───────────────────────────────────────────
+    def test_db_marks_unchanged_by_adj(self, market_engine):
+        """When DB has valid data, marks come from DB directly (no fill adj)."""
+        from straddle.engines import PricingContext
+        import pandas as pd
+        ctx = PricingContext(
+            eval_date=pd.Timestamp("2023-01-03"),
+            expiration=pd.Timestamp("2023-02-17"),
+        )
+        mark, src = market_engine.get_leg_mark_with_source(
+            93.0, 100.0, 45, 20.0, 0.12, "put", ctx=ctx, buy_or_sell="buy"
+        )
+        assert src == "db"
+        assert mark > 0
+
+    # ── Synthetic fallback applies close adj (buy) ───────────────────────
+    def test_synthetic_fallback_close_adj(self, market_engine, synth):
+        """Synthetic fallback marks for buy-side get close fill adj (+5%)."""
+        from straddle.engines import PricingContext
+        import pandas as pd
+        # Use a date before DB_START to force synthetic fallback
+        ctx = PricingContext(
+            eval_date=pd.Timestamp("2005-01-03"),  # pre-2008
+            expiration=pd.Timestamp("2005-02-18"),
+        )
+        mark, src = market_engine.get_leg_mark_with_source(
+            93.0, 100.0, 45, 20.0, 0.12, "put", ctx=ctx, buy_or_sell="buy"
+        )
+        assert src == "synthetic"
+        synth_mid = synth.get_leg_mark(93.0, 100.0, 45, 20.0, 0.12, "put", ctx=ctx)
+        expected = synth.apply_fill_adj(synth_mid, "close")
+        assert mark == pytest.approx(expected, rel=1e-6)
+
+    # ── Synthetic fallback applies open adj (sell) ───────────────────────
+    def test_synthetic_fallback_open_adj(self, market_engine, synth):
+        """Synthetic fallback marks for sell-side get open fill adj (-5%)."""
+        from straddle.engines import PricingContext
+        import pandas as pd
+        ctx = PricingContext(
+            eval_date=pd.Timestamp("2005-01-03"),
+            expiration=pd.Timestamp("2005-02-18"),
+        )
+        mark, src = market_engine.get_leg_mark_with_source(
+            93.0, 100.0, 45, 20.0, 0.12, "put", ctx=ctx, buy_or_sell="sell"
+        )
+        assert src == "synthetic"
+        synth_mid = synth.get_leg_mark(93.0, 100.0, 45, 20.0, 0.12, "put", ctx=ctx)
+        expected = synth.apply_fill_adj(synth_mid, "open")
+        assert mark == pytest.approx(expected, rel=1e-6)
+
+    # ── Entry synthetic fallback applies adj ─────────────────────────────
+    def test_entry_synthetic_fallback_adj(self, market_engine, synth):
+        """Synthetic-fallback entry applies open fill adj to combined credit."""
+        from straddle.engines import PricingContext
+        import pandas as pd
+        ctx = PricingContext(
+            eval_date=pd.Timestamp("2005-01-03"),
+            expiration=pd.Timestamp("2005-02-18"),
+            target_delta=0.16,
+        )
+        S, T, r, vix = 100.0, 45 / 365.0, 0.12, 20.0
+        pk, ck, pm, cm, used_db = market_engine.get_entry_marks(S, T, r, vix, ctx=ctx)
+        assert used_db is False
+
+        # Pure synthetic entry should match
+        pk_s, ck_s, pm_s, cm_s, _ = synth.get_entry_marks(S, T, r, vix, ctx=ctx)
+        adj_combined = synth.apply_fill_adj(pm_s + cm_s, "open")
+        assert (pm + cm) == pytest.approx(adj_combined, rel=1e-6)
+
+    # ── apply_fill_adj is no-op for DB-sourced marks ─────────────────────
+    def test_apply_fill_adj_noop(self, market_engine):
+        """MarketEngine.apply_fill_adj is a no-op (bid/ask embeds spread)."""
+        assert market_engine.apply_fill_adj(2.0, "open") == 2.0
+        assert market_engine.apply_fill_adj(2.0, "close") == 2.0
