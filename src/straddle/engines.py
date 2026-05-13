@@ -661,8 +661,31 @@ class MarketEngine:
 
         Falls back to the synthetic BS mid if no DB row is found.
         """
+        result = self.get_leg_mark_with_source(
+            strike, S_d, dte_rem, vix_d, r_d, opt, ctx=ctx, buy_or_sell=buy_or_sell
+        )
+        return result[0]
+
+    def get_leg_mark_with_source(
+        self,
+        strike: float,
+        S_d: float,
+        dte_rem: int,
+        vix_d: float,
+        r_d: float,
+        opt: str,
+        ctx: PricingContext = None,
+        buy_or_sell: str = "buy",
+    ) -> tuple[float, str]:
+        """Close-side mark for one leg, plus source tracking ('db' or 'synthetic').
+
+        Returns (mark, source) where source indicates whether the price came
+        from the DB or synthetic fallback. Merges the previously separate
+        ``get_leg_mark`` + ``_source_for_strike`` into a single DB query.
+        """
         if ctx is None or ctx.eval_date is None or ctx.eval_date < self._DB_START or ctx.expiration is None:
-            return self._synth.get_leg_mark(strike, S_d, dte_rem, vix_d, r_d, opt, ctx)
+            synth = self._synth.get_leg_mark(strike, S_d, dte_rem, vix_d, r_d, opt, ctx)
+            return synth, "synthetic"
         date_str = ctx.eval_date.strftime("%Y-%m-%d")
         exp_str = ctx.expiration.strftime("%Y-%m-%d")
         col = "bid" if buy_or_sell == "sell" else "ask"
@@ -678,8 +701,9 @@ class MarketEngine:
         )
         row = cur.fetchone()
         if row and row[col] is not None and row[col] > 0:
-            return float(row[col])
-        return self._synth.get_leg_mark(strike, S_d, dte_rem, vix_d, r_d, opt, ctx)
+            return float(row[col]), "db"
+        synth = self._synth.get_leg_mark(strike, S_d, dte_rem, vix_d, r_d, opt, ctx)
+        return synth, "synthetic"
 
     def find_strike_at_delta(
         self,

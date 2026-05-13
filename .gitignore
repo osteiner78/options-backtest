@@ -26,6 +26,7 @@ env/
 
 # Data files (large, tracked elsewhere)
 data/*.db
+data/B3/*.db
 
 # Parquet cache
 data/*.parquet

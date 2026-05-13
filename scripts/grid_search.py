@@ -20,7 +20,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 GRID_DIMS = ["target_delta", "dte_max", "profit_target_pct",
              "manage_at_dte", "vix_filter", "defensive_leg_roll"]
 
-DTE_MIN_BY_DTE_MAX = {21: 15, 30: 20, 45: 30}
+DTE_MIN_BY_DTE_MAX = {21: 15, 30: 20, 45: 30, 60: 45}
 
 METRICS_KEYS = [
     ("n_trades", "n", 0),
@@ -164,6 +164,9 @@ def _compute_chain_diagnostics(trades: list) -> dict[str, object]:
     }
 
 
+_worker_cache: dict = {}
+
+
 def _run_one(market: str, period_label: str, start_date: str, end_date: str,
              combo: dict) -> dict:
     from straddle.params import PARAMS, apply_market_preset
@@ -173,6 +176,7 @@ def _run_one(market: str, period_label: str, start_date: str, end_date: str,
     from straddle.metrics import compute_portfolio_metrics
 
     try:
+        cache_key = (market, start_date, end_date)
         params = dict(PARAMS)
         params = apply_market_preset(params, market)
         params["start_date"] = start_date
@@ -182,16 +186,17 @@ def _run_one(market: str, period_label: str, start_date: str, end_date: str,
         params["cash_investment_mode"] = "risk_free"
         params["cash_yield_annual"] = 0.0
         params.update(_apply_grid_overrides(combo))
-        data = load_market_data(start_date, end_date, market=market)
-        engine = make_engine(params)
-        try:
-            trades, equity_df, _, _ = run_portfolio_backtest(
-                data, params, engine)
-            metrics = compute_portfolio_metrics(
-                trades, equity_df, params, data)
-        finally:
-            if hasattr(engine, "close"):
-                engine.close()
+
+        if cache_key not in _worker_cache:
+            data = load_market_data(start_date, end_date, market=market)
+            engine = make_engine(params)
+            _worker_cache[cache_key] = (data, engine)
+        data, engine = _worker_cache[cache_key]
+
+        trades, equity_df, _, _ = run_portfolio_backtest(
+            data, params, engine)
+        metrics = compute_portfolio_metrics(
+            trades, equity_df, params, data)
         row: dict[str, object] = dict(combo)
         row["market"] = market
         row["period_label"] = period_label
@@ -215,6 +220,13 @@ def _run_one(market: str, period_label: str, start_date: str, end_date: str,
         row.update(_CHAIN_DEFAULTS)
         row["error"] = str(e)
         return row
+
+
+def _close_worker_cache():
+    for key, (data, engine) in list(_worker_cache.items()):
+        if hasattr(engine, "close"):
+            engine.close()
+    _worker_cache.clear()
 
 
 def enumerate_grid(grid_def: dict) -> list[dict]:
@@ -261,6 +273,7 @@ def run_grid(grid_def: dict, runs: list[tuple], n_workers: int = -1,
         _prepare_df(all_results).to_parquet(output_path, index=False)
         print(f"Checkpoint saved: {len(all_results)} rows → {output_path}")
     df = _prepare_df(all_results)
+    _close_worker_cache()
     n_err = int(df["error"].notna().sum())
     n_few = int((df["n_trades"] < 50).sum())
     n_invalid = int(((df["manage_at_dte"]

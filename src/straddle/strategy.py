@@ -584,34 +584,35 @@ def evaluate_trade_step(
 
     ctx = PricingContext(eval_date=eval_date, expiration=expiration)
 
-    # 2. Daily marks
-    put_mid_d = engine.get_leg_mark(
-        trade.active_put_strike,
-        S_d,
-        dte_rem,
-        vix_d,
-        r_d,
-        "put",
-        ctx=ctx,
-    )
-    call_mid_d = engine.get_leg_mark(
-        trade.active_call_strike,
-        S_d,
-        dte_rem,
-        vix_d,
-        r_d,
-        "call",
-        ctx=ctx,
-    )
+    # 2. Daily marks (with source tracking merged into single DB query)
+    use_source = hasattr(engine, 'get_leg_mark_with_source')
+    if use_source:
+        put_mid_d, put_src = engine.get_leg_mark_with_source(
+            trade.active_put_strike, S_d, dte_rem, vix_d, r_d, "put", ctx=ctx,
+        )
+        call_mid_d, call_src = engine.get_leg_mark_with_source(
+            trade.active_call_strike, S_d, dte_rem, vix_d, r_d, "call", ctx=ctx,
+        )
+    else:
+        put_mid_d = engine.get_leg_mark(
+            trade.active_put_strike, S_d, dte_rem, vix_d, r_d, "put", ctx=ctx,
+        )
+        call_mid_d = engine.get_leg_mark(
+            trade.active_call_strike, S_d, dte_rem, vix_d, r_d, "call", ctx=ctx,
+        )
+        # Fallback: separate source query
+        put_src = "unknown"
+        call_src = "unknown"
+        if hasattr(engine, '_source_for_strike') and ctx is not None:
+            date_str = eval_date.strftime("%Y-%m-%d")
+            exp_str = trade.expiration.strftime("%Y-%m-%d") if trade.expiration else None
+            put_src = engine._source_for_strike(date_str, exp_str, "put", trade.active_put_strike)
+            call_src = engine._source_for_strike(date_str, exp_str, "call", trade.active_call_strike)
     short_mid_d = put_mid_d + call_mid_d
 
     # Source tracking for daily MTM
     exit_db_source = "unknown"
-    if hasattr(engine, '_source_for_strike') and ctx is not None:
-        date_str = eval_date.strftime("%Y-%m-%d")
-        exp_str = trade.expiration.strftime("%Y-%m-%d") if trade.expiration else None
-        put_src = engine._source_for_strike(date_str, exp_str, "put", trade.active_put_strike)
-        call_src = engine._source_for_strike(date_str, exp_str, "call", trade.active_call_strike)
+    if put_src != "unknown":
         trade.mtm_total_days += 1
         if put_src == "db" and call_src == "db":
             trade.mtm_source_days += 1

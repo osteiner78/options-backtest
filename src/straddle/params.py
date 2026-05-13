@@ -149,7 +149,7 @@ PRICING: PricingParams = {
     "call_slope": 0.10,
     "vix_to_iv_multiplier": 1.15,  # SPY IV is typically ~15% higher than VIX
     "contract_multiplier": 100.0,  # shares per contract
-    "use_cdi_ivs": False,  # True → use implied_volatility_cdi / delta_cdi columns from rb3 DB
+    "use_cdi_ivs": True,  # True → use implied_volatility_cdi / delta_cdi columns from rb3 DB
 }
 
 # ── Stop-loss overshoot model ────────────────────────────────────────────
