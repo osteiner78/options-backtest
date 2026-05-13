@@ -252,6 +252,7 @@ def run_portfolio_backtest(
     params: dict,
     engine=None,
     progress_callback=None,
+    progress: bool = True,
 ) -> Tuple[List[Trade], pd.DataFrame, PortfolioManager, int]:
     """Run a portfolio-style backtest with laddering and dynamic margin.
 
@@ -297,7 +298,8 @@ def run_portfolio_backtest(
         # ── Main daily loop ─────────────────────────────────────────────────
         sim_dates_list = list(sim_dates)
         total_days = len(sim_dates_list)
-        for _day_idx, eval_date in enumerate(tqdm(sim_dates_list, desc="Simulating portfolio", unit="day"), start=1):
+        date_iter = tqdm(sim_dates_list, desc="Simulating portfolio", unit="day") if progress else sim_dates_list
+        for _day_idx, eval_date in enumerate(date_iter, start=1):
             row = data.loc[eval_date]
             underlying_close = float(row["underlying_close"])
             vix_d = float(row["vix_close"])

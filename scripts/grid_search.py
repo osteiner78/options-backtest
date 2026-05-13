@@ -18,7 +18,8 @@ import pandas as pd
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 GRID_DIMS = ["target_delta", "dte_max", "profit_target_pct",
-             "manage_at_dte", "vix_filter", "defensive_leg_roll"]
+             "manage_at_dte", "vix_filter", "defensive_leg_roll",
+             "stop_loss_pct"]
 
 DTE_MIN_BY_DTE_MAX = {21: 15, 30: 20, 45: 30, 60: 45}
 
@@ -60,6 +61,9 @@ def _apply_grid_overrides(combo: dict) -> dict:
             overrides = _apply_vol_filter(val, overrides)
         elif key == "defensive_leg_roll":
             overrides["defensive_leg_roll_enabled"] = bool(val)
+        elif key == "stop_loss_pct":
+            overrides["stop_loss_pct"] = val
+            overrides["use_price_stop"] = True
         else:
             overrides[key] = val
     overrides["dte_min"] = DTE_MIN_BY_DTE_MAX[combo["dte_max"]]
@@ -194,7 +198,7 @@ def _run_one(market: str, period_label: str, start_date: str, end_date: str,
         data, engine = _worker_cache[cache_key]
 
         trades, equity_df, _, _ = run_portfolio_backtest(
-            data, params, engine)
+            data, params, engine, progress=False)
         metrics = compute_portfolio_metrics(
             trades, equity_df, params, data)
         row: dict[str, object] = dict(combo)

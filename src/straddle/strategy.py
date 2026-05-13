@@ -912,7 +912,8 @@ def evaluate_trade(
 # ── Backtest runner ──────────────────────────────────────────────────────
 
 def run_backtest(
-    data: pd.DataFrame, params: dict, engine=None, progress_callback=None
+    data: pd.DataFrame, params: dict, engine=None, progress_callback=None,
+    progress: bool = True,
 ) -> tuple:
     """Run the full SPY short strangle backtest.
 
@@ -959,7 +960,8 @@ def run_backtest(
             calendar=params.get("calendar", "NYSE"),
         ))
         total_entries = len(entries)
-        for idx, (entry_date, expiration) in enumerate(tqdm(entries, desc="Running backtest", unit="trade"), start=1):
+        entry_iter = tqdm(entries, desc="Running backtest", unit="trade") if progress else entries
+        for idx, (entry_date, expiration) in enumerate(entry_iter, start=1):
             if entry_date not in data.index:
                 continue
             if single_position and entry_date < latest_open_exit:
