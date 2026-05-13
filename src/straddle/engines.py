@@ -499,6 +499,7 @@ class MarketEngine:
         self._con.row_factory = _sqlite3.Row
         self.delta = params["target_delta"]
         self._market = market
+        self._use_cdi = params.get("use_cdi_ivs", False)
 
         # Detect whether this DB has the `underlying` column (B3 DB) or not (SPY DB)
         cols = {
@@ -506,6 +507,16 @@ class MarketEngine:
             for row in self._con.execute("PRAGMA table_info(options_data)").fetchall()
         }
         self._has_underlying_col = "underlying" in cols
+
+        # Detect CDI columns for B3 RB3 database
+        self._has_cdi_cols = False
+        if self._use_cdi:
+            if "implied_volatility_cdi" in cols and "delta_cdi" in cols:
+                self._has_cdi_cols = True
+                print(f"  MarketEngine: using CDI-based IVs/deltas (daily r)")
+            else:
+                print(f"  MarketEngine: WARNING — use_cdi_ivs=True but CDI columns not found in DB, falling back to flat-12%")
+                self._use_cdi = False
 
         print(
             f"MarketEngine: connected to {db_path_str} "
@@ -615,12 +626,13 @@ class MarketEngine:
             return self._synth.get_daily_delta(strike, S_d, dte_rem, vix_d, r_d, opt, ctx)
         date_str = ctx.eval_date.strftime("%Y-%m-%d")
         exp_str = ctx.expiration.strftime("%Y-%m-%d")
+        delta_col_name = "delta_cdi" if self._use_cdi and self._has_cdi_cols else "delta"
         und_clause, und_val = self._und_filter()
         params = [date_str, exp_str, opt, strike]
         if und_val is not None:
             params.append(und_val)
         cur = self._con.execute(
-            f"""SELECT delta FROM options_data
+            f"""SELECT {delta_col_name} AS delta FROM options_data
                WHERE date = ? AND expiration = ? AND type = ? AND strike = ?
                {und_clause} AND mark > 0 LIMIT 1""",
             params,
@@ -692,6 +704,8 @@ class MarketEngine:
         signed_target = -target_delta if opt == "put" else target_delta
         und_clause, und_val = self._und_filter()
         iv_clause = "AND implied_volatility < 2.0" if self._has_underlying_col else ""
+        delta_col = "delta_cdi" if self._use_cdi and self._has_cdi_cols else "delta"
+        iv_where = "AND implied_volatility_cdi < 2.0" if (self._use_cdi and self._has_cdi_cols) else iv_clause
         params = [date_str, exp_str, opt]
         if und_val is not None:
             params.append(und_val)
@@ -701,8 +715,8 @@ class MarketEngine:
                WHERE date = ? AND expiration = ? AND type = ?
                {und_clause}
                AND mark > 0 AND ask >= bid AND volume > 0
-               AND delta IS NOT NULL {iv_clause}
-               ORDER BY ABS(delta - ?) ASC LIMIT 1""",
+               AND {delta_col} IS NOT NULL {iv_where}
+               ORDER BY ABS({delta_col} - ?) ASC LIMIT 1""",
             params,
         )
         row = cur.fetchone()
@@ -739,23 +753,29 @@ class MarketEngine:
 
         Excludes rows where mark <= 0, ask < bid, volume == 0, or delta IS NULL.
         For B3: also filters implied_volatility < 2.0 to remove stale deep-OTM quotes.
+        When use_cdi_ivs=True, uses delta_cdi / implied_volatility_cdi columns.
         """
         und_clause, und_val = self._und_filter()
         iv_clause = "AND implied_volatility < 2.0" if self._has_underlying_col else ""
+        delta_col = "delta_cdi" if self._use_cdi and self._has_cdi_cols else "delta"
+        iv_where = "AND implied_volatility_cdi < 2.0" if (self._use_cdi and self._has_cdi_cols) else iv_clause
+        use_cdi = self._use_cdi and self._has_cdi_cols
         params = [date_str, exp_str, opt]
         if und_val is not None:
             params.append(und_val)
         params.append(target_delta)
         cur = self._con.execute(
             f"""
-            SELECT strike, mark, bid, ask, delta, implied_volatility, volume
+            SELECT strike, mark, bid, ask, {delta_col} AS delta,
+                   CASE WHEN {use_cdi} THEN implied_volatility_cdi ELSE implied_volatility END AS implied_volatility,
+                   volume
             FROM options_data
             WHERE date = ? AND expiration = ? AND type = ?
               {und_clause}
               AND mark > 0 AND ask >= bid AND volume > 0
-              AND delta IS NOT NULL
-              {iv_clause}
-            ORDER BY ABS(delta - ?) ASC
+              AND {delta_col} IS NOT NULL
+              {iv_where}
+            ORDER BY ABS({delta_col} - ?) ASC
             LIMIT 1
             """,
             params,

@@ -32,6 +32,8 @@ METRICS_KEYS = [
     ("win_rate", "wr_chain", 0.0),
     ("underlying_return", "underlying_total_return", 0.0),
     ("underlying_sharpe", "underlying_sharpe", 0.0),
+    ("entry_db_pct", "entry_db_pct", 0.0),
+    ("mtm_avg_db_pct", "mtm_avg_db_pct", 0.0),
 ]
 
 _ALPHA_DEFAULTS: dict[str, float] = {

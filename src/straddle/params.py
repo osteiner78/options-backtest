@@ -52,6 +52,7 @@ class PricingParams(TypedDict, total=False):
     vix_to_iv_multiplier: float
     contract_multiplier: float  # shares per contract (100 for both US and B3 equity options)
     american_options: bool      # True → use BAW approximation for put pricing (PETR4)
+    use_cdi_ivs: bool           # True → use implied_volatility_cdi / delta_cdi columns from rb3 DB
 
 
 class OvershootParams(TypedDict, total=False):
@@ -132,7 +133,14 @@ STRATEGY: StrategyParams = {
 }
 
 # ── Pricing source + model ───────────────────────────────────────────────
-
+#
+# NOTE: B3 options have ~50% bid/ask coverage at target delta. Only ~50% of
+# option-day rows have bid > 0 AND ask >= bid. When DB data is unavailable
+# for either leg, the entire entry falls back to SyntheticEngine (BSM +
+# parametric skew). This means approximately half of trade entries are priced
+# by the synthetic model. Grid search results should always be reported with
+# entry_db_pct to indicate how much real market data was used.
+#
 PRICING: PricingParams = {
     "mode": "market",
     "options_db_path": "data/Spy Options Database.db",
@@ -141,6 +149,7 @@ PRICING: PricingParams = {
     "call_slope": 0.10,
     "vix_to_iv_multiplier": 1.15,  # SPY IV is typically ~15% higher than VIX
     "contract_multiplier": 100.0,  # shares per contract
+    "use_cdi_ivs": False,  # True → use implied_volatility_cdi / delta_cdi columns from rb3 DB
 }
 
 # ── Stop-loss overshoot model ────────────────────────────────────────────
@@ -191,7 +200,7 @@ MARKET_PRESETS: dict = {
     "bova11": {
         "market": "bova11",
         "market_data_source": "b3_cotahist",
-        "options_db_path": "data/B3/b3_options.db",
+        "options_db_path": "data/B3/b3_options_rb3.db",
         "calendar": "BVMF",
         "currency": "BRL",
         # vix_close for B3 is loaded as percentage points (ATM IV × 100) so
@@ -215,7 +224,7 @@ MARKET_PRESETS: dict = {
     "petr4": {
         "market": "petr4",
         "market_data_source": "b3_cotahist",
-        "options_db_path": "data/B3/b3_options.db",
+        "options_db_path": "data/B3/b3_options_rb3.db",
         "calendar": "BVMF",
         "currency": "BRL",
         "vix_to_iv_multiplier": 1.00,
