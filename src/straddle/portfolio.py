@@ -389,7 +389,7 @@ def run_portfolio_backtest(
             if new_exp is not None and not vol_blocks_entry:
                 entry_dte = (new_exp - eval_date).days
                 T_new = entry_dte / 365.0
-                entry_ctx = PricingContext(eval_date=eval_date, expiration=new_exp)
+                entry_ctx = PricingContext(eval_date=eval_date, expiration=new_exp, target_delta=params["target_delta"])
                 kw = build_entry(
                     engine, underlying_close, T_new, r_d, vix_d, entry_dte, entry_ctx, params
                 )

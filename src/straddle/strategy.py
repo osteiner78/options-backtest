@@ -749,7 +749,7 @@ def evaluate_trade_step(
                 close_cost_old = close_cost
                 old_pnl = trade.net_credit - close_cost_old
                 T_new = (new_exp - eval_date).days / 365.0
-                roll_ctx = PricingContext(eval_date=eval_date, expiration=new_exp)
+                roll_ctx = PricingContext(eval_date=eval_date, expiration=new_exp, target_delta=params["target_delta"])
                 new_entry_dte = (new_exp - eval_date).days
                 kw = build_entry(
                     engine, S_d, T_new, r_d, vix_d, new_entry_dte, roll_ctx, params
@@ -976,7 +976,7 @@ def run_backtest(
             T = entry_dte / 365.0
             r = float(row.get("risk_free_rate", r_default))
 
-            entry_ctx = PricingContext(eval_date=entry_date, expiration=expiration)
+            entry_ctx = PricingContext(eval_date=entry_date, expiration=expiration, target_delta=params["target_delta"])
             kw = build_entry(engine, S, T, r, vix, entry_dte, entry_ctx, params)
             if kw is None:
                 continue
