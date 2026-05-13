@@ -231,6 +231,7 @@ def build_entry(
         put_mid_ps=put_mid,
         call_mid_ps=call_mid,
         used_market_data=used_db,
+        entry_source="db" if used_db else "synthetic",
     )
 
     if params.get("strategy_mode", "short_strangle") == "iron_condor":
@@ -301,6 +302,11 @@ class Trade:
     overshoot_used: Optional[float] = None
     max_vix: Optional[float] = None  # peak VIX during the hold period
     used_market_data: bool = False  # True if entry marks came from DB (market mode)
+    # Source tracking: whether entry/exit/MTM used real DB data
+    entry_source: str = "unknown"     # "db" | "synthetic"
+    exit_source: str = "unknown"      # "db" | "synthetic"
+    mtm_source_days: int = 0         # count of days MTM used real DB data
+    mtm_total_days: int = 0          # total days trade was held
     # Roll lineage fields (populated only when roll_for_credit=True)
     parent_trade_num: Optional[int] = (
         None  # trade_num of the trade this one was rolled from
@@ -531,6 +537,7 @@ class TradeStepResult:
     mid_d: float = 0.0  # Per-share mid price at EOD
     put_mid_d: float = 0.0  # Per-share mid for put leg
     call_mid_d: float = 0.0  # Per-share mid for call leg
+    exit_db_source: str = "unknown"  # "db" | "synthetic" — source of marks on exit day
 
 
 def evaluate_trade_step(
@@ -597,6 +604,18 @@ def evaluate_trade_step(
         ctx=ctx,
     )
     short_mid_d = put_mid_d + call_mid_d
+
+    # Source tracking for daily MTM
+    exit_db_source = "unknown"
+    if hasattr(engine, '_source_for_strike') and ctx is not None:
+        date_str = eval_date.strftime("%Y-%m-%d")
+        exp_str = trade.expiration.strftime("%Y-%m-%d") if trade.expiration else None
+        put_src = engine._source_for_strike(date_str, exp_str, "put", trade.active_put_strike)
+        call_src = engine._source_for_strike(date_str, exp_str, "call", trade.active_call_strike)
+        trade.mtm_total_days += 1
+        if put_src == "db" and call_src == "db":
+            trade.mtm_source_days += 1
+        exit_db_source = "db" if (put_src == "db" and call_src == "db") else "synthetic"
 
     if trade.is_iron_condor:
         # Long wings are SOLD to close → quote sell-side (bid in market mode;
@@ -767,6 +786,7 @@ def evaluate_trade_step(
                         mid_d=mid_d,
                         put_mid_d=put_mid_d,
                         call_mid_d=call_mid_d,
+                        exit_db_source=exit_db_source,
                     )
         exit_type = "21DTE"
 
@@ -784,6 +804,7 @@ def evaluate_trade_step(
             mid_d=mid_d,
             put_mid_d=put_mid_d,
             call_mid_d=call_mid_d,
+            exit_db_source=exit_db_source,
         )
 
     return TradeStepResult(
@@ -833,6 +854,7 @@ def evaluate_trade(
             trade.exit_type = "FORCE_CLOSE"
             trade.pnl = 0.0
             trade.pnl_pct = 0.0
+            trade.exit_source = "unknown"
             return trade, None
 
     for eval_date in data.loc[trade.entry_date : expiration].index[1:]:
@@ -846,6 +868,7 @@ def evaluate_trade(
             trade.exit_type = res.exit_type
             trade.pnl = res.pnl
             trade.pnl_pct = res.pnl_pct
+            trade.exit_source = res.exit_db_source
             return trade, res.new_trade
 
         if force_close_at is not None and eval_date == force_close_at:
@@ -856,6 +879,7 @@ def evaluate_trade(
             trade.exit_type = "FORCE_CLOSE"
             trade.pnl = res.pnl
             trade.pnl_pct = res.pnl_pct
+            trade.exit_source = res.exit_db_source
             return trade, None
 
     # Fallback: loop ended without an intra-period exit — price at expiration
@@ -879,6 +903,7 @@ def evaluate_trade(
     trade.exit_type = "EXPIRY"
     trade.pnl = round(pnl, 2)
     trade.pnl_pct = pnl / trade.net_credit
+    trade.exit_source = "unknown"
 
     return trade, None
 

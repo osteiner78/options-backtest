@@ -214,3 +214,59 @@ class TestChainAccounting:
         assert abs(total_trade_pnl - total_chain_pnl) < 0.01, (
             f"Trade P&L sum ({total_trade_pnl}) != chain P&L sum ({total_chain_pnl})"
         )
+
+
+# ── Source tracking ──────────────────────────────────────────────────────
+
+class TestSourceTracking:
+    """Source tracking fields should be populated correctly."""
+
+    def test_trade_has_source_fields_with_defaults(self, sample_trade):
+        assert sample_trade.entry_source == "unknown"
+        assert sample_trade.exit_source == "unknown"
+        assert sample_trade.mtm_source_days == 0
+        assert sample_trade.mtm_total_days == 0
+
+    def test_synthetic_backtest_sets_entry_source(self, params, sample_data, synthetic_engine):
+        from straddle.strategy import run_backtest
+
+        trades, _, _, _ = run_backtest(sample_data, params, synthetic_engine)
+        assert len(trades) > 0
+        for t in trades:
+            assert t.entry_source == "synthetic", (
+                f"Trade {t.trade_num} entry_source should be 'synthetic' in synthetic mode"
+            )
+
+    def test_synthetic_backtest_tracks_mtm_days(self, params, sample_data, synthetic_engine):
+        from straddle.strategy import run_backtest
+
+        trades, _, _, _ = run_backtest(sample_data, params, synthetic_engine)
+        for t in trades:
+            assert t.mtm_total_days >= 0
+            assert t.mtm_source_days >= 0
+            assert t.mtm_source_days <= t.mtm_total_days
+
+    def test_synthetic_backtest_exit_source_unknown(self, params, sample_data, synthetic_engine):
+        from straddle.strategy import run_backtest
+
+        trades, _, _, _ = run_backtest(sample_data, params, synthetic_engine)
+        for t in trades:
+            if t.exit_type is not None:
+                assert t.exit_source == "unknown", (
+                    f"Trade {t.trade_num} exit_source should be 'unknown' in synthetic mode"
+                )
+
+    def test_metrics_includes_source_stats(self, params, sample_data, synthetic_engine):
+        from straddle.strategy import run_backtest
+        from straddle.metrics import compute_metrics
+
+        trades, equity, _, _ = run_backtest(sample_data, params, synthetic_engine)
+        metrics = compute_metrics(trades, equity, params, sample_data)
+
+        assert "entry_db_count" in metrics
+        assert "entry_db_total" in metrics
+        assert "entry_db_pct" in metrics
+        assert "exit_db_count" in metrics
+        assert "mtm_avg_db_pct" in metrics
+        assert metrics["entry_db_pct"] == 0.0
+        assert metrics["entry_db_total"] == len(trades)

@@ -789,6 +789,26 @@ class MarketEngine:
         row = cur.fetchone()
         return float(row["ask"]) if row else None
 
+    def _source_for_strike(
+        self, date_str: str, exp_str: Optional[str], opt: str, strike: float
+    ) -> str:
+        """Return 'db' if a valid row exists in the DB for this strike, else 'synthetic'."""
+        if date_str is None or exp_str is None:
+            return "synthetic"
+        und_clause, und_val = self._und_filter()
+        params = [date_str, exp_str, opt, strike]
+        if und_val is not None:
+            params.append(und_val)
+        cur = self._con.execute(
+            f"""SELECT 1 FROM options_data
+               WHERE date = ? AND expiration = ? AND type = ? AND strike = ?
+                 {und_clause}
+                 AND mark > 0 AND ask >= bid
+               LIMIT 1""",
+            params,
+        )
+        return "db" if cur.fetchone() else "synthetic"
+
 
 # ── Factory ──────────────────────────────────────────────────────────────
 

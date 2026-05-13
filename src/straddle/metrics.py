@@ -335,6 +335,25 @@ def compute_metrics(trades, equity_curve, params, data) -> dict:
     results["avg_lr_per_trade"] = float(len(all_lr_events) / len(trades)) if trades else 0.0
     results["lr_total_credit"] = float(sum(ev.net_credit_dollar for ev in all_lr_events))
 
+    # Source tracking stats
+    entry_db_count = sum(1 for t in trades if getattr(t, 'entry_source', 'unknown') == 'db')
+    exit_db_count = sum(
+        1 for t in trades
+        if t.exit_type is not None and getattr(t, 'exit_source', 'unknown') == 'db'
+    )
+    mtm_db_pct_list = []
+    for t in trades:
+        total = getattr(t, 'mtm_total_days', 0)
+        source_days = getattr(t, 'mtm_source_days', 0)
+        if total > 0:
+            mtm_db_pct_list.append(source_days / total)
+
+    results["entry_db_count"] = entry_db_count
+    results["entry_db_total"] = len(trades)
+    results["entry_db_pct"] = entry_db_count / len(trades) if trades else 0
+    results["exit_db_count"] = exit_db_count
+    results["mtm_avg_db_pct"] = float(np.mean(mtm_db_pct_list)) if mtm_db_pct_list else 0
+
     # Structured stats for API consumers
     results["exit_stats"] = _compute_exit_stats(trades)
     results["vix_regime_stats"] = _compute_vix_regime_stats(trades)
