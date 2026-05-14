@@ -19,7 +19,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 GRID_DIMS = ["target_delta", "dte_max", "profit_target_pct",
              "manage_at_dte", "vix_filter", "defensive_leg_roll",
-             "stop_loss_pct"]
+             "stop_loss_pct", "execution_mode"]
 
 DTE_MIN_BY_DTE_MAX = {21: 15, 30: 20, 45: 30, 60: 45}
 
@@ -64,6 +64,8 @@ def _apply_grid_overrides(combo: dict) -> dict:
         elif key == "stop_loss_pct":
             overrides["stop_loss_pct"] = val
             overrides["use_price_stop"] = True
+        elif key == "execution_mode":
+            overrides["execution_mode"] = val
         else:
             overrides[key] = val
     overrides["dte_min"] = DTE_MIN_BY_DTE_MAX[combo["dte_max"]]

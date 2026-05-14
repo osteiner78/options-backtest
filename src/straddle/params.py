@@ -53,6 +53,9 @@ class PricingParams(TypedDict, total=False):
     contract_multiplier: float  # shares per contract (100 for both US and B3 equity options)
     american_options: bool      # True → use BAW approximation for put pricing (PETR4)
     use_cdi_ivs: bool           # True → use implied_volatility_cdi / delta_cdi columns from rb3 DB
+    execution_mode: str         # "bid_ask" | "mid_minus_1tick" | "mid" | "mid_plus_1tick" | "volume_filtered"
+    tick_size: float            # minimum price increment
+    volume_filter_min_pct: float  # for volume_filtered: skip entries with volume < this percentile
 
 
 class OvershootParams(TypedDict, total=False):
@@ -150,6 +153,9 @@ PRICING: PricingParams = {
     "vix_to_iv_multiplier": 1.15,  # SPY IV is typically ~15% higher than VIX
     "contract_multiplier": 100.0,  # shares per contract
     "use_cdi_ivs": True,  # True → use implied_volatility_cdi / delta_cdi columns from rb3 DB
+    "execution_mode": "bid_ask",
+    "tick_size": 0.05,
+    "volume_filter_min_pct": 0.50,
 }
 
 # ── Stop-loss overshoot model ────────────────────────────────────────────
@@ -196,6 +202,7 @@ MARKET_PRESETS: dict = {
         "contract_multiplier": 100.0,
         "commission_per_leg": 1.00,    # USD per leg
         "american_options": False,     # SPY options are European-style (cash-settled)
+        "tick_size": 0.01,
     },
     "bova11": {
         "market": "bova11",
@@ -226,6 +233,7 @@ MARKET_PRESETS: dict = {
         # different gap/vol dynamics (political events, BRL/USD shocks).
         # TODO: calibrate against B3 intraday gap data.
         "gap_vix_multiplier": 3.0,
+        "tick_size": 0.05,
     },
     "petr4": {
         "market": "petr4",
@@ -257,6 +265,7 @@ MARKET_PRESETS: dict = {
         # PETR4 gaps are driven by oil prices, BRL/USD, and political events.
         # TODO: calibrate against B3 intraday gap data.
         "gap_vix_multiplier": 3.0,
+        "tick_size": 0.05,
     },
 }
 

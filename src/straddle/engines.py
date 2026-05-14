@@ -545,11 +545,39 @@ class MarketEngine:
             f"(market={market}, underlying_filter={self._has_underlying_col})"
         )
 
+        self._exec_mode = params.get("execution_mode", "bid_ask")
+        self._tick_size = params.get("tick_size", 0.05)
+        self._volume_filter_min_pct = params.get("volume_filter_min_pct", 0.50)
+        self.uses_real_fills = self._exec_mode in ("bid_ask", "volume_filtered")
+
+        # Pre-compute volume threshold for volume_filtered mode
+        self._daily_vol_threshold = 0.0
+        if self._exec_mode == "volume_filtered":
+            self._daily_vol_threshold = self._compute_volume_threshold()
+
     def apply_fill_adj(self, mid_ps: float, side: str) -> float:
         """Market mode: fill adjustment is already baked into bid/ask selection.
         Returns mid_ps as is. (Synthetic fallback still uses its own adj).
         """
         return mid_ps
+
+    def _compute_volume_threshold(self) -> float:
+        """Compute the daily volume percentile threshold for this underlying."""
+        und_clause, und_val = self._und_filter()
+        if und_val is not None:
+            cur = self._con.execute(
+                "SELECT volume FROM options_data WHERE underlying = ? AND volume > 0",
+                (und_val,)
+            )
+        else:
+            cur = self._con.execute(
+                "SELECT volume FROM options_data WHERE volume > 0"
+            )
+        vols = sorted(r[0] for r in cur.fetchall() if r[0] is not None)
+        if not vols:
+            return 0.0
+        idx = int(len(vols) * self._volume_filter_min_pct)
+        return float(vols[min(idx, len(vols) - 1)])
 
     # ── public interface ────────────────────────────────────────────────
 
@@ -584,11 +612,52 @@ class MarketEngine:
             factor = adj_combined / (pm + cm) if (pm + cm) > 0 else 1.0
             return pk, ck, pm * factor, cm * factor, False
 
+        exec_mode = self._exec_mode
+        tick = self._tick_size
+
+        if exec_mode == "bid_ask":
+            put_price = float(put_row["bid"]) if float(put_row["bid"]) > 0 else None
+            call_price = float(call_row["bid"]) if float(call_row["bid"]) > 0 else None
+            if put_price is None or call_price is None:
+                # No valid bid -- fall back to synthetic
+                pk, ck, pm, cm, _ = self._synth.get_entry_marks(S, T, r, vix, ctx)
+                adj_combined = self._synth.apply_fill_adj(pm + cm, "open")
+                factor = adj_combined / (pm + cm) if (pm + cm) > 0 else 1.0
+                return pk, ck, pm * factor, cm * factor, False
+
+        elif exec_mode == "volume_filtered":
+            put_vol = float(put_row["volume"] or 0)
+            call_vol = float(call_row["volume"] or 0)
+            if put_vol < self._daily_vol_threshold or call_vol < self._daily_vol_threshold:
+                # Low volume -- fall back to synthetic
+                pk, ck, pm, cm, _ = self._synth.get_entry_marks(S, T, r, vix, ctx)
+                adj_combined = self._synth.apply_fill_adj(pm + cm, "open")
+                factor = adj_combined / (pm + cm) if (pm + cm) > 0 else 1.0
+                return pk, ck, pm * factor, cm * factor, False
+            put_price = float(put_row["mark"])
+            call_price = float(call_row["mark"])
+
+        elif exec_mode == "mid":
+            put_price = float(put_row["mark"])
+            call_price = float(call_row["mark"])
+
+        elif exec_mode == "mid_minus_1tick":
+            put_price = max(float(put_row["mark"]) - tick, 0.01)
+            call_price = max(float(call_row["mark"]) - tick, 0.01)
+
+        elif exec_mode == "mid_plus_1tick":
+            put_price = float(put_row["mark"]) + tick
+            call_price = float(call_row["mark"]) + tick
+
+        else:
+            put_price = float(put_row["mark"])
+            call_price = float(call_row["mark"])
+
         return (
             float(put_row["strike"]),
             float(call_row["strike"]),
-            float(put_row["bid"]),  # sell at bid (most conservative)
-            float(call_row["bid"]),  # sell at bid (most conservative)
+            put_price,
+            call_price,
             True,  # used_market_data=True
         )
 
@@ -602,9 +671,10 @@ class MarketEngine:
         r_d: float,
         ctx: PricingContext = None,
     ) -> float:
-        """Sum of put and call ask prices from DB on eval_date.
+        """Sum of put and call close prices from DB on eval_date.
 
-        Ask = cost to buy back each leg (most conservative close fill).
+        Close price depends on execution_mode: ask for bid_ask, mark for
+        mid/volume_filtered, mark±tick for mid_minus/mid_plus_1tick.
         Falls back per-leg to synthetic BS if a strike is missing.
         """
         if ctx is None or ctx.eval_date is None or ctx.eval_date < self._DB_START:
@@ -613,8 +683,29 @@ class MarketEngine:
         date_str = ctx.eval_date.strftime("%Y-%m-%d")
         exp_str = ctx.expiration.strftime("%Y-%m-%d") if ctx.expiration else None
 
-        put_mark = self._strike_ask(date_str, exp_str, "put", put_k)
-        call_mark = self._strike_ask(date_str, exp_str, "call", call_k)
+        exec_mode = self._exec_mode
+        tick = self._tick_size
+
+        if exec_mode == "bid_ask":
+            put_mark = self._strike_ask(date_str, exp_str, "put", put_k)
+            call_mark = self._strike_ask(date_str, exp_str, "call", call_k)
+        else:
+            put_mark = self._strike_mark(date_str, exp_str, "put", put_k)
+            call_mark = self._strike_mark(date_str, exp_str, "call", call_k)
+
+            if exec_mode == "mid_minus_1tick":
+                # Sold at worse price → buy back at worse price
+                if put_mark is not None:
+                    put_mark = put_mark + tick
+                if call_mark is not None:
+                    call_mark = call_mark + tick
+            elif exec_mode == "mid_plus_1tick":
+                # Sold at better price → buy back at better price
+                if put_mark is not None:
+                    put_mark = max(put_mark - tick, 0.01)
+                if call_mark is not None:
+                    call_mark = max(call_mark - tick, 0.01)
+            # mid and volume_filtered: use mark as-is
 
         # Per-leg synthetic fallback — apply fill adj for consistency
         if put_mark is None:
@@ -712,8 +803,12 @@ class MarketEngine:
         """Close-side mark for one leg, plus source tracking ('db' or 'synthetic').
 
         Returns (mark, source) where source indicates whether the price came
-        from the DB or synthetic fallback. Merges the previously separate
-        ``get_leg_mark`` + ``_source_for_strike`` into a single DB query.
+        from the DB or synthetic fallback.
+
+        For buy_or_sell="buy" (close side), price depends on execution_mode:
+          bid_ask → ask, mid/volume_filtered → mark,
+          mid_minus_1tick → mark+tick, mid_plus_1tick → mark-tick.
+        For buy_or_sell="sell" (open side), always uses bid.
         """
         if ctx is None or ctx.eval_date is None or ctx.eval_date < self._DB_START or ctx.expiration is None:
             synth = self._synth.get_leg_mark(strike, S_d, dte_rem, vix_d, r_d, opt, ctx)
@@ -723,7 +818,18 @@ class MarketEngine:
             return synth, "synthetic"
         date_str = ctx.eval_date.strftime("%Y-%m-%d")
         exp_str = ctx.expiration.strftime("%Y-%m-%d")
-        col = "bid" if buy_or_sell == "sell" else "ask"
+
+        exec_mode = self._exec_mode
+        tick = self._tick_size
+
+        # Determine which column(s) to query based on side and execution mode
+        if buy_or_sell == "sell":
+            col = "bid"  # always bid for selling
+        elif exec_mode == "bid_ask":
+            col = "ask"
+        else:
+            col = "mark"  # non-bid_ask modes use mark
+
         und_clause, und_val = self._und_filter()
         params = [date_str, exp_str, opt, strike]
         if und_val is not None:
@@ -736,7 +842,14 @@ class MarketEngine:
         )
         row = cur.fetchone()
         if row and row[col] is not None and row[col] > 0:
-            return float(row[col]), "db"
+            price = float(row[col])
+            # Apply execution-mode adjustments on the close (buy) side
+            if buy_or_sell == "buy" and col == "mark":
+                if exec_mode == "mid_minus_1tick":
+                    price = price + tick
+                elif exec_mode == "mid_plus_1tick":
+                    price = max(price - tick, 0.01)
+            return price, "db"
         synth = self._synth.get_leg_mark(strike, S_d, dte_rem, vix_d, r_d, opt, ctx)
         synth = self._synth.apply_fill_adj(
             synth, "open" if buy_or_sell == "sell" else "close"
@@ -870,6 +983,27 @@ class MarketEngine:
         )
         row = cur.fetchone()
         return float(row["ask"]) if row else None
+
+    def _strike_mark(self, date_str: str, exp_str: Optional[str], opt: str, strike: float):
+        """Return the mark for an exact (date, expiration, strike) row, or None."""
+        if not exp_str:
+            return None
+        und_clause, und_val = self._und_filter()
+        params = [date_str, exp_str, opt, strike]
+        if und_val is not None:
+            params.append(und_val)
+        cur = self._con.execute(
+            f"""
+            SELECT mark FROM options_data
+            WHERE date = ? AND expiration = ? AND type = ? AND strike = ?
+              {und_clause}
+              AND mark > 0 AND ask >= bid
+            LIMIT 1
+            """,
+            params,
+        )
+        row = cur.fetchone()
+        return float(row["mark"]) if row else None
 
     def _source_for_strike(
         self, date_str: str, exp_str: Optional[str], opt: str, strike: float
