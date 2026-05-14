@@ -132,22 +132,34 @@ def _adjust_for_holiday(date: pd.Timestamp, calendar: str = "NYSE") -> pd.Timest
 
 
 def get_monthly_expiration(
-    entry: pd.Timestamp, dte_min: int, dte_max: int, calendar: str = "NYSE"
+    entry: pd.Timestamp, dte_min: int, dte_max: int, calendar: str = "NYSE",
+    engine=None,
 ) -> Optional[pd.Timestamp]:
-    """Nearest 3rd-Friday expiration with DTE strictly in [dte_min, dte_max].
+    """Nearest monthly expiration with DTE strictly in [dte_min, dte_max].
 
-    When the 3rd Friday falls on a market holiday the listed expiry is the
-    preceding Thursday; _adjust_for_holiday handles this for both NYSE and BVMF.
+    When a MarketEngine is provided, queries the DB for the actual expiration
+    closest to the calendar-computed 3rd-Friday date (±5 days), handling B3
+    convention changes like 3rd-Monday → 3rd-Friday and filtering out weekly
+    expirations.
+
+    Otherwise falls back to 3rd-Friday calculation with holiday adjustment.
 
     Returns None if no valid expiration exists for this entry date.
     """
     for mo in range(0, 5):
         abs_mo = entry.month + mo
-        exp = get_third_friday(entry.year + (abs_mo - 1) // 12, (abs_mo - 1) % 12 + 1)
-        exp = _adjust_for_holiday(exp, calendar)
-        dte = (exp - entry).days
+        expected_exp = get_third_friday(entry.year + (abs_mo - 1) // 12, (abs_mo - 1) % 12 + 1)
+        expected_exp = _adjust_for_holiday(expected_exp, calendar)
+        dte = (expected_exp - entry).days
         if dte_min <= dte <= dte_max:
-            return exp
+            if engine is not None and hasattr(engine, 'get_db_expiration'):
+                result = engine.get_db_expiration(
+                    entry.strftime("%Y-%m-%d"), dte_min, dte_max,
+                    expected_month=expected_exp,
+                )
+                if result is not None:
+                    return result
+            return expected_exp
     return None
 
 
@@ -158,14 +170,10 @@ def get_entry_dates(
     dte_min: int,
     dte_max: int,
     calendar: str = "NYSE",
+    engine=None,
 ) -> List[Tuple[pd.Timestamp, pd.Timestamp]]:
-    """One trade per calendar month: earliest trading day where a 3rd-Friday
+    """One trade per calendar month: earliest trading day where a valid monthly
     expiration falls in [dte_min, dte_max] (inclusive, calendar days).
-
-    The 3rd Friday of next month is 44-51 calendar days from the 1st, so the
-    1st of the month is almost never a valid entry by itself. A short forward
-    scan (up to 15 calendar days) finds the day where DTE first enters the
-    window. Entry date shifts by at most ~7 days from the 1st.
 
     Returns:
         List of (entry_date, expiration) pairs. Returning the expiration here
@@ -187,7 +195,7 @@ def get_entry_dates(
         for candidate in trading_days:
             if candidate < start_ts or candidate > end_ts:
                 continue
-            exp = get_monthly_expiration(candidate, dte_min, dte_max, calendar)
+            exp = get_monthly_expiration(candidate, dte_min, dte_max, calendar, engine=engine)
             if exp is not None:
                 result.append((candidate, exp))
                 break
@@ -735,7 +743,7 @@ def evaluate_trade_step(
         if roll_for_credit and trade.roll_count < max_rolls \
                 and not is_vol_blocked(eval_date, vix_d, params, data):
             _roll_dte_max = params.get("roll_dte_max", 60)
-            new_exp = get_monthly_expiration(eval_date, params.get("dte_min", 30), _roll_dte_max, params.get("calendar", "NYSE"))
+            new_exp = get_monthly_expiration(eval_date, params.get("dte_min", 30), _roll_dte_max, params.get("calendar", "NYSE"), engine=engine)
             if new_exp is not None:
                 close_cost_old = close_cost
                 old_pnl = trade.net_credit - close_cost_old
@@ -951,6 +959,7 @@ def run_backtest(
             params["dte_min"],
             params["dte_max"],
             calendar=params.get("calendar", "NYSE"),
+            engine=engine,
         ))
         total_entries = len(entries)
         entry_iter = tqdm(entries, desc="Running backtest", unit="trade") if progress else entries

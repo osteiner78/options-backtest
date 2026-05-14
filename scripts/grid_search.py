@@ -19,7 +19,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 GRID_DIMS = ["target_delta", "dte_max", "profit_target_pct",
              "manage_at_dte", "vix_filter", "defensive_leg_roll",
-             "stop_loss_pct", "execution_mode"]
+             "stop_loss_pct", "execution_mode", "portfolio_mode"]
 
 DTE_MIN_BY_DTE_MAX = {21: 15, 30: 20, 45: 30, 60: 45}
 
@@ -47,7 +47,7 @@ _CHAIN_DEFAULTS: dict[str, object] = {
     "n_rolls_total": 0,
     "avg_rolls_per_chain": 0.0,
     "max_rolls_per_chain": 0,
-    "chain_length_dist": {},
+    "chain_length_dist": "",
 }
 
 _SQRT252 = 15.874507866387544
@@ -56,6 +56,8 @@ _SQRT252 = 15.874507866387544
 def _apply_grid_overrides(combo: dict) -> dict:
     overrides: dict[str, object] = {}
     for key in GRID_DIMS:
+        if key not in combo:
+            continue
         val = combo[key]
         if key == "vix_filter":
             overrides = _apply_vol_filter(val, overrides)
@@ -66,6 +68,12 @@ def _apply_grid_overrides(combo: dict) -> dict:
             overrides["use_price_stop"] = True
         elif key == "execution_mode":
             overrides["execution_mode"] = val
+        elif key == "portfolio_mode":
+            overrides["portfolio_mode"] = val
+            if val == "single_position":
+                overrides["single_position"] = True
+            else:
+                overrides["single_position"] = False
         else:
             overrides[key] = val
     overrides["dte_min"] = DTE_MIN_BY_DTE_MAX[combo["dte_max"]]
@@ -178,8 +186,8 @@ def _run_one(market: str, period_label: str, start_date: str, end_date: str,
     from straddle.params import PARAMS, apply_market_preset
     from straddle.data import load_market_data
     from straddle.engines import make_engine
-    from straddle import run_portfolio_backtest
-    from straddle.metrics import compute_portfolio_metrics
+    from straddle import run_portfolio_backtest, run_backtest
+    from straddle.metrics import compute_portfolio_metrics, compute_metrics
 
     try:
         cache_key = (market, start_date, end_date)
@@ -188,10 +196,10 @@ def _run_one(market: str, period_label: str, start_date: str, end_date: str,
         params["start_date"] = start_date
         params["end_date"] = end_date
         params["mode"] = "market"
-        params["portfolio_mode"] = "laddering"
         params["cash_investment_mode"] = "risk_free"
         params["cash_yield_annual"] = 0.0
         params.update(_apply_grid_overrides(combo))
+        portfolio_mode = str(params.get("portfolio_mode", "laddering"))
 
         if cache_key not in _worker_cache:
             data = load_market_data(start_date, end_date, market=market)
@@ -199,10 +207,21 @@ def _run_one(market: str, period_label: str, start_date: str, end_date: str,
             _worker_cache[cache_key] = (data, engine)
         data, engine = _worker_cache[cache_key]
 
-        trades, equity_df, _, _ = run_portfolio_backtest(
-            data, params, engine, progress=False)
-        metrics = compute_portfolio_metrics(
-            trades, equity_df, params, data)
+        # Ensure engine uses this combo's execution_mode (engine is cached across combos)
+        exec_mode = params.get("execution_mode", "bid_ask")
+        engine._exec_mode = exec_mode
+        engine.uses_real_fills = (exec_mode == "bid_ask")
+
+        if portfolio_mode == "laddering":
+            trades, equity_df, _, _ = run_portfolio_backtest(
+                data, params, engine, progress=False)
+            metrics = compute_portfolio_metrics(
+                trades, equity_df, params, data)
+        else:
+            trades, equity_curve, _, _ = run_backtest(
+                data, params, engine)
+            metrics = compute_metrics(
+                trades, equity_curve, params, data)
         row: dict[str, object] = dict(combo)
         row["market"] = market
         row["period_label"] = period_label
@@ -210,7 +229,7 @@ def _run_one(market: str, period_label: str, start_date: str, end_date: str,
         row["end_date"] = end_date
         for out_key, src_key, default in METRICS_KEYS:
             row[out_key] = metrics.get(src_key, default)
-        row.update(_compute_alpha(equity_df, data, metrics, params, trades))
+        row.update(_compute_alpha(equity_df if portfolio_mode == "laddering" else equity_curve, data, metrics, params, trades))
         row.update(_compute_chain_diagnostics(trades))
         row["error"] = None
         return row
@@ -254,6 +273,8 @@ def _prepare_df(results: list[dict]) -> pd.DataFrame:
         df["defensive_leg_roll"] = df["defensive_leg_roll"].astype(bool)
     if "error" in df.columns:
         df["error"] = df["error"].astype(object)
+    if "chain_length_dist" in df.columns:
+        df["chain_length_dist"] = df["chain_length_dist"].astype(str)
     return df
 
 
@@ -307,7 +328,8 @@ if __name__ == "__main__":
 
     COMBO = {"target_delta": 0.20, "dte_max": 45, "profit_target_pct": 0.50,
              "manage_at_dte": 21, "vix_filter": "OFF",
-             "defensive_leg_roll": False}
+             "defensive_leg_roll": False, "stop_loss_pct": 3.0,
+             "execution_mode": "bid_ask"}
     START, END, MARKET = "2017-01-01", "2019-12-31", "bova11"
 
     worker = _run_one(MARKET, "smoke", START, END, COMBO)

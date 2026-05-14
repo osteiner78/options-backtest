@@ -1,5 +1,5 @@
 """Tests for MarketEngine execution modes (bid_ask, mid, mid_minus_1tick,
-mid_plus_1tick, volume_filtered).
+mid_plus_1tick).
 
 Uses an in-memory SQLite DB with known data to keep tests fast and deterministic.
 """
@@ -17,13 +17,12 @@ from straddle.engines import MarketEngine, SyntheticEngine, PricingContext
 from straddle.params import PARAMS, apply_market_preset
 
 # BOVA11-like test data: realistic prices with known bid/ask/mark/volume
-# Volume threshold for volume_filtered at pct=0.50 will be ~500 (median of [100,500,1000])
 _TEST_ROWS = [
     # date, expiration, type, strike, mark, bid, ask, volume, delta, iv
-    # High-volume put/call at 16-delta for standard entry tests
+    # Standard put/call at 16-delta for entry tests
     ("2024-01-05", "2024-02-16", "put", 112.0, 1.20, 1.10, 1.30, 1000, -0.17, 0.22),
     ("2024-01-05", "2024-02-16", "call", 132.0, 0.80, 0.70, 0.90, 1000, 0.17, 0.18),
-    # Low-volume rows for volume_filtered skip tests (different strikes)
+    # Alternative strikes for different delta targets
     ("2024-01-05", "2024-02-16", "put", 110.0, 1.00, 0.90, 1.10, 100, -0.13, 0.20),
     ("2024-01-05", "2024-02-16", "call", 134.0, 0.60, 0.50, 0.70, 100, 0.12, 0.16),
     # Zero-bid row for bid_ask fallback test
@@ -72,7 +71,6 @@ def _make_params(exec_mode: str, db_path: str) -> dict:
     params["options_db_path"] = db_path
     params["execution_mode"] = exec_mode
     params["tick_size"] = 0.05
-    params["volume_filter_min_pct"] = 0.50
     params["use_cdi_ivs"] = False
     return params
 
@@ -212,73 +210,6 @@ class TestMidPlusOneTick:
             os.unlink(db_path)
 
 
-class TestVolumeFiltered:
-    def test_volume_filtered_accepts_high_volume(self):
-        """Entry proceeds when volume >= threshold."""
-        db_path = _make_test_db()
-        try:
-            params = _make_params("volume_filtered", db_path)
-            params["volume_filter_min_pct"] = 0.50
-            engine = MarketEngine(params)
-            ctx = PricingContext(
-                eval_date=pd.Timestamp("2024-01-05"),
-                expiration=pd.Timestamp(EXPIRY),
-                target_delta=0.16,
-            )
-            S, T, r, vix = 120.0, 42 / 365.0, 0.12, 20.0
-            # _best_row picks put strike=112 (vol=1000), call=132 (vol=1000)
-            # Threshold at pct=0.50 = 1000, both >= 1000 → DB used
-            pk, ck, pp, cp, used_db = engine.get_entry_marks(S, T, r, vix, ctx=ctx)
-            assert used_db is True
-            assert pp == pytest.approx(1.20)  # mark
-            assert cp == pytest.approx(0.80)  # mark
-            engine.close()
-        finally:
-            os.unlink(db_path)
-
-    def test_volume_filtered_skips_low_volume(self):
-        """Entry falls back to synthetic when volume < threshold."""
-        db_path = _make_test_db()
-        try:
-            params = _make_params("volume_filtered", db_path)
-            params["volume_filter_min_pct"] = 0.90  # threshold at 90th pct = 1000
-            params["target_delta"] = 0.13  # match low-vol rows (strike 110/134, vol=100)
-            engine = MarketEngine(params)
-            ctx = PricingContext(
-                eval_date=pd.Timestamp("2024-01-05"),
-                expiration=pd.Timestamp(EXPIRY),
-                target_delta=0.13,
-            )
-            S, T, r, vix = 120.0, 42 / 365.0, 0.12, 20.0
-            # _best_row picks put=110 (vol=100), call=134 (vol=100)
-            # Both vol=100 < threshold=1000 → synthetic fallback
-            pk, ck, pp, cp, used_db = engine.get_entry_marks(S, T, r, vix, ctx=ctx)
-            assert used_db is False
-            engine.close()
-        finally:
-            os.unlink(db_path)
-
-    def test_volume_filtered_threshold_zero(self):
-        """With volume_filter_min_pct=0, threshold is the minimum volume."""
-        db_path = _make_test_db()
-        try:
-            params = _make_params("volume_filtered", db_path)
-            params["volume_filter_min_pct"] = 0.0
-            engine = MarketEngine(params)
-            ctx = PricingContext(
-                eval_date=pd.Timestamp("2024-01-05"),
-                expiration=pd.Timestamp(EXPIRY),
-                target_delta=0.16,
-            )
-            S, T, r, vix = 120.0, 42 / 365.0, 0.12, 20.0
-            pk, ck, pp, cp, used_db = engine.get_entry_marks(S, T, r, vix, ctx=ctx)
-            # Threshold = 100 (minimum), put vol=1000 ≥ 100, call vol=500 ≥ 100
-            assert used_db is True
-            engine.close()
-        finally:
-            os.unlink(db_path)
-
-
 class TestCloseSideExecution:
     def test_bid_ask_close_uses_ask(self):
         """Close leg mark uses ask for bid_ask mode."""
@@ -362,30 +293,11 @@ class TestCloseSideExecution:
         finally:
             os.unlink(db_path)
 
-    def test_volume_filtered_close_uses_mark(self):
-        """Close leg mark uses mark for volume_filtered (no volume check on exit)."""
-        db_path = _make_test_db()
-        try:
-            params = _make_params("volume_filtered", db_path)
-            engine = MarketEngine(params)
-            ctx = PricingContext(
-                eval_date=pd.Timestamp("2024-01-05"),
-                expiration=pd.Timestamp(EXPIRY),
-            )
-            mark, src = engine.get_leg_mark_with_source(
-                112.0, 120.0, 42, 20.0, 0.12, "put", ctx=ctx, buy_or_sell="buy"
-            )
-            assert src == "db"
-            assert mark == pytest.approx(1.20)
-            engine.close()
-        finally:
-            os.unlink(db_path)
-
     def test_sell_side_unaffected_by_exec_mode(self):
         """Sell side (buy_or_sell='sell') always uses bid regardless of exec mode."""
         db_path = _make_test_db()
         try:
-            for mode in ["bid_ask", "mid", "mid_minus_1tick", "mid_plus_1tick", "volume_filtered"]:
+            for mode in ["bid_ask", "mid", "mid_minus_1tick", "mid_plus_1tick"]:
                 params = _make_params(mode, db_path)
                 params["tick_size"] = 0.05
                 engine = MarketEngine(params)
@@ -399,5 +311,78 @@ class TestCloseSideExecution:
                 # sell side always uses bid = 1.10
                 assert mark == pytest.approx(1.10), f"Mode {mode} failed"
                 engine.close()
+        finally:
+            os.unlink(db_path)
+
+
+class TestDBExpiration:
+    """Verify that MarketEngine.get_db_expiration returns actual DB expirations."""
+
+    def test_db_expiration_finds_valid_dte(self):
+        db_path = _make_test_db()
+        try:
+            params = _make_params("mid", db_path)
+            engine = MarketEngine(params)
+            result = engine.get_db_expiration("2024-01-05", 30, 60)
+            assert result == pd.Timestamp("2024-02-16")
+            engine.close()
+        finally:
+            os.unlink(db_path)
+
+    def test_db_expiration_returns_none_if_no_match(self):
+        db_path = _make_test_db()
+        try:
+            params = _make_params("mid", db_path)
+            engine = MarketEngine(params)
+            result = engine.get_db_expiration("2024-01-05", 100, 120)
+            assert result is None
+            engine.close()
+        finally:
+            os.unlink(db_path)
+
+    def test_db_expiration_with_expected_month(self):
+        db_path = _make_test_db()
+        try:
+            params = _make_params("mid", db_path)
+            engine = MarketEngine(params)
+            expected = pd.Timestamp("2024-02-16")
+            result = engine.get_db_expiration("2024-01-05", 20, 60, expected_month=expected)
+            assert result == pd.Timestamp("2024-02-16")
+            engine.close()
+        finally:
+            os.unlink(db_path)
+
+    def test_db_expiration_expected_month_filters_far_expirations(self):
+        db_path = _make_test_db()
+        try:
+            params = _make_params("mid", db_path)
+            engine = MarketEngine(params)
+            expected_march = pd.Timestamp("2024-03-15")
+            result = engine.get_db_expiration("2024-01-05", 30, 80, expected_month=expected_march)
+            assert result is None
+            engine.close()
+        finally:
+            os.unlink(db_path)
+
+
+class TestExpirationResolution:
+    """Verify that get_monthly_expiration uses DB when engine is provided."""
+
+    def test_calendar_fallback_when_no_engine(self):
+        from straddle.strategy import get_monthly_expiration
+        entry = pd.Timestamp("2024-01-05")
+        result = get_monthly_expiration(entry, 30, 60, calendar="BVMF")
+        assert result == pd.Timestamp("2024-02-16")
+
+    def test_db_overrides_calendar(self):
+        db_path = _make_test_db()
+        try:
+            params = _make_params("mid", db_path)
+            engine = MarketEngine(params)
+            from straddle.strategy import get_monthly_expiration
+            entry = pd.Timestamp("2024-01-05")
+            result = get_monthly_expiration(entry, 30, 60, calendar="BVMF", engine=engine)
+            assert result == pd.Timestamp("2024-02-16")
+            engine.close()
         finally:
             os.unlink(db_path)

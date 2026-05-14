@@ -53,9 +53,8 @@ class PricingParams(TypedDict, total=False):
     contract_multiplier: float  # shares per contract (100 for both US and B3 equity options)
     american_options: bool      # True → use BAW approximation for put pricing (PETR4)
     use_cdi_ivs: bool           # True → use implied_volatility_cdi / delta_cdi columns from rb3 DB
-    execution_mode: str         # "bid_ask" | "mid_minus_1tick" | "mid" | "mid_plus_1tick" | "volume_filtered"
+    execution_mode: str         # "bid_ask" | "mid_minus_1tick" | "mid" | "mid_plus_1tick"
     tick_size: float            # minimum price increment
-    volume_filter_min_pct: float  # for volume_filtered: skip entries with volume < this percentile
 
 
 class OvershootParams(TypedDict, total=False):
@@ -155,7 +154,6 @@ PRICING: PricingParams = {
     "use_cdi_ivs": True,  # True → use implied_volatility_cdi / delta_cdi columns from rb3 DB
     "execution_mode": "bid_ask",
     "tick_size": 0.05,
-    "volume_filter_min_pct": 0.50,
 }
 
 # ── Stop-loss overshoot model ────────────────────────────────────────────
