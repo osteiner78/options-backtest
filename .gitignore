@@ -37,9 +37,6 @@ backtest_results.png
 # history
 .history/
 
-# Reports
-reports/
-
 # B3 raw data (large)
 data/B3/COTAHIST_*.TXT
 
