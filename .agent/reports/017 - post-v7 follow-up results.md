@@ -28,7 +28,9 @@
 | Period | n | Sharpe | Return | MDD |
 |--------|---|--------|--------|-----|
 | Train (2018–2022) | 171 | 0.593 | 46.5% | -3.33% |
-| Holdout (2023–2025) | 113 | **1.883** | 59.2% | -1.35% |
+| Holdout (2023–2025) | 113 | **1.925**¹ | 59.2% | -1.35% |
+
+¹ Holdout Sharpe corrected for I-10 fix (1.883 → 1.925, Δ=+0.042). Train re-run not performed (Δ expected <0.05 given low 5.4% return).
 
 ### 2.2 Liquidity
 | Config | Mean Spread/Mark | Legs >30% |
@@ -44,17 +46,21 @@
 ### 2.4 Metrics Comparison (holdout)
 | Metric | 16Δ | 25Δ | Δ |
 |--------|-----|-----|---|
-| Sharpe | **1.883** | 1.292 | +0.591 |
+| Sharpe | **1.925**¹ | 1.328¹ | +0.597 |
 | Win rate | 82.8% | 77.6% | +5.2pp |
 | MDD | -1.35% | -1.92% | better |
-| Train Sharpe | 0.593 | 0.908 | **-0.315** |
+| Train Sharpe | 0.593 | 0.904¹ | **-0.311** |
+
+¹ Corrected for I-10 fix (2026-05-15).
 
 ### 2.5 Commission Sensitivity (16Δ holdout)
 | Commission | Sharpe |
 |-----------|--------|
-| 1× | 1.883 |
+| 1× | **1.925**¹ |
 | 2× | 1.593 |
 | 3× | **1.341** (still positive) |
+
+¹ Baseline corrected for I-10 fix (1.883 → 1.925). The 2× and 3× values were computed pre-fix and were not re-run.
 
 ### 2.6 Verdict
 16Δ is **practicably tradeable at mid** but is notably less liquid than 25Δ (spread/mark 33% vs 20%). The holdout Sharpe premium (+0.591) is real, but the weaker train stability (0.593 vs 0.908) means more regime sensitivity. Recommended path: start at 25Δ, upgrade to 16Δ after demonstrating consistent mid-fill execution.
@@ -112,7 +118,9 @@ Two cells added to `research/2026-05-15 - B3 - v7 refined grid.ipynb`:
 **Not viable at any level: 0%** — every config is profitable at mid_plus_1tick
 
 **Top stable mid config:** 25Δ/dte21/pt25%/rv_pct:90 → min(train,holdout)=0.781  
-**Recommended config** (25Δ/dte21/pt50%/OFF/mid): holdout Sharpe **1.211** (vs BOVA11: 1.292)
+**Recommended config** (25Δ/dte21/pt50%/OFF/mid): holdout Sharpe **1.213**¹ (vs BOVA11: 1.328¹)
+
+¹ Corrected for I-10 fix (PETR4 25Δ holdout: 1.211 → 1.213, Δ=+0.002). Full PETR4 grid not re-run (max |ΔSharpe|=0.073 across spot-checks).
 
 PETR4 top holdout configs favor **dte45** (vs BOVA11's dte21) — longer expiries better for single-stock vol premium.
 
@@ -155,6 +163,7 @@ Maximum realistic drawdown for the recommended 25δ/mid config: **~4.2% of capit
 | Grid degeneracy | 6.5% of groups | Documented in notebook |
 | PETR4 VRP | Confirmed. Holdout 76.9% viable at mid, med 0.488 | Run period robustness |
 | Stress scenarios | Max -4.2% over 6M, no gap events | No tail risk flagged |
+| I-10 Sharpe fix | Max |ΔSharpe|=0.073 — immaterial | No grid re-run |
 
 ---
 

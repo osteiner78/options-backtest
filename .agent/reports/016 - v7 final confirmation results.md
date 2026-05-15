@@ -13,9 +13,11 @@
 **Key numbers (holdout 2023–2025, mid execution):**
 - 86.3% of v7 grid configs are profitable (Sharpe > 0)
 - Median holdout Sharpe at mid: **0.44**
-- Best stable config (25δ/dte21/pt50%): **Sharpe 1.29** (holdout), robust to commission increases up to 3×
+- Best stable config (25δ/dte21/pt50%): **Sharpe 1.33** (holdout), robust to commission increases up to 3×
 - All 3 recent 3-year windows (2018–2024) show 100% config profitability at mid
 - 10-trade P&L verification: 9/9 non-stop trades match DB marks within R$0.00
+
+*Note: Sharpe updated for I-10 fix (2026-05-15). Old value was 1.29; corrected to 1.33 (Δ=+0.04). Max ΔSharpe across 6 spot-checked configs was 0.073 — immaterial for practical conclusions. Full grid not re-run.*
 
 **Conclusion on deployability:** The VRP is real and persistent. Mid execution is required — bid_ask fills consume the entire premium (only 4% positive across 2688 configs in holdout). Recommended deployment at mid execution with 25δ, dte_max=21 as the practical starting point.
 
@@ -92,6 +94,17 @@ v6 notebook Cell J showed `entry_db_pct = 0.5%` instead of `~50%`. Root cause: m
 | mid | 66.5% | **86.3%** | **0.44** |
 | mid_plus_1tick | 85.7% | **98.8%** | **1.45** |
 
+> **I-10 fix note (2026-05-15):** The v7 parquet was generated before the I-10 Sharpe fix (`_compute_sharpe_from_daily_pnl` used initial balance as denominator instead of running equity). Spot-checked 6 key configs show the correction is immaterial: max |ΔSharpe|=0.073, as shown below. The full grid was NOT re-run; medians and % positive values above are unchanged from the parquet.
+>
+> | Config | Period | Old Sharpe | New Sharpe | Δ | Return |
+> |--------|--------|-----------|-----------|---|--------|
+> | 25Δ BOVA11 | train | 0.908 | 0.904 | −0.004 | 14.7% |
+> | 25Δ BOVA11 | holdout | 1.292 | 1.328 | +0.036 | 6.5% |
+> | 16Δ BOVA11 | holdout | 1.883 | 1.925 | +0.042 | 5.3% |
+> | 12Δ BOVA11 | holdout | 11.557 | 11.485 | −0.073 | 4.5% |
+> | 25Δ PETR4 | train | 0.613 | 0.621 | +0.008 | 5.4% |
+> | 25Δ PETR4 | holdout | 1.211 | 1.213 | +0.001 | 3.7% |
+
 ### Cell B — Break-even (holdout)
 - 86.3% of configs viable at mid or better
 - Only 12.5% require mid_plus_1tick (mainly 12δ)
@@ -139,8 +152,10 @@ All filters cluster tightly. rv_pct:90 marginally best. OFF slightly worse.
 | Config | mid baseline | mid double | mid triple |
 |--------|-------------|-----------|-----------|
 | 12δ/30/25% | 1.10 | 0.75 | 0.43 |
-| 25δ/21/50% (config 4) | 1.29 | 0.74 | 0.58 |
+| 25δ/21/50% (config 4) | **1.33**¹ | 0.74 | 0.58 |
 | 25δ/21/50% (config 5) | **0.88** | **0.88** | **0.87** |
+
+¹ Baseline corrected for I-10 fix (1.29 → 1.33). The 2× and 3× values were not re-run; the Δ=+0.04 change at baseline is expected to propagate proportionally.
 
 **None of the top 5 configs flip negative at mid even at 3× commission.** Config 5 (25δ) is nearly commission-invariant. Real B3 broker commissions (~R$0.45-0.50/option) are well below the double level.
 
@@ -204,6 +219,8 @@ execution_mode:     mid
 portfolio_mode:     laddering
 ```
 
+**Confirmed Sharpe for recommended config (25δ/dte21/pt50%/mid, holdout 2023–2025): 1.33** (corrected from 1.29 for I-10 fix; Δ=+0.04)
+
 **Why 25δ over 12δ:**
 - Spread/mark: 14.2% vs 41.1% — 3× better liquidity
 - Commission-robust: Sharpe barely degrades at 3× commission
@@ -234,6 +251,16 @@ portfolio_mode:     laddering
 5. **Vol-filter tuning is not granular.** The rv_pct thresholds (70/80/90) tested are coarse. A finer search might identify a better threshold, but the Phase 3 results show minimal differentiation across levels.
 
 6. **The train/holdout correlation at mid is negative (-0.275).** This suggests the selection of configs that performed well in train does not strongly predict holdout performance. However, 54.1% of configs are positive in both periods, which is the operational criterion for robustness — not correlation.
+
+---
+
+### Bug Fixes Applied After v7 Grid (commit 1db7e66, 2026-05-15)
+
+All three bugs were fixed; grid NOT re-run (impact measured as immaterial, max |ΔSharpe|=0.073):
+
+- **I-10 (metrics.py):** Portfolio-mode Sharpe denominator corrected from initial balance to running equity. See §5 Cell A note for full impact table.
+- **I-6 (strategy.py):** Fallback expiry path was missing `daily_marks.append`, silently dropping final P&L from the equity curve.
+- **I-2 (api.py):** Error messages are now persisted to SQLite on backtest failure, surviving server restarts.
 
 ---
 
