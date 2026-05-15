@@ -350,9 +350,9 @@ def compute_metrics(trades, equity_curve, params, data) -> dict:
 
     results["entry_db_count"] = entry_db_count
     results["entry_db_total"] = len(trades)
-    results["entry_db_pct"] = entry_db_count / len(trades) if trades else 0
+    results["entry_db_pct"] = entry_db_count / len(trades) * 100.0 if trades else 0.0
     results["exit_db_count"] = exit_db_count
-    results["mtm_avg_db_pct"] = float(np.mean(mtm_db_pct_list)) if mtm_db_pct_list else 0
+    results["mtm_avg_db_pct"] = float(np.mean(mtm_db_pct_list)) * 100.0 if mtm_db_pct_list else 0.0
 
     # Structured stats for API consumers
     results["exit_stats"] = _compute_exit_stats(trades)
@@ -425,9 +425,9 @@ def compute_portfolio_metrics(
 
     results["entry_db_count"] = entry_db_count
     results["entry_db_total"] = len(trades)
-    results["entry_db_pct"] = entry_db_count / len(trades) if trades else 0
+    results["entry_db_pct"] = entry_db_count / len(trades) * 100.0 if trades else 0.0
     results["exit_db_count"] = exit_db_count
-    results["mtm_avg_db_pct"] = float(np.mean(mtm_db_pct_list)) if mtm_db_pct_list else 0
+    results["mtm_avg_db_pct"] = float(np.mean(mtm_db_pct_list)) * 100.0 if mtm_db_pct_list else 0.0
 
     # Structured stats for API consumers
     results["exit_stats"] = _compute_exit_stats(trades)
