@@ -488,8 +488,11 @@ def run_portfolio_backtest(
                 t.exit_date = last_date
                 t.exit_dte = (t.expiration - last_date).days
                 t.exit_type = "FORCE_CLOSE"
-                t.pnl = res.pnl
-                t.pnl_pct = res.pnl_pct
+                # res.pnl is 0.0 for non-exited results (only set in exited path);
+                # compute from net_credit − close_cost, same as evaluate_trade_step does
+                # for natural exits.
+                t.pnl = round(t.net_credit - res.close_cost, 2)
+                t.pnl_pct = t.pnl / t.net_credit if t.net_credit else 0.0
                 portfolio.available_cash -= res.close_cost
                 portfolio.remove_position(t.trade_num)
                 trades.append(t)
