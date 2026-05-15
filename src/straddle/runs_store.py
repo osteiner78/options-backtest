@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-_DB_PATH = Path("data/runs.db")
+_DB_PATH = Path(__file__).resolve().parent.parent.parent / "data" / "runs.db"
 
 
 def _connect() -> sqlite3.Connection:
@@ -37,7 +37,7 @@ def upsert_run(run_id: str, status: str, params: dict, result: Optional[dict] = 
             VALUES (?, ?, ?, ?, ?, ?)
             ON CONFLICT(run_id) DO UPDATE SET
                 status      = excluded.status,
-                label       = excluded.label,
+                label       = CASE WHEN excluded.label IS NULL THEN label ELSE excluded.label END,
                 params_json = excluded.params_json,
                 result_json = excluded.result_json
         """, (

@@ -16,6 +16,7 @@ from typing import Optional, Tuple
 
 import numpy as np
 import pandas as pd
+from scipy.optimize import brentq as _brentq
 from scipy.stats import norm
 
 from straddle.data import validate_market_mode_dates
@@ -173,7 +174,6 @@ def _baw_critical_put(
     # Bracket: g(ε) > 0, g(K-ε) < 0 for any r > 0, q2 < 0
     lo, hi = 1e-6, K - 1e-6
     try:
-        from scipy.optimize import brentq as _brentq
         S_star = _brentq(g, lo, hi, xtol=1e-6, maxiter=200)
     except Exception:
         S_star = K * 0.5  # fallback: mid-point, very conservative
@@ -197,8 +197,8 @@ def american_put_baw(
     intrinsic = max(K - S, 0.0)
     p_eu = bs_price(S, K, T, r, sigma, "put", q)
 
-    # Guard: no meaningful early exercise without time or positive rates
-    if T < 1e-7 or r < 1e-8:
+    # Guard: no meaningful early exercise without time, positive rates, or vol
+    if T < 1e-7 or r < 1e-8 or sigma < 1e-8:
         return max(p_eu, intrinsic)
 
     q2 = _baw_q2(r, sigma, T, q)
@@ -912,7 +912,7 @@ class MarketEngine:
         """Safety measure: ensure connection is closed on garbage collection."""
         try:
             self.close()
-        except:
+        except Exception:
             pass
 
     # ── private helpers ─────────────────────────────────────────────────

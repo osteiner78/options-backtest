@@ -1,5 +1,6 @@
 """Tests for strategy module: calendar utils, Trade properties, backtest invariants."""
 
+import numpy as np
 import pandas as pd
 import pytest
 
@@ -9,6 +10,9 @@ from straddle.strategy import (
     get_entry_dates,
     Trade,
     LegRollEvent,
+    _VOL_CACHE,
+    _build_vol_filter,
+    clear_vol_cache,
 )
 
 
@@ -270,3 +274,118 @@ class TestSourceTracking:
         assert "mtm_avg_db_pct" in metrics
         assert metrics["entry_db_pct"] == 0.0
         assert metrics["entry_db_total"] == len(trades)
+
+
+# ── Vol cache fix (Bug #1) ───────────────────────────────────────────────
+
+class TestVolCacheKey:
+    """_build_vol_filter must use index bounds as cache key, not id(data)."""
+
+    def _make_data(self, n: int = 400, seed: int = 0) -> pd.DataFrame:
+        np.random.seed(seed)
+        dates = pd.bdate_range("2022-01-03", periods=n)
+        close = 100.0 + np.cumsum(np.random.randn(n))
+        return pd.DataFrame(
+            {"underlying_close": close, "vix_close": 20 + np.random.randn(n) * 3},
+            index=dates,
+        )
+
+    def test_clear_vol_cache_empties_dict(self):
+        clear_vol_cache()
+        assert len(_VOL_CACHE) == 0
+
+    def test_cache_key_uses_index_bounds(self):
+        clear_vol_cache()
+        data = self._make_data()
+        params = {"vol_filter_mode": "rv_pct", "vol_filter_threshold": 80.0}
+        _build_vol_filter(data, params)
+        key = list(_VOL_CACHE.keys())[0]
+        # Key must contain the first and last index values, not an int (id)
+        assert data.index[0] in key
+        assert data.index[-1] in key
+
+    def test_same_index_range_hits_cache(self):
+        clear_vol_cache()
+        data = self._make_data()
+        params = {"vol_filter_mode": "rv_pct", "vol_filter_threshold": 80.0}
+        _build_vol_filter(data, params)
+        assert len(_VOL_CACHE) == 1
+        _build_vol_filter(data, params)
+        assert len(_VOL_CACHE) == 1  # cache hit, not a second entry
+
+    def test_different_index_range_creates_new_entry(self):
+        clear_vol_cache()
+        data1 = self._make_data(n=400)
+        data2 = self._make_data(n=300)  # different start/end
+        params = {"vol_filter_mode": "rv_pct", "vol_filter_threshold": 80.0}
+        _build_vol_filter(data1, params)
+        _build_vol_filter(data2, params)
+        assert len(_VOL_CACHE) == 2
+
+
+# ── IVR vol filter logic (Bug #5) ───────────────────────────────────────
+
+class TestIvrVolFilter:
+    """IVR mode should block when current IV is LOW (below threshold percentile)."""
+
+    def _make_data_with_constant_vix(self, n: int = 500, vix_val: float = 20.0) -> pd.DataFrame:
+        dates = pd.bdate_range("2020-01-02", periods=n)
+        close = np.full(n, 100.0)
+        vix = np.full(n, vix_val)
+        return pd.DataFrame(
+            {"underlying_close": close, "vix_close": vix},
+            index=dates,
+        )
+
+    def _make_data_low_then_high_vix(self, n: int = 600) -> pd.DataFrame:
+        """First half: VIX=10, second half: VIX=30 (simulates regime change)."""
+        dates = pd.bdate_range("2018-01-02", periods=n)
+        close = np.full(n, 100.0)
+        vix = np.concatenate([np.full(n // 2, 10.0), np.full(n - n // 2, 30.0)])
+        return pd.DataFrame(
+            {"underlying_close": close, "vix_close": vix},
+            index=dates,
+        )
+
+    def test_ivr_warmup_period_is_unblocked(self):
+        """First 252 days should be unblocked (consistent with rv_pct)."""
+        data = self._make_data_with_constant_vix()
+        params = {"vol_filter_mode": "ivr", "vol_filter_threshold": 50.0}
+        result = _build_vol_filter(data, params)
+        # Days before index 252 should be False (not blocked)
+        assert not result.iloc[:252].any()
+
+    def test_ivr_high_vix_period_is_unblocked(self):
+        """When current VIX is high relative to history, IVR is high — entries allowed."""
+        data = self._make_data_low_then_high_vix()
+        params = {"vol_filter_mode": "ivr", "vol_filter_threshold": 50.0}
+        clear_vol_cache()
+        result = _build_vol_filter(data, params)
+        # Second half: VIX=30, history is mostly VIX=10 → IVR is very high → should be NOT blocked
+        second_half = result.iloc[len(result) // 2 + 252:]
+        assert not second_half.any(), "High-IV period should not be blocked"
+
+    def test_ivr_low_vix_period_is_blocked(self):
+        """When current VIX is low relative to history, IVR is low — entries blocked.
+
+        Only checks the first 100 days of the low-VIX period, where the 252-day
+        lookback window still contains a majority of high-VIX history.
+        """
+        n = 600
+        half = n // 2  # 300
+        dates = pd.bdate_range("2018-01-02", periods=n)
+        # First 300 days VIX=30, next 300 days VIX=5.
+        # Using VIX=5 (not 10) so even strict-less-than gives a clear signal.
+        vix = np.concatenate([np.full(half, 30.0), np.full(n - half, 5.0)])
+        data = pd.DataFrame(
+            {"underlying_close": np.full(n, 100.0), "vix_close": vix},
+            index=dates,
+        )
+        params = {"vol_filter_mode": "ivr", "vol_filter_threshold": 50.0}
+        clear_vol_cache()
+        result = _build_vol_filter(data, params)
+        # Check indices half to half+100 — window still has >50% VIX=30 history.
+        low_iv_early = result.iloc[half : half + 100]
+        assert low_iv_early.all(), (
+            "Low-IV period (early days, majority-high-VIX window) should be blocked"
+        )

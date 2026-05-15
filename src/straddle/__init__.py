@@ -24,7 +24,8 @@ Public API::
 from straddle.params import PARAMS, MARKET_PRESETS, apply_market_preset
 from straddle.data import load_market_data, validate_market_mode_dates
 from straddle.engines import SyntheticEngine, MarketEngine, make_engine
-from straddle.strategy import run_backtest, Trade, LegRollEvent
+from straddle.strategy import run_backtest, Trade, LegRollEvent, clear_vol_cache, clear_strategy_caches
+from straddle.data import clear_data_caches
 from straddle.metrics import compute_metrics, compute_portfolio_metrics
 from straddle.plotting import plot_backtest, plot_engine_comparison
 from straddle.portfolio import (
@@ -48,6 +49,9 @@ __all__ = [
     "run_backtest",
     "Trade",
     "LegRollEvent",
+    "clear_vol_cache",
+    "clear_strategy_caches",
+    "clear_data_caches",
     "compute_metrics",
     "compute_portfolio_metrics",
     "plot_backtest",

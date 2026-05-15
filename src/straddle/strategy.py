@@ -16,7 +16,12 @@ from straddle.engines import PricingContext
 
 # ── Volatility filter cache ───────────────────────────────────────────────
 
-_VOL_CACHE: dict = {}  # key: (id(data), mode, threshold) → bool Series
+_VOL_CACHE: dict = {}  # key: (index[0], index[-1], mode, threshold) → bool Series
+
+
+def clear_vol_cache() -> None:
+    """Clear the vol-filter cache. Call before each grid-search run."""
+    _VOL_CACHE.clear()
 
 
 def _build_vol_filter(data: pd.DataFrame, params: dict) -> pd.Series:
@@ -24,7 +29,9 @@ def _build_vol_filter(data: pd.DataFrame, params: dict) -> pd.Series:
     mode = str(params.get("vol_filter_mode", "vix"))
     threshold = float(params.get("vol_filter_threshold", 30.0))
 
-    cache_key = (id(data), mode, threshold)
+    # Use index bounds instead of id() — id() reuses memory addresses after GC,
+    # which can silently return stale results across consecutive backtests.
+    cache_key = (data.index[0], data.index[-1], mode, threshold)
     if cache_key in _VOL_CACHE:
         return _VOL_CACHE[cache_key]
 
@@ -53,11 +60,14 @@ def _build_vol_filter(data: pd.DataFrame, params: dict) -> pd.Series:
 
     elif mode == "ivr":
         atm_iv = data.get("vix_close", pd.Series(0, index=dates))
-        result = pd.Series(True, index=dates)
+        # Warmup period unblocked (consistent with rv_pct); loop fills i >= 252.
+        result = pd.Series(False, index=dates)
         for i in range(252, len(atm_iv)):
             window = atm_iv.iloc[max(0, i - 252):i + 1]
+            # ivr_val = fraction of window where past IV exceeded current IV.
+            # Block when current IV is BELOW threshold percentile (too little premium).
             ivr_val = (atm_iv.iloc[i] < window.values).mean()
-            result.iloc[i] = ivr_val < (threshold / 100.0)
+            result.iloc[i] = ivr_val > (1.0 - threshold / 100.0)
 
     else:
         result = pd.Series(False, index=dates)
@@ -83,6 +93,15 @@ def is_vol_blocked(eval_date: pd.Timestamp, vix_d: float,
     if eval_date in blocked.index:
         return bool(blocked.loc[eval_date])
     return False
+
+
+def clear_strategy_caches() -> None:
+    """Clear all module-level caches (vol filter and trading-day sets).
+
+    Call when switching DB paths in a long-lived server process.
+    """
+    _VOL_CACHE.clear()
+    _TRADING_DAY_SETS.clear()
 
 
 # ── Calendar utilities ───────────────────────────────────────────────────

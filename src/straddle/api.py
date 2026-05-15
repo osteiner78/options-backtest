@@ -12,7 +12,7 @@ import numpy as np
 from fastapi import FastAPI, HTTPException, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 from straddle import (PARAMS, compute_metrics, compute_portfolio_metrics, load_market_data, make_engine, run_backtest, run_portfolio_backtest)
 from straddle.data import _DB_FIRST, _db_coverage_end
 from straddle.params import apply_market_preset, MARKET_PRESETS
@@ -62,7 +62,10 @@ class BacktestRequest(BaseModel):
     entry_cooldown_days: Optional[int] = Field(default=None, ge=0, le=30)
     cash_investment_mode: Optional[str] = Field(default=None, pattern=r"^(risk_free|underlying|blend)$")
     underlying_allocation_pct: Optional[float] = Field(default=None, ge=0.0, le=1.0)
-    risk_free_rate: Optional[float] = Field(default=None, ge=0, le=0.2)
+    risk_free_rate: Optional[float] = Field(
+        default=None, ge=0, le=0.2,
+        description="Annual yield on idle cash (maps to cash_yield_annual, NOT the option-pricing rate; use pricing_risk_free for that)"
+    )
     manage_at_dte: Optional[int] = Field(default=None, ge=0, le=60)
     roll_for_credit: Optional[bool] = None
     max_rolls: Optional[int] = Field(default=None, ge=0, le=10)
@@ -77,6 +80,14 @@ class BacktestRequest(BaseModel):
     pricing_risk_free: Optional[float] = Field(default=None, ge=0, le=0.2)
     put_slope: Optional[float] = Field(default=None, ge=0, le=2.0)
     call_slope: Optional[float] = Field(default=None, ge=0, le=2.0)
+
+    @model_validator(mode='after')
+    def check_dte_order(self) -> 'BacktestRequest':
+        if self.dte_min is not None and self.dte_max is not None:
+            if self.dte_min >= self.dte_max:
+                raise ValueError("dte_min must be less than dte_max")
+        return self
+
 
 class TradeSummary(BaseModel):
     trade_num: int
@@ -116,24 +127,50 @@ class VixRegimeStatRow(BaseModel):
     total_pnl: float
 
 class MetricsResponse(BaseModel):
-    n_trades: int; initial_balance: float; final_balance: float
-    total_return: float; annualized_return: float; sharpe: float; max_drawdown: float
-    calmar: float; win_rate: float; avg_pnl: float; underlying_total_return: float
-    underlying_annualized_return: float; underlying_sharpe: float; underlying_max_drawdown: float; underlying_calmar: float
-    exit_breakdown: Dict[str, int]; ret_options: float; ret_cash_underlying: float
-    ret_cash_rf: float; cagr_options: float; cagr_cash_underlying: float; cagr_cash_rf: float
-    peak_positions: Optional[int] = None; avg_positions: Optional[float] = None
-    avg_bpr_util_pct: Optional[float] = None; peak_bpr_util_pct: Optional[float] = None
+    n_trades: int
+    initial_balance: float
+    final_balance: float
+    total_return: float
+    annualized_return: float
+    sharpe: float
+    max_drawdown: float
+    calmar: float
+    win_rate: float
+    avg_pnl: float
+    underlying_total_return: float
+    underlying_annualized_return: float
+    underlying_sharpe: float
+    underlying_max_drawdown: float
+    underlying_calmar: float
+    exit_breakdown: Dict[str, int]
+    ret_options: float
+    ret_cash_underlying: float
+    ret_cash_rf: float
+    cagr_options: float
+    cagr_cash_underlying: float
+    cagr_cash_rf: float
+    peak_positions: Optional[int] = None
+    avg_positions: Optional[float] = None
+    avg_bpr_util_pct: Optional[float] = None
+    peak_bpr_util_pct: Optional[float] = None
     max_streak: Optional[int] = None
     exit_stats: List[ExitStatRow] = Field(default_factory=list)
     vix_regime_stats: List[VixRegimeStatRow] = Field(default_factory=list)
 
+
 class BacktestResponse(BaseModel):
-    run_id: str; status: str; params: Dict[str, Any]; metrics: Optional[MetricsResponse] = None
-    trades: Optional[List[TradeSummary]] = None; equity_curve: Optional[Dict[str, float]] = None
-    underlying_curve: Optional[Dict[str, float]] = None; bpr_curve: Optional[Dict[str, float]] = None
-    pos_count_curve: Optional[Dict[str, int]] = None; vix_curve: Optional[Dict[str, float]] = None
-    vix_blocked_dates: Optional[List[str]] = None; error: Optional[str] = None
+    run_id: str
+    status: str
+    params: Dict[str, Any]
+    metrics: Optional[MetricsResponse] = None
+    trades: Optional[List[TradeSummary]] = None
+    equity_curve: Optional[Dict[str, float]] = None
+    underlying_curve: Optional[Dict[str, float]] = None
+    bpr_curve: Optional[Dict[str, float]] = None
+    pos_count_curve: Optional[Dict[str, int]] = None
+    vix_curve: Optional[Dict[str, float]] = None
+    vix_blocked_dates: Optional[List[str]] = None
+    error: Optional[str] = None
 
 def _build_metrics_response(metrics: dict, params: dict, trades: list, data: pd.DataFrame) -> MetricsResponse:
     init = float(params.get("initial_balance", 50_000))
@@ -143,8 +180,8 @@ def _build_metrics_response(metrics: dict, params: dict, trades: list, data: pd.
     def _clean(v): return float(v) if v is not None and not np.isnan(v) and not np.isinf(v) else 0.0
     short_pnl = sum(t.pnl for t in trades if t.pnl is not None)
     cash_yield_total = metrics.get("cash_yield_earned", 0.0)
-    cash_mode = params["cash_investment_mode"]
-    underlying_alloc = params["underlying_allocation_pct"]
+    cash_mode = params.get("cash_investment_mode", "risk_free")
+    underlying_alloc = params.get("underlying_allocation_pct", 0.0)
     if cash_mode == "underlying": ret_cash_underlying, ret_cash_rf = cash_yield_total / init, 0.0
     elif cash_mode == "risk_free": ret_cash_underlying, ret_cash_rf = 0.0, cash_yield_total / init
     else: ret_cash_underlying, ret_cash_rf = (cash_yield_total * underlying_alloc) / init, (cash_yield_total * (1 - underlying_alloc)) / init

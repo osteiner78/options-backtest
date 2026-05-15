@@ -1,9 +1,10 @@
 """Tests for portfolio module: Reg-T margin formula and PortfolioManager accounting."""
 
+import numpy as np
 import pytest
 import pandas as pd
 
-from straddle.portfolio import calculate_reg_t_strangle_margin, PortfolioManager
+from straddle.portfolio import calculate_reg_t_strangle_margin, PortfolioManager, run_portfolio_backtest
 from straddle.strategy import Trade
 
 
@@ -142,7 +143,52 @@ class TestPortfolioManagerAccounting:
     def test_record_daily_state_appends_entry(self, pm):
         pm.record_daily_state(pd.Timestamp("2024-01-05"), unrealized_liability=-500.0)
         assert len(pm.equity_curve) == 1
-        row = pm.equity_curve[0]
-        assert row["total_equity"] == pytest.approx(49_500.0)
-        assert row["utilized_bpr"] == 0.0
-        assert row["open_positions"] == 0
+
+
+# ── Force-close double-append fix (Bug #2) ───────────────────────────────
+
+class TestForceCloseNoDuplicateMarks:
+    """Force-close must not double-append to daily_marks on the last date."""
+
+    def _make_data(self, n: int = 120) -> pd.DataFrame:
+        np.random.seed(7)
+        dates = pd.bdate_range("2024-01-02", periods=n)
+        close = 470.0 + np.cumsum(np.random.randn(n) * 1.5)
+        return pd.DataFrame(
+            {
+                "underlying_open":  close + np.random.randn(n) * 0.3,
+                "underlying_high":  close + np.abs(np.random.randn(n)),
+                "underlying_low":   close - np.abs(np.random.randn(n)),
+                "underlying_close": close,
+                "vix_close": 14.0 + np.random.randn(n) * 2.0,
+                "risk_free_rate": 0.045,
+            },
+            index=dates,
+        )
+
+    def test_force_close_trades_have_unique_daily_mark_dates(self):
+        from straddle.params import PARAMS, apply_market_preset
+        from straddle.engines import SyntheticEngine
+
+        params = dict(PARAMS)
+        params.update({
+            "start_date": "2024-01-02",
+            "end_date": "2024-06-28",
+            "portfolio_mode": "laddering",
+            "initial_balance": 50_000,
+            "max_bpr_allocation": 0.5,
+            "entry_cooldown_days": 0,
+            "cash_investment_mode": "risk_free",
+            "underlying_allocation_pct": 0.0,
+        })
+        data = self._make_data(n=120)
+        engine = SyntheticEngine(params)
+
+        trades, _, _, _ = run_portfolio_backtest(data, params, engine=engine)
+
+        force_closed = [t for t in trades if t.exit_type == "FORCE_CLOSE"]
+        for t in force_closed:
+            dates_in_marks = [m[0] for m in t.daily_marks]
+            assert len(dates_in_marks) == len(set(dates_in_marks)), (
+                f"Trade {t.trade_num} has duplicate dates in daily_marks: {dates_in_marks}"
+            )

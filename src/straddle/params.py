@@ -5,7 +5,7 @@ The sub-dicts provide a human-facing interface; the merged PARAMS dict
 is the machine interface used by all downstream functions.
 """
 
-from typing import TypedDict
+from typing import Optional, TypedDict
 
 
 # ── TypedDict for type hints ─────────────────────────────────────────────
@@ -37,6 +37,8 @@ class StrategyParams(TypedDict, total=False):
     single_position: bool
     vix_entry_filter_enabled: bool
     vix_entry_max: float
+    vol_filter_mode: str
+    vol_filter_threshold: float
     defensive_leg_roll_enabled: bool
     defensive_trigger_delta: float
     leg_roll_target_delta: float
@@ -154,6 +156,7 @@ PRICING: PricingParams = {
     "use_cdi_ivs": True,  # True → use implied_volatility_cdi / delta_cdi columns from rb3 DB
     "execution_mode": "bid_ask",
     "tick_size": 0.05,
+    "american_options": False,  # True → BAW approximation for puts (PETR4); set by apply_market_preset
 }
 
 # ── Stop-loss overshoot model ────────────────────────────────────────────
@@ -268,7 +271,11 @@ MARKET_PRESETS: dict = {
 }
 
 
-def apply_market_preset(params: dict, market: str) -> dict:
+def apply_market_preset(
+    params: dict,
+    market: str,
+    explicitly_set: Optional[set] = None,
+) -> dict:
     """Merge per-market defaults into params. Call before make_engine/load_market_data.
 
     Priority (lowest → highest):
@@ -280,18 +287,37 @@ def apply_market_preset(params: dict, market: str) -> dict:
     market-specific defaults for "spy", the preset must override it so
     that switching to "bova11" correctly sets BRL, BVMF, etc.
 
-    Keys that the caller set *after* the initial PARAMS merge (i.e. explicit
-    CLI/API overrides like --start or --mode) are preserved via `extras`.
+    Pass ``explicitly_set`` as the set of keys the caller explicitly provided
+    (e.g. ``{"tick_size", "start_date"}``). When provided, those keys are
+    preserved regardless of whether their value matches the SPY preset default.
+    Without it, the function falls back to comparing values against SPY
+    defaults — which silently drops overrides whose value happens to equal
+    the SPY default (a known edge-case footgun).
     """
     preset = MARKET_PRESETS.get(market)
     if preset is None:
         raise ValueError(f"Unknown market {market!r}. Valid: {list(MARKET_PRESETS)}")
-    # Keys in params that differ from SPY-market PARAMS are explicit overrides
-    spy_defaults = {k: MARKET_PRESETS["spy"].get(k) for k in preset}
-    extras = {k: v for k, v in params.items() if k not in preset or params[k] != spy_defaults.get(k)}
-    merged = dict(params)          # 1. base (includes PARAMS defaults)
-    merged.update(preset)          # 2. preset wins over PARAMS defaults
-    merged.update({k: v for k, v in extras.items() if k not in preset})  # 3. non-market explicit overrides
+
+    merged = dict(params)   # 1. base (includes PARAMS defaults)
+    merged.update(preset)   # 2. preset wins over PARAMS defaults
+
+    if explicitly_set is not None:
+        # Authoritative: caller told us exactly which keys are overrides.
+        for k in explicitly_set:
+            if k in params:
+                merged[k] = params[k]
+    else:
+        # Fallback heuristic: restore keys that differ from SPY preset defaults.
+        # Non-market keys (start_date, etc.) always pass through.
+        # Market keys that equal the SPY default are silently dropped — use
+        # explicitly_set to avoid this edge case.
+        spy_defaults = {k: MARKET_PRESETS["spy"].get(k) for k in preset}
+        for k, v in params.items():
+            if k not in preset:
+                merged[k] = v   # non-market key: always pass through
+            elif v != spy_defaults.get(k):
+                merged[k] = v   # market key explicitly set differently from SPY
+
     merged["market"] = market      # always stamp the resolved market
     return merged
 

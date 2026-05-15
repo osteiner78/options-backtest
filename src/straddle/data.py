@@ -230,6 +230,11 @@ def _db_coverage_end(db_path: Optional[str] = None) -> pd.Timestamp:
     return last
 
 
+def clear_data_caches() -> None:
+    """Clear the DB-last-date cache. Call after attaching a new DB in a server session."""
+    _DB_LAST_CACHE.clear()
+
+
 def validate_market_mode_dates(
     start_date: str,
     end_date: str,
