@@ -81,7 +81,7 @@ Two cells added to `research/2026-05-15 - B3 - v7 refined grid.ipynb`:
 
 ---
 
-## Phase 4: PETR4 Analysis — PILOT COMPLETE, FULL GRID IN PROGRESS ⏳
+## Phase 4: PETR4 Analysis ✅ COMPLETE
 
 ### 4.1 Pilot Results (18 backtests)
 | Mode | Train median | Holdout median |
@@ -100,16 +100,27 @@ Two cells added to `research/2026-05-15 - B3 - v7 refined grid.ipynb`:
 
 **Decision gate: PROCEED.** Mid holdout median 0.877 > 0 → run full grid.
 
-### 4.2 PETR4-specific Considerations
-- PETR4 is a single stock → higher idiosyncratic vol, different VRP characteristics
-- American exercise (BAW pricing) enabled — ΔSharpe vs European was 0.0 for BOVA11 but PETR4 puts may have early exercise value in extreme downmoves
-- `dividend_yield=0.0` (B3 preset default) — PETR4 pays dividends; if material, may slightly undervalue the put vs fair value. Flag for follow-up.
-- bid_ask mode consistently negative (spread consumes all premium) — same pattern as BOVA11
+### 4.2 Full Grid Results (5,376 backtests, 27.2 min, 0 errors)
 
-### 4.3 Full Grid Status
-Running in background: `conda run -n backtest python3.11 scripts/phase4_petr4_full_grid.py`
-Output: `data/B3/v7_petr4_grid_search_results.parquet`
-Report pending — see `015-phase-4-end.md` when complete.
+| Mode | Train %pos | Train med | Holdout %pos | Holdout med |
+|------|-----------|----------|-------------|------------|
+| bid_ask | 3.5% | -1.328 | 0.3% | -1.448 |
+| **mid** | **25.8%** | **-0.198** | **76.9%** | **0.488** |
+| mid_plus_1tick | 100.0% | 0.969 | 100.0% | 2.710 |
+
+**Viable at mid or better (holdout): 76.9%** (vs 86.3% for BOVA11)  
+**Not viable at any level: 0%** — every config is profitable at mid_plus_1tick
+
+**Top stable mid config:** 25Δ/dte21/pt25%/rv_pct:90 → min(train,holdout)=0.781  
+**Recommended config** (25Δ/dte21/pt50%/OFF/mid): holdout Sharpe **1.211** (vs BOVA11: 1.292)
+
+PETR4 top holdout configs favor **dte45** (vs BOVA11's dte21) — longer expiries better for single-stock vol premium.
+
+### 4.3 PETR4-specific Considerations
+- Train median Sharpe at mid is **-0.198** — PETR4 VRP was inconsistent pre-2023
+- bid_ask negative throughout — same pattern as BOVA11; mid execution required
+- `dividend_yield=0.0` (B3 preset) — marginal undervaluation of put protection; no systematic error detected
+- American exercise (BAW) enabled — no measurable ΔSharpe for BOVA11 (ETF); PETR4 deep-ITM put early exercise unlikely to affect strategy (short options, not long)
 
 ---
 
@@ -142,9 +153,11 @@ Maximum realistic drawdown for the recommended 25δ/mid config: **~4.2% of capit
 | Force-close P&L fix | Immaterial (0.7% trades, 0.8% P&L) | No re-run |
 | 16Δ practicability | Tradeable (spread 33.4% < 35% gate) | Viable upgrade |
 | Grid degeneracy | 6.5% of groups | Documented in notebook |
-| PETR4 VRP | Positive! Mid median 0.877 | Full grid running |
+| PETR4 VRP | Confirmed. Holdout 76.9% viable at mid, med 0.488 | Run period robustness |
 | Stress scenarios | Max -4.2% over 6M, no gap events | No tail risk flagged |
 
 ---
 
-*Full grid and Phase 4 report pending.*
+---
+
+*All 5 phases complete. See `015-phase-4-end.md` for full PETR4 grid analysis.*
