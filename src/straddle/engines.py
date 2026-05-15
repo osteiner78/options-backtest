@@ -80,7 +80,10 @@ def strike_from_delta(
     e^(-qT)*(N(d1)-1) for puts, so target_delta is adjusted before inversion.
     """
     adj = target_delta * np.exp(q * T)  # reverse the e^(-qT) discount on delta
+    if not (1e-12 < adj < 1.0 - 1e-12):
+        return float("nan")
     d1 = norm.ppf(adj) if opt == "call" else norm.ppf(1.0 - adj)
+    d1 = float(np.clip(d1, -50.0, 50.0))  # prevent exp() overflow on extreme vol/dte
     K = S * np.exp(-d1 * sigma * np.sqrt(T) + (r - q + 0.5 * sigma**2) * T)
     return round(K / increment) * increment
 
