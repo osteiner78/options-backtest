@@ -283,6 +283,11 @@ def run_grid(grid_def: dict, runs: list[tuple], n_workers: int = -1,
              ) -> pd.DataFrame:
     from joblib import Parallel, delayed
     from tqdm import tqdm
+    from straddle.strategy import clear_vol_cache
+
+    # Clear stale vol-filter cache before each grid run so consecutive runs
+    # within the same process can't share a stale cached Series.
+    clear_vol_cache()
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     all_results: list[dict] = []
