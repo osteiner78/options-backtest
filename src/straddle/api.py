@@ -27,7 +27,24 @@ app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True, 
 # In-memory store for *active* runs only (pending/running).
 # Completed results live in SQLite; this dict keeps only status + progress
 # so memory usage stays flat regardless of run count.
+_RESULTS_MAX_SIZE = 1000
 _results: Dict[str, dict] = {}
+
+
+def _evict_results() -> None:
+    """Drop oldest completed/failed entries when _results exceeds _RESULTS_MAX_SIZE.
+
+    Running/pending entries are never evicted — they must stay in memory for
+    the SSE stream to work. If all entries are active (pathological case of
+    1000+ simultaneous runs), eviction is skipped rather than killing live runs.
+    """
+    while len(_results) > _RESULTS_MAX_SIZE:
+        for run_id, entry in _results.items():
+            if entry.get("status") not in ("pending", "running"):
+                del _results[run_id]
+                break
+        else:
+            break  # every entry is active; cannot evict safely
 
 init_db()
 
@@ -364,6 +381,7 @@ async def run_backtest_api(background_tasks: BackgroundTasks, req: BacktestReque
     market = params.get("market", "spy")
     params = apply_market_preset(params, market)
     _results[run_id] = {"run_id": run_id, "status": "pending", "params": params}
+    _evict_results()
     background_tasks.add_task(_run_backtest_task, run_id, params)
     return BacktestResponse(run_id=run_id, status="pending", params=params)
 
