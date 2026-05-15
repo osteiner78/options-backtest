@@ -312,7 +312,7 @@ def _run_backtest_task(run_id: str, params: dict):
     except Exception as e:
         logger.error(f"Backtest {run_id} failed: {e}")
         _results[run_id].update({"status": "failed", "error": str(e)})
-        upsert_run(run_id, "failed", params)
+        upsert_run(run_id, "failed", params, result={"error": str(e)})
 
 @app.get("/health")
 def health_check():

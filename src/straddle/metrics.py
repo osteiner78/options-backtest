@@ -195,7 +195,8 @@ def _compute_sharpe_from_daily_pnl(daily_pnl: pd.Series, init: float) -> float:
     """Sharpe ratio from a daily absolute-P&L series."""
     if len(daily_pnl) < 2:
         return 0.0
-    daily_ret = daily_pnl / init
+    equity = init + daily_pnl.cumsum()
+    daily_ret = equity.pct_change().dropna()
     if daily_ret.std(ddof=1) <= 0:
         return 0.0
     return float(daily_ret.mean() / daily_ret.std(ddof=1) * np.sqrt(252))

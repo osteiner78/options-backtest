@@ -925,6 +925,7 @@ def evaluate_trade(
     trade.pnl = round(pnl, 2)
     trade.pnl_pct = pnl / trade.net_credit
     trade.exit_source = "unknown"
+    trade.daily_marks.append((last, trade.pnl))
 
     return trade, None
 
