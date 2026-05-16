@@ -4,7 +4,7 @@ Computes Sharpe, drawdown, win rate, exit breakdown, chain-collapsed stats,
 and SPY benchmark metrics from backtest results.
 """
 
-from typing import Dict, List, Tuple
+from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 import pandas as pd
@@ -124,7 +124,9 @@ def _compute_chain_stats(trades: List) -> Dict:
     }
 
 
-def _compute_equity_stats(equity_series: pd.Series, params: dict) -> Dict:
+def _compute_equity_stats(
+    equity_series: pd.Series, params: dict, data: Optional[pd.DataFrame] = None,
+) -> Dict:
     """Compute returns, Sharpe, and MDD from an equity curve series."""
     init = float(params.get("initial_balance", 50_000))
     if equity_series.empty or init <= 0:
@@ -140,10 +142,17 @@ def _compute_equity_stats(equity_series: pd.Series, params: dict) -> Dict:
 
     # Sharpe from daily percentage returns (correct for a compounding account)
     daily_pct = equity_series.pct_change().dropna()
-    rf_daily = params.get("risk_free_rate", RISK_FREE_RATE_DEFAULT) / 252
+
+    # Use data-driven daily risk-free rate when available (B3 CDI, US IRX).
+    # Falls back to params value (or 4.5% default) when data is absent.
+    if data is not None and "risk_free_rate" in data.columns:
+        rf_series = data.loc[daily_pct.index, "risk_free_rate"]
+        rf_daily = rf_series / 252.0
+    else:
+        rf_daily = params.get("risk_free_rate", RISK_FREE_RATE_DEFAULT) / 252
 
     if len(daily_pct) > 1 and daily_pct.std() > 0:
-        sharpe = float((daily_pct.mean() - rf_daily) / daily_pct.std(ddof=1) * np.sqrt(252))
+        sharpe = float((daily_pct.mean() - rf_daily.mean()) / daily_pct.std(ddof=1) * np.sqrt(252))
     else:
         sharpe = float("nan")
 
@@ -321,7 +330,7 @@ def compute_metrics(trades, equity_curve, params, data) -> dict:
     results["max_streak"] = max_streak
 
     # equity_curve is the daily MTM series built by run_backtest from daily_marks
-    eq_stats = _compute_equity_stats(equity_curve, params)
+    eq_stats = _compute_equity_stats(equity_curve, params, data)
     results.update(eq_stats)
 
     results.update(_compute_chain_stats(trades))
@@ -384,7 +393,7 @@ def compute_portfolio_metrics(
         return {}
 
     # Equity stats from the provided total_equity column (correct for total_return)
-    results = _compute_equity_stats(equity_df["total_equity"], params)
+    results = _compute_equity_stats(equity_df["total_equity"], params, data)
 
     # Recompute Sharpe, MDD, Calmar from trade-level daily MTM marks.
     # The portfolio equity curve mixes cash flows with unrealized P&L,
