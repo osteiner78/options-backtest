@@ -567,6 +567,217 @@ class TradeStepResult:
     exit_db_source: str = "unknown"  # "db" | "synthetic" — source of marks on exit day
 
 
+# ── Exit check helpers (extracted from evaluate_trade_step) ────────────────
+
+def _check_stop_overshoot(
+    trade: Trade,
+    eval_date: pd.Timestamp,
+    data: pd.DataFrame,
+    row_d,
+    S_d: float,
+    vix_d: float,
+    T_d: float,
+    r_default: float,
+    pnl: float,
+    pnl_pct: float,
+    mid_d: float,
+    put_mid_d: float,
+    call_mid_d: float,
+    exit_db_source: str,
+    engine,
+    params: dict,
+    ctx: PricingContext,
+    comm: float,
+) -> Optional[TradeStepResult]:
+    """Check price-stop with overshoot model.
+
+    Returns a STOP TradeStepResult if the stop triggered, or None.
+    Handles gap-open pricing and overshoot regime classification.
+    """
+    use_price_stop = params.get("use_price_stop", False)
+    stop = params["stop_loss_pct"]
+    if not use_price_stop or trade.is_iron_condor or pnl_pct > -stop:
+        return None
+
+    trigger_pnl_dollar = -stop * trade.net_credit
+    eod_pnl_dollar = pnl
+
+    # ── Gap & range detection ──────────────────────────────────────────
+    prev_idx = data.index.get_loc(eval_date)
+    underlying_hi = float(row_d.get("underlying_high", S_d))
+    underlying_lo = float(row_d.get("underlying_low", S_d))
+    underlying_prev_close = (
+        float(data.iloc[prev_idx - 1]["underlying_close"]) if prev_idx > 0 else S_d
+    )
+    daily_range_pct = (
+        (underlying_hi - underlying_lo) / underlying_prev_close
+        if underlying_prev_close > 0
+        else 0.0
+    )
+
+    underlying_open = float(row_d.get("underlying_open", S_d))
+    vix_prev_raw = (
+        float(data.iloc[prev_idx - 1]["vix_close"]) / 100.0
+        if prev_idx > 0
+        else vix_d / 100.0
+    )
+    gap_pct = (
+        abs(underlying_open - underlying_prev_close) / underlying_prev_close
+        if underlying_prev_close > 0
+        else 0.0
+    )
+
+    # ── Gap-open pricing ───────────────────────────────────────────────
+    r_open = float(row_d.get("risk_free_rate", r_default))
+    open_mid = engine.get_gap_open_mark(
+        underlying_open, vix_prev_raw, gap_pct,
+        trade.active_put_strike, trade.active_call_strike,
+        T_d, r_open, ctx=ctx,
+    )
+    gap_close_cost = (
+        engine.apply_fill_adj(open_mid, "close")
+        * params.get("contract_multiplier", 100.0)
+        + 2.0 * comm
+    )
+    gap_pnl_dollar = trade.net_credit - gap_close_cost
+
+    # ── Overshoot regime classification ────────────────────────────────
+    rng_orderly = params.get("range_threshold_orderly", 0.015)
+    rng_violent = params.get("range_threshold_violent", 0.030)
+    ov_orderly = params.get("overshoot_orderly", 0.25)
+    ov_normal = params.get("overshoot_normal", 0.50)
+    ov_violent = params.get("overshoot_violent", 0.80)
+
+    if gap_pnl_dollar <= trigger_pnl_dollar:
+        overshoot_frac = 1.0
+        regime = "GAP"
+        fill_pnl = gap_pnl_dollar
+    else:
+        if daily_range_pct >= rng_violent:
+            overshoot_frac = ov_violent
+            regime = "VIOLENT"
+        elif daily_range_pct >= rng_orderly:
+            overshoot_frac = ov_normal
+            regime = "NORMAL"
+        else:
+            overshoot_frac = ov_orderly
+            regime = "ORDERLY"
+        fill_pnl = trigger_pnl_dollar + overshoot_frac * (
+            eod_pnl_dollar - trigger_pnl_dollar
+        )
+
+    trade.stop_regime = regime
+    trade.overshoot_used = overshoot_frac
+
+    return TradeStepResult(
+        exited=True,
+        exit_type="STOP",
+        pnl=round(fill_pnl, 2),
+        pnl_pct=fill_pnl / trade.net_credit,
+        close_cost=trade.net_credit - fill_pnl,
+        mid_d=mid_d,
+        put_mid_d=put_mid_d,
+        call_mid_d=call_mid_d,
+        exit_db_source=exit_db_source,
+    )
+
+
+def _check_21dte_roll(
+    trade: Trade,
+    eval_date: pd.Timestamp,
+    data: pd.DataFrame,
+    S_d: float,
+    vix_d: float,
+    r_d: float,
+    dte_rem: int,
+    close_cost: float,
+    mid_d: float,
+    put_mid_d: float,
+    call_mid_d: float,
+    exit_db_source: str,
+    engine,
+    params: dict,
+) -> Optional[TradeStepResult]:
+    """Check 21-DTE management: roll-for-credit or exit as 21DTE.
+
+    Returns a ROLLED TradeStepResult if a roll executed, a 21DTE
+    TradeStepResult if the trade should exit, or None if neither applies.
+    """
+    manage_at_dte = params["manage_at_dte"]
+    if dte_rem > manage_at_dte:
+        return None
+
+    roll_for_credit = params.get("roll_for_credit", False)
+    max_rolls = params.get("max_rolls", 3)
+
+    if roll_for_credit and trade.roll_count < max_rolls \
+            and not is_vol_blocked(eval_date, vix_d, params, data):
+        _roll_dte_max = params.get("roll_dte_max", 60)
+        new_exp = get_monthly_expiration(
+            eval_date, params.get("dte_min", 30), _roll_dte_max,
+            params.get("calendar", "NYSE"), engine=engine,
+        )
+        if new_exp is not None:
+            close_cost_old = close_cost
+            old_pnl = trade.net_credit - close_cost_old
+            T_new = (new_exp - eval_date).days / 365.0
+            roll_ctx = PricingContext(
+                eval_date=eval_date, expiration=new_exp,
+                target_delta=params["target_delta"],
+            )
+            new_entry_dte = (new_exp - eval_date).days
+            kw = build_entry(
+                engine, S_d, T_new, r_d, vix_d, new_entry_dte, roll_ctx, params
+            )
+            roll_credit_val = (kw["net_credit"] - close_cost_old) if kw else 0.0
+
+            if kw is not None and roll_credit_val > 0:
+                trade.exit_date = eval_date
+                trade.exit_dte = dte_rem
+                trade.exit_type = "ROLLED"
+                trade.pnl = round(old_pnl, 2)
+                trade.pnl_pct = old_pnl / trade.net_credit
+                trade.roll_credit = roll_credit_val
+
+                new_trade = Trade(
+                    trade_num=None,
+                    entry_date=eval_date,
+                    expiration=new_exp,
+                    entry_dte=new_entry_dte,
+                    entry_vix=vix_d,
+                    parent_trade_num=trade.trade_num,
+                    roll_count=trade.roll_count + 1,
+                    **kw,
+                )
+                new_trade.max_vix = vix_d
+                new_trade.daily_marks = [(eval_date, 0.0)]
+                return TradeStepResult(
+                    exited=True,
+                    exit_type="ROLLED",
+                    new_trade=new_trade,
+                    pnl=trade.pnl,
+                    pnl_pct=trade.pnl_pct,
+                    close_cost=close_cost_old,
+                    mid_d=mid_d,
+                    put_mid_d=put_mid_d,
+                    call_mid_d=call_mid_d,
+                    exit_db_source=exit_db_source,
+                )
+
+    # Roll not possible — exit at 21DTE
+    return TradeStepResult(
+        exited=True,
+        exit_type="21DTE",
+        pnl=round(trade.net_credit - close_cost, 2),
+        pnl_pct=(trade.net_credit - close_cost) / trade.net_credit,
+        close_cost=close_cost,
+        mid_d=mid_d,
+        put_mid_d=put_mid_d,
+        call_mid_d=call_mid_d,
+        exit_db_source=exit_db_source,
+    )
+
+
 def evaluate_trade_step(
     trade: Trade,
     eval_date: pd.Timestamp,
@@ -583,17 +794,7 @@ def evaluate_trade_step(
     """
     r_default = params.get("risk_free_rate", RISK_FREE_RATE_DEFAULT)
     prof = params["profit_target_pct"]
-    stop = params["stop_loss_pct"]
-    manage_at_dte = params["manage_at_dte"]
     comm = params["commission_per_leg"]
-    use_price_stop = params.get("use_price_stop", False)
-    roll_for_credit = params.get("roll_for_credit", False)
-    max_rolls = params.get("max_rolls", 3)
-    ov_orderly = params.get("overshoot_orderly", 0.25)
-    ov_normal = params.get("overshoot_normal", 0.50)
-    ov_violent = params.get("overshoot_violent", 0.80)
-    rng_orderly = params.get("range_threshold_orderly", 0.015)
-    rng_violent = params.get("range_threshold_violent", 0.030)
 
     expiration = trade.expiration
     row_d = data.loc[eval_date]
@@ -629,8 +830,6 @@ def evaluate_trade_step(
         exit_db_source = "db" if (put_src == "db" and call_src == "db") else "synthetic"
 
     if trade.is_iron_condor:
-        # Long wings are SOLD to close → quote sell-side (bid in market mode;
-        # BS mid in synthetic mode, with sell-side fill adjustment applied below).
         long_put_mid_d = engine.get_leg_mark(
             trade.long_put_strike, S_d, dte_rem, vix_d, r_d, "put",
             ctx=ctx, buy_or_sell="sell",
@@ -641,14 +840,6 @@ def evaluate_trade_step(
         )
         long_mid_d = long_put_mid_d + long_call_mid_d
         mid_d = short_mid_d - long_mid_d
-        # Per-leg fill adjustment: shorts pay ask on buy-back (+c_adj),
-        # longs receive bid on sale (+o_adj, which is negative). Applying a
-        # single "close" adjustment to the net mid incorrectly pushed both
-        # directions the same way, under-stating the close cost in synthetic
-        # mode. Market mode apply_fill_adj is a no-op — bid/ask is already
-        # baked into the marks above.
-        # Skip fill adjustment at expiry (dte_rem=0): options trade at
-        # intrinsic value with no bid-ask spread.
         _mult = params.get("contract_multiplier", 100.0)
         if dte_rem > 0:
             close_cost = (
@@ -671,158 +862,36 @@ def evaluate_trade_step(
     trade.daily_marks.append((eval_date, pnl))
 
     # 3. Check Exits
-    exit_type = None
+    # A. Price Stop with overshoot
+    if result := _check_stop_overshoot(
+        trade, eval_date, data, row_d, S_d, vix_d, T_d, r_default,
+        pnl, pnl_pct, mid_d, put_mid_d, call_mid_d, exit_db_source,
+        engine, params, ctx, comm,
+    ):
+        return result
 
-    # A. Optional Price Stop
-    # Disabled in iron-condor mode — the long wings already cap max loss, so an
-    # extra price stop would only introduce slippage with no risk benefit.
-    if use_price_stop and not trade.is_iron_condor and pnl_pct <= -stop:
-        exit_type = "STOP"
-
-        # Trigger level and EOD/gap references are all expressed in execution
-        # dollars (net_credit is a real fill; close_cost uses apply_fill_adj +
-        # commissions). The previous formulation mixed bid (entry mid × 100)
-        # with ask (EOD mid × 100), which in market mode systematically
-        # over-stated the loss by one bid-ask spread. Working in pnl dollars
-        # throughout is apples-to-apples in both modes.
-        trigger_pnl_dollar = -stop * trade.net_credit
-        eod_pnl_dollar = pnl
-
-        prev_idx = data.index.get_loc(eval_date)
-        underlying_hi = float(row_d.get("underlying_high", S_d))
-        underlying_lo = float(row_d.get("underlying_low", S_d))
-        underlying_prev_close = (
-            float(data.iloc[prev_idx - 1]["underlying_close"]) if prev_idx > 0 else S_d
+    # B. Profit Target
+    if pnl_pct >= prof:
+        return TradeStepResult(
+            exited=True, exit_type="PROFIT",
+            pnl=round(pnl, 2), pnl_pct=pnl_pct, close_cost=close_cost,
+            mid_d=mid_d, put_mid_d=put_mid_d, call_mid_d=call_mid_d,
+            exit_db_source=exit_db_source,
         )
-        daily_range_pct = (
-            (underlying_hi - underlying_lo) / underlying_prev_close if underlying_prev_close > 0 else 0.0
-        )
-
-        underlying_open = float(row_d.get("underlying_open", S_d))
-        vix_prev_raw = (
-            float(data.iloc[prev_idx - 1]["vix_close"]) / 100.0
-            if prev_idx > 0
-            else vix_d / 100.0
-        )
-        gap_pct = (
-            abs(underlying_open - underlying_prev_close) / underlying_prev_close
-            if underlying_prev_close > 0
-            else 0.0
-        )
-
-        r_open = float(row_d.get("risk_free_rate", r_default))
-        open_mid = engine.get_gap_open_mark(
-            underlying_open,
-            vix_prev_raw,
-            gap_pct,
-            trade.active_put_strike,
-            trade.active_call_strike,
-            T_d,
-            r_open,
-            ctx=ctx,
-        )
-        gap_close_cost = engine.apply_fill_adj(open_mid, "close") * params.get("contract_multiplier", 100.0) + 2.0 * comm
-        gap_pnl_dollar = trade.net_credit - gap_close_cost
-
-        if gap_pnl_dollar <= trigger_pnl_dollar:
-            overshoot_frac = 1.0
-            regime = "GAP"
-            fill_pnl = gap_pnl_dollar
-        else:
-            if daily_range_pct >= rng_violent:
-                overshoot_frac = ov_violent
-                regime = "VIOLENT"
-            elif daily_range_pct >= rng_orderly:
-                overshoot_frac = ov_normal
-                regime = "NORMAL"
-            else:
-                overshoot_frac = ov_orderly
-                regime = "ORDERLY"
-            fill_pnl = trigger_pnl_dollar + overshoot_frac * (
-                eod_pnl_dollar - trigger_pnl_dollar
-            )
-
-        pnl = fill_pnl
-        pnl_pct = pnl / trade.net_credit
-        trade.stop_regime = regime
-        trade.overshoot_used = overshoot_frac
-        close_cost = trade.net_credit - pnl
-
-    # B. Profit Target — "captured ≥ prof of net premium".
-    # Uses pnl_pct directly (apples-to-apples: both net_credit and close_cost
-    # are execution-side prices in market mode — bid at entry, ask at close).
-    # The prior `mid_d / entry_mid_ps` ratio mixed sides (bid at entry, ask at
-    # close) and was biased upward by the bid-ask spread, under-triggering the
-    # target in market mode.
-    elif pnl_pct >= prof:
-        exit_type = "PROFIT"
 
     # C. 21-DTE / Roll
-    elif dte_rem <= manage_at_dte:
-        if roll_for_credit and trade.roll_count < max_rolls \
-                and not is_vol_blocked(eval_date, vix_d, params, data):
-            _roll_dte_max = params.get("roll_dte_max", 60)
-            new_exp = get_monthly_expiration(eval_date, params.get("dte_min", 30), _roll_dte_max, params.get("calendar", "NYSE"), engine=engine)
-            if new_exp is not None:
-                close_cost_old = close_cost
-                old_pnl = trade.net_credit - close_cost_old
-                T_new = (new_exp - eval_date).days / 365.0
-                roll_ctx = PricingContext(eval_date=eval_date, expiration=new_exp, target_delta=params["target_delta"])
-                new_entry_dte = (new_exp - eval_date).days
-                kw = build_entry(
-                    engine, S_d, T_new, r_d, vix_d, new_entry_dte, roll_ctx, params
-                )
-
-                roll_credit_val = (kw["net_credit"] - close_cost_old) if kw else 0.0
-
-                if kw is not None and roll_credit_val > 0:
-                    trade.exit_date = eval_date
-                    trade.exit_dte = dte_rem
-                    trade.exit_type = "ROLLED"
-                    trade.pnl = round(old_pnl, 2)
-                    trade.pnl_pct = old_pnl / trade.net_credit
-                    trade.roll_credit = roll_credit_val
-
-                    new_trade = Trade(
-                        trade_num=None,
-                        entry_date=eval_date,
-                        expiration=new_exp,
-                        entry_dte=new_entry_dte,
-                        entry_vix=vix_d,
-                        parent_trade_num=trade.trade_num,
-                        roll_count=trade.roll_count + 1,
-                        **kw,
-                    )
-                    new_trade.max_vix = vix_d
-                    new_trade.daily_marks = [(eval_date, 0.0)]
-                    return TradeStepResult(
-                        exited=True,
-                        exit_type="ROLLED",
-                        new_trade=new_trade,
-                        pnl=trade.pnl,
-                        pnl_pct=trade.pnl_pct,
-                        close_cost=close_cost_old,
-                        mid_d=mid_d,
-                        put_mid_d=put_mid_d,
-                        call_mid_d=call_mid_d,
-                        exit_db_source=exit_db_source,
-                    )
-        exit_type = "21DTE"
+    if result := _check_21dte_roll(
+        trade, eval_date, data, S_d, vix_d, r_d, dte_rem, close_cost,
+        mid_d, put_mid_d, call_mid_d, exit_db_source, engine, params,
+    ):
+        return result
 
     # D. Expiry
-    elif eval_date >= expiration:
-        exit_type = "EXPIRY"
-
-    if exit_type:
+    if eval_date >= expiration:
         return TradeStepResult(
-            exited=True,
-            exit_type=exit_type,
-            pnl=round(pnl, 2),
-            pnl_pct=pnl_pct,
-            close_cost=close_cost,
-            mid_d=mid_d,
-            put_mid_d=put_mid_d,
-            call_mid_d=call_mid_d,
+            exited=True, exit_type="EXPIRY",
+            pnl=round(pnl, 2), pnl_pct=pnl_pct, close_cost=close_cost,
+            mid_d=mid_d, put_mid_d=put_mid_d, call_mid_d=call_mid_d,
             exit_db_source=exit_db_source,
         )
 
