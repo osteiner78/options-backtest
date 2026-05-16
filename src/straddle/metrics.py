@@ -191,15 +191,24 @@ def _compute_mtm_equity(trades: list, params: dict) -> pd.Series:
     return equity
 
 
-def _compute_sharpe_from_daily_pnl(daily_pnl: pd.Series, init: float) -> float:
-    """Sharpe ratio from a daily absolute-P&L series."""
+def _compute_sharpe_from_daily_pnl(
+    daily_pnl: pd.Series, init: float, rf_annual: float = 0.045,
+) -> float:
+    """Sharpe ratio from a daily absolute-P&L series.
+
+    Computes daily percentage returns from the running-equity curve, subtracts
+    the risk-free rate, and annualises via sqrt(252). The running-equity
+    denominator corrects the systematic downward bias from the initial-balance
+    method (I-10 fix).
+    """
     if len(daily_pnl) < 2:
         return 0.0
     equity = init + daily_pnl.cumsum()
     daily_ret = equity.pct_change().dropna()
     if daily_ret.std(ddof=1) <= 0:
         return 0.0
-    return float(daily_ret.mean() / daily_ret.std(ddof=1) * np.sqrt(252))
+    rf_daily = rf_annual / 252.0
+    return float((daily_ret.mean() - rf_daily) / daily_ret.std(ddof=1) * np.sqrt(252))
 
 
 def _compute_mdd_from_daily_pnl(daily_pnl: pd.Series, init: float) -> float:
@@ -385,7 +394,10 @@ def compute_portfolio_metrics(
     if not mtm_equity.empty and len(mtm_equity) > 1:
         daily_pnl = mtm_equity.diff().dropna()
         init = float(params.get("initial_balance", 50_000))
-        results["sharpe"] = _compute_sharpe_from_daily_pnl(daily_pnl, init)
+        results["sharpe"] = _compute_sharpe_from_daily_pnl(
+            daily_pnl, init,
+            rf_annual=params.get("risk_free_rate", RISK_FREE_RATE_DEFAULT),
+        )
         results["mdd"] = _compute_mdd_from_daily_pnl(daily_pnl, init)
         ann = float(results.get("ann", 0.0))
         mdd = float(results.get("mdd", 0.0))
