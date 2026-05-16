@@ -28,6 +28,7 @@ METRICS_KEYS = [
     ("total_return", "tot", 0.0),
     ("annualized_return", "ann", 0.0),
     ("sharpe", "sharpe", 0.0),
+    ("info_ratio", "info_ratio", 0.0),  # excess-over-zero (for config comparison)
     ("max_drawdown", "mdd", 0.0),
     ("calmar", "calmar", 0.0),
     ("win_rate", "wr_chain", 0.0),

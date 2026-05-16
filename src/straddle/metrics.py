@@ -146,13 +146,13 @@ def _compute_equity_stats(
     # Use data-driven daily risk-free rate when available (B3 CDI, US IRX).
     # Falls back to params value (or 4.5% default) when data is absent.
     if data is not None and "risk_free_rate" in data.columns:
-        rf_series = data.loc[daily_pct.index, "risk_free_rate"]
-        rf_daily = rf_series / 252.0
+        rf_annual = float(data.loc[daily_pct.index, "risk_free_rate"].mean())
     else:
-        rf_daily = params.get("risk_free_rate", RISK_FREE_RATE_DEFAULT) / 252
+        rf_annual = params.get("risk_free_rate", RISK_FREE_RATE_DEFAULT)
+    rf_daily = rf_annual / 252
 
     if len(daily_pct) > 1 and daily_pct.std() > 0:
-        sharpe = float((daily_pct.mean() - rf_daily.mean()) / daily_pct.std(ddof=1) * np.sqrt(252))
+        sharpe = float((daily_pct.mean() - rf_daily) / daily_pct.std(ddof=1) * np.sqrt(252))
     else:
         sharpe = float("nan")
 
@@ -405,7 +405,15 @@ def compute_portfolio_metrics(
         init = float(params.get("initial_balance", 50_000))
         results["sharpe"] = _compute_sharpe_from_daily_pnl(
             daily_pnl, init,
-            rf_annual=params.get("risk_free_rate", RISK_FREE_RATE_DEFAULT),
+            rf_annual=(
+                float(data["risk_free_rate"].mean())
+                if data is not None and "risk_free_rate" in data.columns
+                else params.get("risk_free_rate", 0.045)
+            ),
+        )
+        # Also store the information ratio (excess-over-zero) for reference
+        results["info_ratio"] = _compute_sharpe_from_daily_pnl(
+            daily_pnl, init, rf_annual=0.0,
         )
         results["mdd"] = _compute_mdd_from_daily_pnl(daily_pnl, init)
         ann = float(results.get("ann", 0.0))
