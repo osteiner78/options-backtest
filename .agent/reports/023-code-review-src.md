@@ -271,3 +271,9 @@ This prints a warning to stdout but doesn't raise or return an error. In the API
 - **`_check_21dte_roll` with vol-filter blocking** — No test verifies roll is correctly gated by `is_vol_blocked`.
 - **`_compute_mtm_equity` with trades that have missing `daily_marks`** — The `[] or []` guard suggests this was once possible, but no test exercises it.
 - **Concurrent API backtest requests** — No test verifies that `_VOL_CACHE` and `_TRADING_DAY_SETS` don't collide between concurrent runs.
+
+---
+
+## Resolution Note (2026-05-16)
+
+Bug #1 (`_compute_sharpe_from_daily_pnl` missing risk-free rate subtraction) and Bug #2 (`_compute_equity_stats` hardcoded risk-free rate) confirmed present since initial B3 adoption (commit `22600b8`). Both fixes applied in commits `ca08d04` and `9be6d6f`. The v7 parquet was NOT re-run with corrected values — the existing `sharpe` column is preserved as the information ratio (excess-over-zero), which remains the correct metric for config ranking. Future grid search runs will include both `sharpe` (true Sharpe with rf subtraction) and `info_ratio`.
