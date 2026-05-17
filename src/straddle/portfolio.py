@@ -111,7 +111,7 @@ def calculate_iron_condor_margin(
     """
     put_width = max(put_strike - long_put_strike, 0.0)
     call_width = max(long_call_strike - call_strike, 0.0)
-    return max(put_width, call_width) * 100.0 - net_credit
+    return max(max(put_width, call_width) * 100.0 - net_credit, 0.0)
 
 
 def calculate_margin(
