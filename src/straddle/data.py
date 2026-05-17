@@ -100,7 +100,10 @@ def _load_spy_from_yahoo(
                 vix_raw = raw.xs("^VIX", axis=1, level=1)
                 irx_raw = raw.xs("^IRX", axis=1, level=1)
             else:
-                spy_raw = vix_raw = irx_raw = raw
+                raise ValueError(
+                    f"Expected MultiIndex columns from yfinance, got {type(raw.columns)}. "
+                    f"Tickers may be missing or yfinance behavior changed."
+                )
 
             new_data = pd.DataFrame({
                 "underlying_open":  spy_raw["Open"],
