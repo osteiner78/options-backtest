@@ -549,6 +549,15 @@ class MarketEngine:
         use_cdi_cols = self._use_cdi and self._has_cdi_cols
         self._delta_col = "delta_cdi" if use_cdi_cols else "delta"
         self._iv_col = "implied_volatility_cdi" if use_cdi_cols else "implied_volatility"
+        # Defensive validation: only known columns may be interpolated into SQL.
+        _ALLOWED_COLS = {
+            "delta", "delta_cdi",
+            "implied_volatility", "implied_volatility_cdi",
+        }
+        if self._delta_col not in _ALLOWED_COLS or self._iv_col not in _ALLOWED_COLS:
+            raise ValueError(
+                f"Unexpected DB column names: delta={self._delta_col}, iv={self._iv_col}"
+            )
         # B3 stale-quote filter: skip deep-OTM rows with implausibly low IV (< 2.0).
         # In CDI mode the filter applies to the CDI IV column; otherwise the raw IV column.
         self._iv_where = f"AND {self._iv_col} < 2.0" if self._has_underlying_col else ""
