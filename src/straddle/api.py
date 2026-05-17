@@ -379,7 +379,8 @@ async def run_backtest_api(background_tasks: BackgroundTasks, req: BacktestReque
     # Apply market preset — sets calendar, db path, vix multiplier, currency, etc.
     # Caller values already merged above take precedence over preset defaults.
     market = params.get("market", "spy")
-    params = apply_market_preset(params, market)
+    explicitly_set = set(overrides.keys())
+    params = apply_market_preset(params, market, explicitly_set=explicitly_set)
     _results[run_id] = {"run_id": run_id, "status": "pending", "params": params}
     _evict_results()
     background_tasks.add_task(_run_backtest_task, run_id, params)
