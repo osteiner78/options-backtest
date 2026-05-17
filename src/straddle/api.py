@@ -322,7 +322,7 @@ def health_check():
 @app.get("/config")
 def get_config():
     """Return defaults, per-field ranges/enums, and capabilities."""
-    db_path = PARAMS.get("db_path", "data/Spy Options Database.db")
+    db_path = PARAMS.get("options_db_path", "data/Spy Options Database.db")
     try:
         db_last = _db_coverage_end(db_path)
         market_max = db_last.date().isoformat()
