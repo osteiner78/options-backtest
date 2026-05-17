@@ -11,6 +11,7 @@ Gap-open pricing always uses SyntheticEngine in both modes — the DB is
 EOD-only, so intraday stop modelling is always synthetic.
 """
 
+import logging
 from dataclasses import dataclass
 from typing import Optional, Tuple
 
@@ -21,6 +22,13 @@ from scipy.stats import norm
 
 from straddle.data import validate_market_mode_dates
 from straddle.params import RISK_FREE_RATE_DEFAULT
+
+logger = logging.getLogger(__name__)
+
+_MIN_T = 1e-7
+_MIN_IV_FLOOR = 0.01
+_D1_CLIP_BOUNDS = (-50.0, 50.0)
+_EXPIRY_MATCH_TOLERANCE = 5
 
 
 # ── Pricing Context ──────────────────────────────────────────────────────
@@ -41,7 +49,7 @@ def bs_price(S: float, K: float, T: float, r: float, sigma: float, opt: str,
 
     q=0.0 (default) reduces to standard Black-Scholes. opt: 'call' or 'put'.
     """
-    if T <= 1e-7:
+    if T <= _MIN_T:
         return max(S - K, 0.0) if opt == "call" else max(K - S, 0.0)
     d1 = (np.log(S / K) + (r - q + 0.5 * sigma**2) * T) / (sigma * np.sqrt(T))
     d2 = d1 - sigma * np.sqrt(T)
@@ -55,7 +63,7 @@ def bs_price(S: float, K: float, T: float, r: float, sigma: float, opt: str,
 def bs_delta(S: float, K: float, T: float, r: float, sigma: float, opt: str,
              q: float = 0.0) -> float:
     """Black-Scholes delta with continuous dividend yield q (put delta is negative)."""
-    if T <= 1e-7:
+    if T <= _MIN_T:
         return (1.0 if S > K else 0.0) if opt == "call" else (-1.0 if S < K else 0.0)
     d1 = (np.log(S / K) + (r - q + 0.5 * sigma**2) * T) / (sigma * np.sqrt(T))
     disc_q = np.exp(-q * T)
@@ -83,7 +91,7 @@ def strike_from_delta(
     if not (1e-12 < adj < 1.0 - 1e-12):
         return float("nan")
     d1 = norm.ppf(adj) if opt == "call" else norm.ppf(1.0 - adj)
-    d1 = float(np.clip(d1, -50.0, 50.0))  # prevent exp() overflow on extreme vol/dte
+    d1 = float(np.clip(d1, *_D1_CLIP_BOUNDS))
     K = S * np.exp(-d1 * sigma * np.sqrt(T) + (r - q + 0.5 * sigma**2) * T)
     return round(K / increment) * increment
 
@@ -119,7 +127,7 @@ def apply_skew(
     if opt == "put":
         return sigma_atm * (1.0 + put_slope * distance_from_atm)
     else:
-        return max(sigma_atm * (1.0 - call_slope * distance_from_atm), 0.01)
+        return max(sigma_atm * (1.0 - call_slope * distance_from_atm), _MIN_IV_FLOOR)
 
 
 # ── American option pricing (Barone-Adesi & Whaley 1987) ────────────────────
@@ -201,7 +209,7 @@ def american_put_baw(
     p_eu = bs_price(S, K, T, r, sigma, "put", q)
 
     # Guard: no meaningful early exercise without time, positive rates, or vol
-    if T < 1e-7 or r < 1e-8 or sigma < 1e-8:
+    if T < _MIN_T or r < 1e-8 or sigma < 1e-8:
         return max(p_eu, intrinsic)
 
     q2 = _baw_q2(r, sigma, T, q)
@@ -260,7 +268,7 @@ class SyntheticEngine:
     def _get_sigma_t(self, vix_d: float, dte_rem: int) -> Tuple[float, float]:
         """Central helper for volatility scaling and time-to-expiry conversion."""
         sigma_d = (vix_d / 100.0) * self.vix_iv_mult
-        T_d = max(dte_rem / 365.0, 1e-7)
+        T_d = max(dte_rem / 365.0, _MIN_T)
         return sigma_d, T_d
 
     def _put_price(self, S: float, K: float, T: float, r: float, sigma: float) -> float:
@@ -538,14 +546,12 @@ class MarketEngine:
         if self._use_cdi:
             if "implied_volatility_cdi" in cols and "delta_cdi" in cols:
                 self._has_cdi_cols = True
-                print(f"  MarketEngine: using CDI-based IVs/deltas (daily r)")
+                logger.info("  MarketEngine: using CDI-based IVs/deltas (daily r)")
             else:
-                print(f"  MarketEngine: WARNING — use_cdi_ivs=True but CDI columns not found in DB, falling back to flat-12%")
+                logger.warning("  MarketEngine: use_cdi_ivs=True but CDI columns not found in DB, falling back to flat-12%")
                 self._use_cdi = False
 
         # ── Column-name resolution (computed once, used by all query methods) ──
-        # Avoids duplicated delta_cdi/delta and implied_volatility_cdi/implied_volatility
-        # logic that previously appeared in _best_row, get_daily_delta, and find_strike_at_delta.
         use_cdi_cols = self._use_cdi and self._has_cdi_cols
         self._delta_col = "delta_cdi" if use_cdi_cols else "delta"
         self._iv_col = "implied_volatility_cdi" if use_cdi_cols else "implied_volatility"
@@ -562,7 +568,7 @@ class MarketEngine:
         # In CDI mode the filter applies to the CDI IV column; otherwise the raw IV column.
         self._iv_where = f"AND {self._iv_col} < 2.0" if self._has_underlying_col else ""
 
-        print(
+        logger.info(
             f"MarketEngine: connected to {db_path_str} "
             f"(market={market}, underlying_filter={self._has_underlying_col})"
         )
@@ -585,7 +591,7 @@ class MarketEngine:
                    WHERE date = ?
                    {und_clause}
                    AND mark > 0
-                   AND julianday(expiration) - julianday(?) BETWEEN -5 AND 5
+                   AND julianday(expiration) - julianday(?) BETWEEN -{_EXPIRY_MATCH_TOLERANCE} AND {_EXPIRY_MATCH_TOLERANCE}
                    ORDER BY ABS(julianday(expiration) - julianday(?))
                    LIMIT 1""",
                 params + [exp_str, exp_str],
@@ -1023,25 +1029,6 @@ class MarketEngine:
         row = cur.fetchone()
         return float(row["mark"]) if row else None
 
-    def _source_for_strike(
-        self, date_str: str, exp_str: Optional[str], opt: str, strike: float
-    ) -> str:
-        """Return 'db' if a valid row exists in the DB for this strike, else 'synthetic'."""
-        if date_str is None or exp_str is None:
-            return "synthetic"
-        und_clause, und_val = self._und_filter()
-        params = [date_str, exp_str, opt, strike]
-        if und_val is not None:
-            params.append(und_val)
-        cur = self._con.execute(
-            f"""SELECT 1 FROM options_data
-               WHERE date = ? AND expiration = ? AND type = ? AND strike = ?
-                 {und_clause}
-                 AND mark > 0 AND ask >= bid
-               LIMIT 1""",
-            params,
-        )
-        return "db" if cur.fetchone() else "synthetic"
 
 
 # ── Factory ──────────────────────────────────────────────────────────────

@@ -1,13 +1,16 @@
 """Plotting: plot_backtest, plot_engine_comparison, and canonical gruvbox palette."""
 
+import logging
+
 import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
 import matplotlib.ticker as mticker
 import numpy as np
 import pandas as pd
 
+logger = logging.getLogger(__name__)
+
 # ── Canonical gruvbox palette ────────────────────────────────────────────
-# Merged from the notebook's _C (cell 13) and GRV (cell 15) dicts.
 
 GRUVBOX = {
     "bg": "#282828",
@@ -248,7 +251,7 @@ def plot_backtest(
     plt.tight_layout(rect=[0, 0, 1, 0.98])
     plt.savefig(output_path, dpi=150, bbox_inches="tight")
     plt.show()
-    print(f"Saved: {output_path}")
+    logger.info(f"Saved: {output_path}")
 
 
 # ── Engine comparison chart ──────────────────────────────────────────────
@@ -350,12 +353,12 @@ def plot_engine_comparison(
     # ── Summary statistics ────────────────────────────────────────────────
     pnl_syn = sum(t.pnl for t in trades_synthetic)
     pnl_mkt = sum(t.pnl for t in trades_market)
-    print(
+    logger.info(
         f"Root trades     : syn={len(roots_syn)}  mkt={len(roots_mkt)}  "
         f"(syn total rows: {len(trades_synthetic)}  mkt total rows: {len(trades_market)})"
     )
-    print(f"Total P&L       : synthetic ${pnl_syn:+,.2f}   market ${pnl_mkt:+,.2f}")
-    print(
+    logger.info(f"Total P&L       : synthetic ${pnl_syn:+,.2f}   market ${pnl_mkt:+,.2f}")
+    logger.info(
         f"Net credit avg  : synthetic ${sum(syn_credit)/len(syn_credit):.2f}   "
         f"market ${sum(mkt_credit)/len(mkt_credit):.2f}"
     )
@@ -363,12 +366,11 @@ def plot_engine_comparison(
     # DB vs synthetic fallback breakdown
     n_db = sum(1 for tm in roots_mkt if tm.used_market_data)
     n_synth = sum(1 for tm in roots_mkt if not tm.used_market_data)
-    print(f"Entry marks     : {n_db}/{n} from DB,  {n_synth}/{n} synthetic fallback")
-    print()
+    logger.info(f"Entry marks     : {n_db}/{n} from DB,  {n_synth}/{n} synthetic fallback")
     for pct in (1, 3, 5, 10):
         count = sum(
             1
             for sc, mc in zip(syn_credit, mkt_credit)
             if abs(mc - sc) / max(sc, 0.01) < pct / 100
         )
-        print(f"  Mkt credit within {pct:>2}% of synthetic: {count:>3}/{n}")
+        logger.info(f"  Mkt credit within {pct:>2}% of synthetic: {count:>3}/{n}")

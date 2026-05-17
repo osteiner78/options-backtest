@@ -18,6 +18,10 @@ from straddle.engines import PricingContext
 
 _VOL_CACHE: dict = {}  # key: (index[0], index[-1], mode, threshold) → bool Series
 
+_TRADING_DAYS_PER_YEAR = 252
+_MONTHLY_SCAN_WINDOW = 5
+_ENTRY_SCAN_DAYS = 15
+
 
 def clear_vol_cache() -> None:
     """Clear the vol-filter cache. Call before each grid-search run."""
@@ -29,8 +33,6 @@ def _build_vol_filter(data: pd.DataFrame, params: dict) -> pd.Series:
     mode = str(params.get("vol_filter_mode", "vix"))
     threshold = float(params.get("vol_filter_threshold", 30.0))
 
-    # Use index bounds instead of id() — id() reuses memory addresses after GC,
-    # which can silently return stale results across consecutive backtests.
     cache_key = (data.index[0], data.index[-1], mode, threshold)
     if cache_key in _VOL_CACHE:
         return _VOL_CACHE[cache_key]
@@ -51,19 +53,19 @@ def _build_vol_filter(data: pd.DataFrame, params: dict) -> pd.Series:
 
     elif mode == "rv_pct":
         log_ret = np.log(prices / prices.shift(1))
-        rv = log_ret.rolling(20).std() * np.sqrt(252)
+        rv = log_ret.rolling(20).std() * np.sqrt(_TRADING_DAYS_PER_YEAR)
         result = pd.Series(False, index=dates)
-        for i in range(252, len(rv)):
-            window = rv.iloc[max(0, i - 252):i + 1]
+        for i in range(_TRADING_DAYS_PER_YEAR, len(rv)):
+            window = rv.iloc[max(0, i - _TRADING_DAYS_PER_YEAR):i + 1]
             pct_rank = (rv.iloc[i] > window.values).mean()
             result.iloc[i] = pct_rank > (threshold / 100.0)
 
     elif mode == "ivr":
         atm_iv = data.get("vix_close", pd.Series(0, index=dates))
-        # Warmup period unblocked (consistent with rv_pct); loop fills i >= 252.
+        # Warmup period unblocked (consistent with rv_pct); loop fills i >= _TRADING_DAYS_PER_YEAR.
         result = pd.Series(False, index=dates)
-        for i in range(252, len(atm_iv)):
-            window = atm_iv.iloc[max(0, i - 252):i + 1]
+        for i in range(_TRADING_DAYS_PER_YEAR, len(atm_iv)):
+            window = atm_iv.iloc[max(0, i - _TRADING_DAYS_PER_YEAR):i + 1]
             # ivr_val = fraction of window where past IV exceeded current IV.
             # Block when current IV is BELOW threshold percentile (too little premium).
             ivr_val = (atm_iv.iloc[i] < window.values).mean()
@@ -165,7 +167,7 @@ def get_monthly_expiration(
 
     Returns None if no valid expiration exists for this entry date.
     """
-    for mo in range(0, 5):
+    for mo in range(0, _MONTHLY_SCAN_WINDOW):
         abs_mo = entry.month + mo
         expected_exp = get_third_friday(entry.year + (abs_mo - 1) // 12, (abs_mo - 1) % 12 + 1)
         expected_exp = _adjust_for_holiday(expected_exp, calendar)
@@ -210,7 +212,7 @@ def get_entry_dates(
         # Scan up to 15 calendar days from the 1st to find the earliest
         # trading day where a valid [dte_min, dte_max] expiry exists.
         month_start = pd.Timestamp(dt.year, dt.month, 1)
-        trading_days = data.loc[month_start : month_start + pd.Timedelta(days=15)].index
+        trading_days = data.loc[month_start : month_start + pd.Timedelta(days=_ENTRY_SCAN_DAYS)].index
         for candidate in trading_days:
             if candidate < start_ts or candidate > end_ts:
                 continue
@@ -603,8 +605,6 @@ def _check_stop_overshoot(
     eod_pnl_dollar = pnl
 
     # ── Gap & range detection ──────────────────────────────────────────
-    # get_loc() can return an array/slice for non-unique indexes (corrupted
-    # cache, yfinance glitch). Resolve to a single integer position.
     _loc = data.index.get_loc(eval_date)
     prev_idx = _loc if isinstance(_loc, int) else (
         _loc.max() if hasattr(_loc, "max") else _loc[0]

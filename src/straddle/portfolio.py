@@ -29,8 +29,9 @@ from straddle.strategy import (
     is_vol_blocked,
 )
 
+_REG_T_UNDERLYING_PCT = 0.20
+_REG_T_MIN_FLOOR_PCT = 0.10
 
-# ── Phase 2: Reg-T Margin Engine ─────────────────────────────────────────
 
 def calculate_reg_t_strangle_margin(
     underlying_price: float,
@@ -71,8 +72,8 @@ def calculate_reg_t_strangle_margin(
     call_otm = max(call_strike - underlying_price, 0.0)
 
     # Naked margin requirements (per contract, ×100 shares)
-    put_naked = (0.20 * underlying_price - put_otm + put_ask_price) * 100.0
-    call_naked = (0.20 * underlying_price - call_otm + call_ask_price) * 100.0
+    put_naked = (_REG_T_UNDERLYING_PCT * underlying_price - put_otm + put_ask_price) * 100.0
+    call_naked = (_REG_T_UNDERLYING_PCT * underlying_price - call_otm + call_ask_price) * 100.0
 
     # Total BPR: higher naked margin + premium of the other side
     put_premium = put_ask_price * 100.0
@@ -84,7 +85,7 @@ def calculate_reg_t_strangle_margin(
         total_bpr = call_naked + put_premium
 
     # Minimum margin floor: 10% of underlying + total premium
-    min_floor = (0.10 * underlying_price * 100.0) + put_premium + call_premium
+    min_floor = (_REG_T_MIN_FLOOR_PCT * underlying_price * 100.0) + put_premium + call_premium
 
     return max(total_bpr, min_floor)
 
@@ -149,8 +150,6 @@ def calculate_margin(
         call_ask if call_ask is not None else trade.call_mid_ps,
     )
 
-
-# ── Phase 1: Portfolio State Manager ─────────────────────────────────────
 
 @dataclass
 class PortfolioPosition:
@@ -245,8 +244,6 @@ class PortfolioManager:
         return len(days_since) >= self.entry_cooldown_days
 
 
-# ── Phase 3: Portfolio Backtest Engine ───────────────────────────────────
-
 def run_portfolio_backtest(
     data: pd.DataFrame,
     params: dict,
@@ -297,9 +294,6 @@ def run_portfolio_backtest(
         sim_dates_list = list(sim_dates)
         total_days = len(sim_dates_list)
         date_iter = tqdm(sim_dates_list, desc="Simulating portfolio", unit="day") if progress else sim_dates_list
-        # Tracks the last TradeStepResult per open trade for force-close reuse.
-        # Avoids calling evaluate_trade_step a second time on last_date (which
-        # would double-append to trade.daily_marks and corrupt MTM equity).
         _last_res: dict[int, TradeStepResult] = {}
         for _day_idx, eval_date in enumerate(date_iter, start=1):
             row = data.loc[eval_date]
@@ -489,20 +483,12 @@ def run_portfolio_backtest(
                 })
 
         # ── Force-close any positions still open at backtest end ────────────
-        # Label "FORCE_CLOSE" distinguishes end-of-backtest closures from
-        # trades that actually reached their natural expiration (EXPIRY).
-        # Reuse the last TradeStepResult from the main loop — do NOT call
-        # evaluate_trade_step again, which would double-append to daily_marks
-        # and corrupt _compute_mtm_equity (spurious P&L delta on the last day).
         if len(sim_dates_list) > 0:
             last_date = sim_dates_list[-1]
             for trade_num_open, pos in list(portfolio.open_positions.items()):
                 t = pos.trade
                 res = _last_res.get(trade_num_open)
                 if res is None:
-                    # Trade entered (or rolled) on the very last day — no prior
-                    # mark available. Close at zero P&L rather than silently
-                    # dropping the trade from metrics.
                     t.exit_date = last_date
                     t.exit_dte = (t.expiration - last_date).days
                     t.exit_type = "FORCE_CLOSE"
@@ -535,8 +521,6 @@ def run_portfolio_backtest(
         if created_engine and hasattr(engine, "close"):
             engine.close()
 
-
-# ── Phase 4: Portfolio Visualization ─────────────────────────────────────
 
 def plot_portfolio_backtest(
     trades: List[Trade],

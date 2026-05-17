@@ -10,12 +10,18 @@ All loaders return the same schema:
     vix_close, risk_free_rate
 """
 
+import logging
 from pathlib import Path
 from typing import Optional
 
 import pandas as pd
 import yfinance as yf
 from straddle.params import RISK_FREE_RATE_DEFAULT
+
+logger = logging.getLogger(__name__)
+
+_DTE_BUFFER_DAYS = 90
+_MAX_CACHE_GAP_DAYS = 7
 
 
 def load_market_data(
@@ -52,7 +58,6 @@ def _load_spy_from_yahoo(
     if cache_dir is None:
         cache_dir = str(Path(__file__).resolve().parent.parent.parent / "data")
     Path(cache_dir).mkdir(parents=True, exist_ok=True)
-    # v2 cache uses generic underlying_* column names
     cache_path = Path(cache_dir) / "market_data_master_v2.parquet"
 
     master_df = pd.DataFrame()
@@ -60,7 +65,7 @@ def _load_spy_from_yahoo(
         master_df = pd.read_parquet(cache_path)
         master_df.index = pd.to_datetime(master_df.index)
 
-    req_start = pd.Timestamp(start_date) - pd.DateOffset(days=90)
+    req_start = pd.Timestamp(start_date) - pd.DateOffset(days=_DTE_BUFFER_DAYS)
     req_end = pd.Timestamp(end_date)
 
     needs_download = False
@@ -77,7 +82,7 @@ def _load_spy_from_yahoo(
             candidate = master_df.loc[req_start:req_end]
             if not candidate.empty:
                 max_gap = candidate.index.to_series().diff().max()
-                if pd.isna(max_gap) or max_gap <= pd.Timedelta(days=7):
+                if pd.isna(max_gap) or max_gap <= pd.Timedelta(days=_MAX_CACHE_GAP_DAYS):
                     return candidate.copy()
 
         needs_download = True
@@ -155,21 +160,21 @@ def _load_b3_from_parquet(
     df.index = pd.to_datetime(df.index)
 
     # Validate coverage
-    req_start = pd.Timestamp(start_date) - pd.DateOffset(days=90)
+    req_start = pd.Timestamp(start_date) - pd.DateOffset(days=_DTE_BUFFER_DAYS)
     req_end = pd.Timestamp(end_date)
     data_start = df.index.min()
     data_end = df.index.max()
 
     if req_end > data_end:
-        print(
-            f"[{market.upper()}] WARNING: end_date {req_end.date()} is after parquet "
+        logger.warning(
+            f"[{market.upper()}] end_date {req_end.date()} is after parquet "
             f"coverage ({data_end.date()}). Backtest will stop at {data_end.date()}."
         )
         req_end = data_end
 
     if req_start < data_start:
-        print(
-            f"[{market.upper()}] WARNING: start_date buffer {req_start.date()} "
+        logger.warning(
+            f"[{market.upper()}] start_date buffer {req_start.date()} "
             f"predates parquet coverage ({data_start.date()}). "
             f"Using parquet start as the buffer boundary."
         )
@@ -187,11 +192,7 @@ def _load_b3_from_parquet(
                 f"vix_close is all-NaN for {market} in the requested range. "
                 f"Check the parquet file has ATM implied-volatility data."
             )
-        # B3 vix_close is stored as a decimal fraction (e.g. 0.37 = 37% IV).
-        # SPY's VIX comes from Yahoo as percentage points (e.g. 37 = 37% IV).
-        # Multiply by 100 so both markets use the same "VIX index" scale.
-        # This fixes: VIX regime classification, VIX entry filter, VIX chart,
-        # and synthetic engine pricing (sigma = vix_d / 100 = correct annualised vol).
+        # B3 stores VIX as a decimal (e.g. 0.37); scale to percentage points.
         vix_max_raw = slice_df["vix_close"].max()
         if vix_max_raw > 5.0:
             raise ValueError(
@@ -280,8 +281,8 @@ def validate_market_mode_dates(
         )
 
     if _end > db_last:
-        print(
-            f"[MarketEngine/{market}] WARNING: end_date {_end.date()} is after DB "
+        logger.warning(
+            f"[MarketEngine/{market}] end_date {_end.date()} is after DB "
             f"coverage ({db_last.date()}). Pricing will fall back to synthetic "
             f"for all dates beyond {db_last.date()}."
         )
