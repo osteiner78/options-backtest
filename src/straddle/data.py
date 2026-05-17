@@ -182,6 +182,11 @@ def _load_b3_from_parquet(
     # carries the last known IV forward which is the best available estimate.
     if "vix_close" in slice_df.columns:
         slice_df["vix_close"] = slice_df["vix_close"].ffill().bfill()
+        if slice_df["vix_close"].isna().all():
+            raise ValueError(
+                f"vix_close is all-NaN for {market} in the requested range. "
+                f"Check the parquet file has ATM implied-volatility data."
+            )
         # B3 vix_close is stored as a decimal fraction (e.g. 0.37 = 37% IV).
         # SPY's VIX comes from Yahoo as percentage points (e.g. 37 = 37% IV).
         # Multiply by 100 so both markets use the same "VIX index" scale.
