@@ -192,6 +192,13 @@ def _load_b3_from_parquet(
         # Multiply by 100 so both markets use the same "VIX index" scale.
         # This fixes: VIX regime classification, VIX entry filter, VIX chart,
         # and synthetic engine pricing (sigma = vix_d / 100 = correct annualised vol).
+        vix_max_raw = slice_df["vix_close"].max()
+        if vix_max_raw > 5.0:
+            raise ValueError(
+                f"vix_close max={vix_max_raw:.2f} exceeds expected decimal range (0–5). "
+                f"Parquet may already store VIX as percentage points — "
+                f"check scripts/build_b3_parquets.py output."
+            )
         slice_df["vix_close"] = slice_df["vix_close"] * 100.0
     if "risk_free_rate" in slice_df.columns:
         slice_df["risk_free_rate"] = (

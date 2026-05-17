@@ -603,7 +603,12 @@ def _check_stop_overshoot(
     eod_pnl_dollar = pnl
 
     # ── Gap & range detection ──────────────────────────────────────────
-    prev_idx = data.index.get_loc(eval_date)
+    # get_loc() can return an array/slice for non-unique indexes (corrupted
+    # cache, yfinance glitch). Resolve to a single integer position.
+    _loc = data.index.get_loc(eval_date)
+    prev_idx = _loc if isinstance(_loc, int) else (
+        _loc.max() if hasattr(_loc, "max") else _loc[0]
+    )
     underlying_hi = float(row_d.get("underlying_high", S_d))
     underlying_lo = float(row_d.get("underlying_low", S_d))
     underlying_prev_close = (
@@ -965,8 +970,8 @@ def evaluate_trade(
             trade.exit_date = eval_date
             trade.exit_dte = (expiration - eval_date).days
             trade.exit_type = "FORCE_CLOSE"
-            trade.pnl = res.pnl
-            trade.pnl_pct = res.pnl_pct
+            trade.pnl = round(trade.net_credit - res.close_cost, 2)
+            trade.pnl_pct = trade.pnl / trade.net_credit if trade.net_credit else 0.0
             trade.exit_source = res.exit_db_source
             return trade, None
 

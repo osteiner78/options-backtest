@@ -119,7 +119,7 @@ def apply_skew(
     if opt == "put":
         return sigma_atm * (1.0 + put_slope * distance_from_atm)
     else:
-        return sigma_atm * (1.0 - call_slope * distance_from_atm)
+        return max(sigma_atm * (1.0 - call_slope * distance_from_atm), 0.01)
 
 
 # ── American option pricing (Barone-Adesi & Whaley 1987) ────────────────────
