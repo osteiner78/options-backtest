@@ -416,9 +416,15 @@ def compute_portfolio_metrics(
             daily_pnl, init, rf_annual=0.0,
         )
         results["mdd"] = _compute_mdd_from_daily_pnl(daily_pnl, init)
-        ann = float(results.get("ann", 0.0))
+        # Consistent Calmar: compute options-only ann from the same MTM curve
+        # used for MDD, instead of mixing total-equity ann with options-only mdd.
+        years_options = (mtm_equity.index[-1] - mtm_equity.index[0]).days / 365.25
+        ann_options = (
+            (mtm_equity.iloc[-1] / init) ** (1.0 / years_options) - 1.0
+            if years_options > 0 else 0.0
+        )
         mdd = float(results.get("mdd", 0.0))
-        results["calmar"] = ann / abs(mdd) if mdd and mdd != 0 else 0.0
+        results["calmar"] = ann_options / abs(mdd) if mdd and mdd != 0 else 0.0
     
     # Include all trades so exit breakdown counts (including ROLLED) are correct.
     results.update(_compute_trade_stats(trades))

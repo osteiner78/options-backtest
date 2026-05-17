@@ -339,12 +339,21 @@ def run_portfolio_backtest(
                         nt.trade_num = trade_num
                         t.child_trade_num = trade_num
 
-                        # Calculate BPR for the new trade.
+                        # Calculate BPR for the new trade using actual asks.
+                        _roll_ctx = PricingContext(eval_date=eval_date, expiration=nt.expiration)
+                        put_ask_mark = engine.get_leg_mark(
+                            nt.put_strike, underlying_close, nt.entry_dte, vix_d, r_d, "put",
+                            ctx=_roll_ctx, buy_or_sell="buy",
+                        )
+                        call_ask_mark = engine.get_leg_mark(
+                            nt.call_strike, underlying_close, nt.entry_dte, vix_d, r_d, "call",
+                            ctx=_roll_ctx, buy_or_sell="buy",
+                        )
                         new_bpr = calculate_margin(
                             nt,
                             underlying_close,
-                            put_ask=engine.apply_fill_adj(nt.put_mid_ps, "close"),
-                            call_ask=engine.apply_fill_adj(nt.call_mid_ps, "close"),
+                            put_ask=engine.apply_fill_adj(put_ask_mark, "close"),
+                            call_ask=engine.apply_fill_adj(call_ask_mark, "close"),
                         )
                         if nt.is_iron_condor:
                             new_n_comm = 4
@@ -411,11 +420,21 @@ def run_portfolio_backtest(
                         entry_vix=vix_d,
                         **kw,
                     )
+                    # Use actual ask prices for margin (worst-case close cost),
+                    # not the entry mid/bid stored in kw.
+                    put_ask_mark = engine.get_leg_mark(
+                        kw["put_strike"], underlying_close, entry_dte, vix_d, r_d, "put",
+                        ctx=entry_ctx, buy_or_sell="buy",
+                    )
+                    call_ask_mark = engine.get_leg_mark(
+                        kw["call_strike"], underlying_close, entry_dte, vix_d, r_d, "call",
+                        ctx=entry_ctx, buy_or_sell="buy",
+                    )
                     actual_bpr = calculate_margin(
                         new_trade,
                         underlying_close,
-                        put_ask=engine.apply_fill_adj(kw["put_mid_ps"], "close"),
-                        call_ask=engine.apply_fill_adj(kw["call_mid_ps"], "close"),
+                        put_ask=engine.apply_fill_adj(put_ask_mark, "close"),
+                        call_ask=engine.apply_fill_adj(call_ask_mark, "close"),
                     )
 
                     if portfolio.can_enter_new_trade(actual_bpr, eval_date, all_trading_dates):
@@ -483,7 +502,18 @@ def run_portfolio_backtest(
                 t = pos.trade
                 res = _last_res.get(trade_num_open)
                 if res is None:
-                    # Trade entered on the very last day — no prior mark available.
+                    # Trade entered (or rolled) on the very last day — no prior
+                    # mark available. Close at zero P&L rather than silently
+                    # dropping the trade from metrics.
+                    t.exit_date = last_date
+                    t.exit_dte = (t.expiration - last_date).days
+                    t.exit_type = "FORCE_CLOSE"
+                    t.pnl = 0.0
+                    t.pnl_pct = 0.0
+                    t.exit_source = "unknown"
+                    t.daily_marks.append((last_date, 0.0))
+                    portfolio.remove_position(t.trade_num)
+                    trades.append(t)
                     continue
                 t.exit_date = last_date
                 t.exit_dte = (t.expiration - last_date).days
