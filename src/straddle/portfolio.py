@@ -170,6 +170,7 @@ class PortfolioManager:
 
     starting_capital: float = 50_000.0
     max_bpr_allocation: float = 0.30
+    entry_cooldown_days: int = 3  # minimum trading days between new entries
 
     # Runtime state
     available_cash: float = field(init=False)
@@ -179,7 +180,6 @@ class PortfolioManager:
     equity_curve: List[Dict[str, Any]] = field(init=False, default_factory=list)
     next_trade_num: int = field(init=False, default=1)
     last_entry_date: Optional[pd.Timestamp] = field(init=False, default=None)
-    entry_cooldown_days: int = 3  # minimum trading days between new entries
     vix_blocked_dates: List[Tuple[pd.Timestamp, float]] = field(init=False, default_factory=list)
 
     def __post_init__(self) -> None:
@@ -271,6 +271,7 @@ def run_portfolio_backtest(
         portfolio = PortfolioManager(
             starting_capital=params.get("initial_balance", 50_000),
             max_bpr_allocation=params.get("max_bpr_allocation", 0.30),
+            entry_cooldown_days=params.get("entry_cooldown_days", 3),
         )
 
         # ── Setup ────────────────────────────────────────────────────────────
