@@ -287,9 +287,6 @@ def run_portfolio_backtest(
         _vol_blocked_exps: set = set()
         comm_per_leg = params.get("commission_per_leg", 1.0)
 
-        if "vix_entry_filter_enabled" in params:
-            pass  # handled by is_vol_blocked for backward compat
-
         cash_yield_annual = params.get("cash_yield_annual", 0.04)
         daily_rf_rate = cash_yield_annual / 252.0
         cash_investment_mode = params["cash_investment_mode"]
