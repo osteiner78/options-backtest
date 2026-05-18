@@ -46,3 +46,17 @@ data/paper_trading.log
 
 # Notebook/script outputs
 output/
+
+# Project archive (superseded artifacts)
+archive/
+
+# Build artifacts
+.pytest_cache/
+.streamlit/
+src/straddle.egg-info/
+
+# Tool state
+.opencode/
+
+# Generated reports (pre-v7 backtest html output)
+reports/

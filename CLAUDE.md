@@ -1,67 +1,61 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+Guidance for Claude Code when working in this repository.
 
 ## Project Overview
 
-SPY short strangle backtesting engine — sells monthly OTM put + call options at 16-delta, targeting 30–45 DTE, with 21-DTE roll management.
+B3 short strangle backtesting engine — sells monthly OTM put + call options at
+12–25Δ on BOVA11 (ETF) and PETR4 (single stock), targeting 21–60 DTE, with
+21-DTE roll management. Mid-price execution, laddering mode, Reg-T margin accounting.
+
+**Database:** `data/B3/b3_options_rb3.db` (SQLite, BOVA11 + PETR4, 2015–2025,
+~9.6 GB). Uses CDI-based implied volatilities and deltas. American-style pricing
+(BAW approximation) enabled for PETR4; European-style (BSM) for BOVA11.
 
 ## Commands
 
 ```bash
-# Install
 pip install -e ".[dev,frontend,api]"
-
-# CLI backtest
-python scripts/run_backtest.py --mode synthetic --start 2024-01-01 --end 2024-12-31
-python scripts/run_backtest.py --mode market
-python scripts/run_backtest.py --mode synthetic --no-plot
-
-# Streamlit UI
-streamlit run apps/streamlit-ui/app.py
-
-# API server
-python scripts/run_api.py --port 8000
-
-# Tests
 pytest tests/ -v
-pytest tests/test_engines.py -v   # single test file
+python scripts/run_backtest.py --mode market --market bova11
+python scripts/run_v7_grid.py --n-workers 4
 ```
 
 ## Architecture
 
-The data/execution flow is:
-
 ```
-params.py (PARAMS dict)
-  → data.py (load_market_data → Parquet cache)
+params.py (PARAMS dict + B3 market presets)
+  → data.py (load_market_data → COTAHIST parquet / Yahoo Finance)
   → engines.py (make_engine → SyntheticEngine | MarketEngine)
   → strategy.py (run_backtest → trades[], equity_curve)
-  → metrics.py (compute_metrics)
+     → portfolio.py (run_portfolio_backtest → laddering mode)
+  → metrics.py (compute_metrics / compute_portfolio_metrics)
   → plotting.py (plot_backtest)
 ```
 
-**`params.py`** is the single source of truth for all strategy knobs. Four `TypedDict` sub-dicts (BACKTEST, STRATEGY, PRICING, OVERSHOOT) are merged into the flat `PARAMS` dict. All new parameters must be added here.
+## Key Concepts
 
-**`engines.py`** provides two pricing engines with a shared interface:
-- `SyntheticEngine` — Black-Scholes + parametric vol skew (put_slope/call_slope). Works for any date range. Also handles gap-open pricing (DB is EOD-only).
-- `MarketEngine` — Real bid/ask from SQLite DB (`data/Spy Options Database.db`, ~9.6 GB, 2008–2025). Falls back to `SyntheticEngine` for missing data.
+- **Two engines** share identical interface: `SyntheticEngine` (BSM + parametric vol skew)
+  and `MarketEngine` (real bid/ask from SQLite DB, falls back to synthetic).
+- **B3 presets** in `params.py` override SPY defaults (CDI rates, BVMF calendar,
+  BRL currency, calibrated skew slopes, tick_size=0.05).
+- **Laddering mode** via `run_portfolio_backtest` — Reg-T margin, entry cooldown,
+  concurrent positions per expiry.
+- **Metrics:** Information ratio (primary, for config comparison), true Sharpe
+  (CDI-subtracted, for transparency), Calmar ratio, DB source tracking %.
+- **Information Ratio:** The grid search Sharpe values are technically information
+  ratios (excess-over-zero). The Brazilian risk-free rate (CDI, 10-13%)
+  exceeds the strategy's absolute return (2-3%), making the standard Sharpe
+  negative for most configs. See the definitive notebook methodology section.
 
-**`strategy.py`** contains the core `Trade` dataclass and `run_backtest()` loop. Key concepts:
-- `evaluate_trade_step()` — daily marking, profit/stop/roll checks
-- `LegRollEvent` — defensive roll when a tested leg approaches 30Δ
-- Roll chains tracked via `roll_count`, capped at `max_rolls`
+## Definitive Research
 
-**`portfolio.py`** (optional mode) — Reg-T margin accounting for multi-position laddering. Uses `calculate_reg_t_strangle_margin()`.
+`research/2026-05-15 - B3 - definitive research report.ipynb` — all findings,
+executed cells, charts. Recommended config: 25Δ/dte21/pt50%/OFF/mid/laddering.
 
-**`api.py`** — FastAPI with background task workers. Endpoints: `POST /backtest`, `GET /backtest/{id}`, `GET /health`.
+## Code Quality
 
-**`data.py`** — Fetches SPY, VIX, and risk-free rate from Yahoo Finance. Maintains `market_data_master.parquet` with incremental updates. Adds a 90-day buffer before backtest start to ensure valid DTE calculations.
-
-## Development Conventions
-
-- All strategy parameters belong in `params.py` — never hard-code values in other modules.
-- Maintain the `SyntheticEngine` / `MarketEngine` interface separation; both must implement `get_entry_marks()`, `get_daily_mark()`, and `get_gap_open_mark()`.
-- Engine parity tests in `test_engines.py` must pass when touching pricing logic — synthetic and market results should remain reasonably close.
-- `src/straddle/__init__.py` is a clean public API facade — keep it minimal.
-- `tests/conftest.py` holds shared fixtures (`params`, `synthetic_engine`, `sample_trade`, `sample_leg_roll`) — use these in new tests rather than constructing fresh instances.
+- Review 027 applied: all print() → logging, named constants extracted, long
+  functions split, dead code removed, duplicated blocks extracted to helpers.
+- 129 tests pass at `pytest tests/ -v`.
+- All known bugs from code reviews 015–027 are fixed or documented as immaterial.

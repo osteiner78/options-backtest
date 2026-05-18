@@ -303,9 +303,12 @@ def apply_market_preset(
 
     if explicitly_set is not None:
         # Authoritative: caller told us exactly which keys are overrides.
+        # Restore all explicitly-set keys from params, regardless of value.
+        # Callers are responsible for not sending stale defaults (e.g. the
+        # frontend strips synthetic-only params in market mode so SPY slopes
+        # never appear in explicitly_set for a BOVA11/PETR4 request).
         for k in explicitly_set:
-            if k in params:
-                merged[k] = params[k]
+            merged[k] = params[k]
     else:
         # Fallback heuristic: restore keys that differ from SPY preset defaults.
         # Non-market keys (start_date, etc.) always pass through.

@@ -1,0 +1,160 @@
+- generic [ref=e2]:
+  - banner [ref=e3]:
+    - generic [ref=e4]: ▸ SPY BACKTEST
+    - generic [ref=e5]: No runs yet
+    - button "◷ HISTORY" [ref=e6] [cursor=pointer]
+    - button "⚙ THEME" [ref=e7] [cursor=pointer]
+    - button "💾 SAVE" [ref=e8] [cursor=pointer]
+    - button "▶ RUN" [ref=e9] [cursor=pointer]
+  - generic [ref=e10]:
+    - complementary [ref=e11]:
+      - generic [ref=e12] [cursor=pointer]:
+        - generic [ref=e13]: BACKTEST
+        - generic [ref=e14]: ▼
+      - generic [ref=e15]:
+        - generic [ref=e16]:
+          - generic [ref=e17]: market
+          - generic [ref=e18] [cursor=pointer]: SPY
+        - generic [ref=e19]:
+          - generic [ref=e20]: start
+          - generic [ref=e21] [cursor=pointer]: 2021-01-01
+        - generic [ref=e22]:
+          - generic [ref=e23]: end
+          - generic [ref=e24] [cursor=pointer]: 2025-11-30
+        - generic [ref=e25]:
+          - generic [ref=e26]: balance
+          - generic [ref=e27] [cursor=pointer]: 50,000
+      - generic [ref=e28] [cursor=pointer]:
+        - generic [ref=e29]: STRATEGY
+        - generic [ref=e30]: ▼
+      - generic [ref=e31]:
+        - generic [ref=e32]:
+          - generic [ref=e33]: pricing
+          - generic [ref=e34] [cursor=pointer]: MARKET
+        - generic [ref=e35]:
+          - generic [ref=e36]: strategy
+          - generic [ref=e37] [cursor=pointer]: SHORT STRANGLE
+        - generic [ref=e38]:
+          - generic [ref=e39]: target Δ
+          - generic [ref=e40] [cursor=pointer]: "0.16"
+        - generic [ref=e41]:
+          - generic [ref=e42]: DTE min
+          - generic [ref=e43] [cursor=pointer]: "30"
+        - generic [ref=e44]:
+          - generic [ref=e45]: DTE max
+          - generic [ref=e46] [cursor=pointer]: "45"
+        - generic [ref=e47]:
+          - generic [ref=e48]: execution
+          - generic [ref=e49] [cursor=pointer]: BID ASK
+        - generic [ref=e50]:
+          - generic [ref=e51]: profit tgt
+          - generic [ref=e52] [cursor=pointer]: 50%
+        - generic [ref=e53]:
+          - generic [ref=e54]: stop loss
+          - generic [ref=e55] [cursor=pointer]: "OFF"
+      - generic [ref=e56] [cursor=pointer]:
+        - generic [ref=e57]: PORTFOLIO
+        - generic [ref=e58]: ▼
+      - generic [ref=e59]:
+        - generic [ref=e60]:
+          - generic [ref=e61]: mode
+          - generic [ref=e62] [cursor=pointer]: LADDERING
+        - generic [ref=e63]:
+          - generic [ref=e64]: max BPR
+          - generic [ref=e65] [cursor=pointer]: 30%
+        - generic [ref=e66]:
+          - generic [ref=e67]: entry cooldown
+          - generic [ref=e68] [cursor=pointer]: 3 days
+        - generic [ref=e69]:
+          - generic [ref=e70]: cash mode
+          - generic [ref=e71] [cursor=pointer]: UNDERLYING
+      - generic [ref=e72] [cursor=pointer]:
+        - generic [ref=e73]: ROLL MGMT
+        - generic [ref=e74]: ▼
+      - generic [ref=e75]:
+        - generic [ref=e76]:
+          - generic [ref=e77]: manage@DTE
+          - generic [ref=e78] [cursor=pointer]: "21"
+        - generic [ref=e79]:
+          - generic [ref=e80]: max rolls
+          - generic [ref=e81] [cursor=pointer]: "3"
+      - generic [ref=e82] [cursor=pointer]:
+        - generic [ref=e83]: DEFENSIVE
+        - generic [ref=e84]: ▼
+      - generic [ref=e86]:
+        - generic [ref=e87]: leg rolls
+        - generic [ref=e88] [cursor=pointer]: "OFF"
+      - generic [ref=e89] [cursor=pointer]:
+        - generic [ref=e90]: VOL FILTER
+        - generic [ref=e91]: ▼
+      - generic [ref=e93]:
+        - generic [ref=e94]: mode
+        - generic [ref=e95] [cursor=pointer]: "OFF"
+    - main [ref=e96]:
+      - generic [ref=e97]:
+        - generic [ref=e98]: PERFORMANCE
+        - generic [ref=e99]: Run backtest to see performance data...
+      - generic [ref=e100]:
+        - generic [ref=e101] [cursor=pointer]: EQUITY
+        - generic [ref=e102] [cursor=pointer]: BPR UTIL
+        - generic [ref=e103] [cursor=pointer]: POSITIONS
+        - generic [ref=e104] [cursor=pointer]: VIX
+        - generic [ref=e105] [cursor=pointer]: CUM P&L
+        - generic [ref=e106]:
+          - generic [ref=e107]: Portfolio P&L
+          - generic [ref=e109]: SPY B&H P&L
+          - generic [ref=e111]: Drawdown
+      - generic [ref=e116]: RUN BACKTEST TO GENERATE CHARTS
+      - generic [ref=e117]:
+        - generic [ref=e118]:
+          - generic [ref=e119]: Exit Breakdown
+          - generic [ref=e120]: Run backtest...
+        - generic [ref=e121]:
+          - generic [ref=e122]: VIX Regime
+          - generic [ref=e123]: Run backtest...
+      - generic [ref=e124] [cursor=pointer]:
+        - generic [ref=e125]: P&L
+        - img [ref=e127]
+        - generic [ref=e129]: ▲ TRADE LOG
+  - generic [ref=e130]:
+    - generic [ref=e131]:
+      - generic [ref=e132]: Trade Log
+      - generic [ref=e133] [cursor=pointer]: ALL
+      - generic [ref=e134] [cursor=pointer]: PROFIT
+      - generic [ref=e135] [cursor=pointer]: ROLLED
+      - generic [ref=e136] [cursor=pointer]: 21DTE
+      - generic [ref=e137] [cursor=pointer]: STOP
+      - generic [ref=e138] [cursor=pointer]: EXPIRY
+      - generic [ref=e139]: 0 of 0 trades
+      - generic [ref=e140] [cursor=pointer]: ▼ CLOSE
+    - table [ref=e141]:
+      - rowgroup [ref=e142]:
+        - row "# Entry Expiry VIX Put K Call K Credit Exit Date Type P&L $ P&L %" [ref=e143]:
+          - columnheader "#" [ref=e144]
+          - columnheader "Entry" [ref=e145]
+          - columnheader "Expiry" [ref=e146]
+          - columnheader "VIX" [ref=e147]
+          - columnheader "Put K" [ref=e148]
+          - columnheader "Call K" [ref=e149]
+          - columnheader "Credit" [ref=e150]
+          - columnheader "Exit Date" [ref=e151]
+          - columnheader "Type" [ref=e152]
+          - columnheader "P&L $" [ref=e153]
+          - columnheader "P&L %" [ref=e154]
+      - rowgroup
+  - generic [ref=e155]:
+    - generic [ref=e156]:
+      - generic [ref=e157]: Run History
+      - generic [ref=e158]: 0 runs
+      - generic [ref=e159] [cursor=pointer]: ▼ CLOSE
+    - table [ref=e160]:
+      - rowgroup [ref=e161]:
+        - row "Label / Date Range Status Mode Created Actions" [ref=e162]:
+          - columnheader "Label / Date Range" [ref=e163]
+          - columnheader "Status" [ref=e164]
+          - columnheader "Mode" [ref=e165]
+          - columnheader "Created" [ref=e166]
+          - columnheader "Actions" [ref=e167]
+      - rowgroup [ref=e168]:
+        - row "No runs yet" [ref=e169]:
+          - cell "No runs yet" [ref=e170]

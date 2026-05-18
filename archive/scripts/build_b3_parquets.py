@@ -17,7 +17,8 @@ import sys
 from pathlib import Path
 
 # Allow running from repo root or scripts/
-sys.path.insert(0, str(Path(__file__).resolve().parent))
+_repo_root = Path(__file__).resolve().parent.parent.parent  # up from archive/scripts/ to repo root
+sys.path.insert(0, str(_repo_root / "scripts"))
 
 from b3_parser import build_backtest_df, fetch_cdi_rates
 

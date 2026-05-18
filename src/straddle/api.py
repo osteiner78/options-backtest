@@ -405,9 +405,13 @@ async def run_backtest_api(background_tasks: BackgroundTasks, req: BacktestReque
     _translate_vix_filter(overrides)
     params.update(overrides)
     # Apply market preset — sets calendar, db path, vix multiplier, currency, etc.
-    # Caller values already merged above take precedence over preset defaults.
+    # Only treat a key as "explicitly set" when its value actually differs from
+    # the base PARAMS default. This prevents stale SPY-seeded values (e.g.
+    # put_slope=0.30, vix_entry_max=35) sent by clients that blindly forward
+    # their entire parameter store from overriding the market-calibrated preset.
     market = params.get("market", "spy")
-    explicitly_set = set(overrides.keys())
+    base_params = dict(PARAMS)
+    explicitly_set = {k for k, v in overrides.items() if v != base_params.get(k)}
     params = apply_market_preset(params, market, explicitly_set=explicitly_set)
     _results[run_id] = {"run_id": run_id, "status": "pending", "params": params}
     _evict_results()

@@ -26,6 +26,14 @@ function normalizeParams(params) {
   for (const f of enumFields) {
     if (typeof p[f] === 'string') p[f] = p[f].toLowerCase();
   }
+  // Strip synthetic-engine calibration params when using market mode.
+  // put_slope/call_slope are hidden in market mode and are seeded from SPY
+  // defaults in the store — sending them would overwrite the market preset's
+  // calibrated values (e.g. BOVA11: 0.746/0.074) with SPY values (0.30/0.10).
+  if (p.pricing_mode === 'market') {
+    delete p.put_slope;
+    delete p.call_slope;
+  }
   return p;
 }
 
