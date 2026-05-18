@@ -60,6 +60,21 @@ _PARAM_REMAP = {
 }
 
 
+def _translate_vix_filter(overrides: dict) -> None:
+    """Translate grid-style vix_filter string to internal boolean flags.
+
+    Mirrors the logic in scripts/grid_search.py _apply_grid_overrides.
+    """
+    vf = overrides.pop("vix_filter", None)
+    if vf is None or vf == "OFF":
+        overrides["vix_entry_filter_enabled"] = False
+    elif ":" in vf:
+        mode, threshold_str = vf.split(":", 1)
+        overrides["vix_entry_filter_enabled"] = True
+        overrides["vol_filter_mode"] = mode        # "rv_pct"
+        overrides["vol_filter_threshold"] = float(threshold_str)
+
+
 class BacktestRequest(BaseModel):
     """Per-field validators return 422 with structured field errors on bad input."""
     market: Optional[str] = Field(default=None, pattern=r"^(spy|bova11|petr4)$")
@@ -73,6 +88,10 @@ class BacktestRequest(BaseModel):
     dte_max: Optional[int] = Field(default=None, ge=0, le=365)
     profit_target_pct: Optional[float] = Field(default=None, ge=0.01, le=1.0)
     stop_loss_pct: Optional[float] = Field(default=None, ge=0.1, le=10.0)
+    execution_mode: Optional[str] = Field(
+        default=None,
+        pattern=r"^(bid_ask|mid|mid_plus_1tick)$",
+    )
     single_position: Optional[bool] = None
     portfolio_mode: Optional[str] = Field(default=None, pattern=r"^(laddering|single)$")
     max_bpr_allocation: Optional[float] = Field(default=None, gt=0, le=1.0)
@@ -86,10 +105,15 @@ class BacktestRequest(BaseModel):
     manage_at_dte: Optional[int] = Field(default=None, ge=0, le=60)
     roll_for_credit: Optional[bool] = None
     max_rolls: Optional[int] = Field(default=None, ge=0, le=10)
-    vix_entry_filter_enabled: Optional[bool] = None
-    vix_entry_max: Optional[float] = Field(default=None, ge=5, le=100)
+    vix_filter: Optional[str] = Field(
+        default=None,
+        pattern=r"^(OFF|rv_pct:70|rv_pct:80|rv_pct:90)$",
+    )
+    vix_entry_filter_enabled: Optional[bool] = Field(default=None, deprecated=True)
+    vix_entry_max: Optional[float] = Field(default=None, ge=5, le=100, deprecated=True)
     use_price_stop: Optional[bool] = None
-    defensive_leg_roll_enabled: Optional[bool] = None
+    defensive_leg_roll: Optional[bool] = Field(default=None)
+    defensive_leg_roll_enabled: Optional[bool] = Field(default=None, deprecated=True)
     defensive_trigger_delta: Optional[float] = Field(default=None, ge=0.1, le=0.5)
     leg_roll_target_delta: Optional[float] = Field(default=None, ge=0.05, le=0.3)
     max_leg_rolls_per_trade: Optional[int] = Field(default=None, ge=0, le=10)
@@ -150,6 +174,7 @@ class MetricsResponse(BaseModel):
     total_return: float
     annualized_return: float
     sharpe: float
+    info_ratio: Optional[float] = None
     max_drawdown: float
     calmar: float
     win_rate: float
@@ -211,7 +236,7 @@ def _build_metrics_response(metrics: dict, params: dict, trades: list, data: pd.
     return MetricsResponse(
         n_trades=metrics.get("n", 0), initial_balance=init, final_balance=metrics.get("final", init),
         total_return=_clean(metrics.get("tot", 0)), annualized_return=_clean(metrics.get("ann", 0)),
-        sharpe=_clean(metrics.get("sharpe", 0)), max_drawdown=_clean(metrics.get("mdd", 0)), calmar=_clean(metrics.get("calmar", 0)),
+        sharpe=_clean(metrics.get("sharpe", 0)), info_ratio=_clean(metrics.get("info_ratio")), max_drawdown=_clean(metrics.get("mdd", 0)), calmar=_clean(metrics.get("calmar", 0)),
         win_rate=_clean(metrics.get("wr", 0)), avg_pnl=_clean(metrics.get("avg_pnl", 0)),
         underlying_total_return=_clean(metrics.get("underlying_total_return", 0)), underlying_annualized_return=_clean(underlying_ann),
         underlying_sharpe=_clean(metrics.get("underlying_sharpe", 0)), underlying_max_drawdown=_clean(underlying_mdd), underlying_calmar=_clean(underlying_calmar),
@@ -375,6 +400,9 @@ async def run_backtest_api(background_tasks: BackgroundTasks, req: BacktestReque
     for api_key, internal_key in _PARAM_REMAP.items():
         if api_key in overrides:
             overrides[internal_key] = overrides.pop(api_key)
+    if "defensive_leg_roll" in overrides:
+        overrides["defensive_leg_roll_enabled"] = overrides.pop("defensive_leg_roll")
+    _translate_vix_filter(overrides)
     params.update(overrides)
     # Apply market preset — sets calendar, db path, vix multiplier, currency, etc.
     # Caller values already merged above take precedence over preset defaults.
