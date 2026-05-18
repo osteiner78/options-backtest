@@ -22,7 +22,7 @@ function normalizeParams(params) {
   if ('mode' in p) { p.pricing_mode = String(p.mode).toLowerCase(); delete p.mode; }
   // Lowercase all known enum string fields to prevent pattern mismatch from
   // user-edited values (sidebar transforms show UPPERCASE but stores raw)
-  const enumFields = ['market', 'pricing_mode', 'cash_investment_mode', 'portfolio_mode', 'strategy_mode'];
+  const enumFields = ['market', 'pricing_mode', 'cash_investment_mode', 'portfolio_mode', 'strategy_mode', 'execution_mode'];
   for (const f of enumFields) {
     if (typeof p[f] === 'string') p[f] = p[f].toLowerCase();
   }

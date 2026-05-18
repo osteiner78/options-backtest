@@ -61,6 +61,10 @@ export const parameterSections = [
         tooltip: 'Minimum DTE for the chosen expiration. With dte_max=45, targets the 30–45 DTE window.' },
       { key: 'dte_max', label: 'DTE max',
         tooltip: 'Maximum DTE. The strategy uses the nearest 3rd-Friday expiration in [dte_min, dte_max].' },
+      { key: 'execution_mode', label: 'execution', color: 'blue',
+        transform: v => String(v).toUpperCase().replace(/_/g, ' '),
+        options: ['bid_ask', 'mid', 'mid_plus_1tick'],
+        tooltip: 'Fill price model. bid_ask: sell at bid / buy to close at ask (conservative). mid: midpoint (realistic). mid_plus_1tick: mid + tick_size (optimistic).' },
       { key: 'profit_target_pct', label: 'profit tgt', color: 'green',
         format: v => Math.round(v * 100) + '%', pct: true,
         tooltip: 'Close position when P&L ≥ this fraction of net credit collected. TastyTrade standard: 50%.' },
@@ -111,10 +115,6 @@ export const parameterSections = [
     params: [
       { key: 'manage_at_dte', label: 'manage@DTE',
         tooltip: 'Days-to-expiration at which to roll or close the position. TastyTrade standard: 21 DTE.' },
-      { key: 'roll_for_credit', label: 'roll credit',
-        color: v => v ? 'green' : 'red',
-        transform: v => v ? 'ON' : 'OFF', options: [true, false],
-        tooltip: 'At manage_at_dte, roll to next expiration only if a net credit can be collected. Else close flat.' },
       { key: 'max_rolls', label: 'max rolls',
         tooltip: 'Maximum number of times a position can be rolled before it must be closed flat.' },
     ],
@@ -124,32 +124,33 @@ export const parameterSections = [
   {
     id: 'DEFENSIVE', title: 'DEFENSIVE',
     params: [
-      { key: 'defensive_leg_roll_enabled', label: 'leg rolls',
+      { key: 'defensive_leg_roll', label: 'leg rolls',
         color: v => v ? 'green' : 'red',
         transform: v => v ? 'ON' : 'OFF', options: [false, true],
         tooltip: 'Roll the profitable leg toward ATM when the tested leg reaches trigger delta. WARNING: historically hurts returns — default OFF.' },
       { key: 'defensive_trigger_delta', label: 'trigger Δ',
-        showWhen: { key: 'defensive_leg_roll_enabled', value: true }, indent: true,
+        showWhen: { key: 'defensive_leg_roll', value: true }, indent: true,
         tooltip: 'Tested-leg |delta| that triggers a defensive leg roll. Default 0.30 fires ~13×/year — see params.py for analysis.' },
       { key: 'leg_roll_target_delta', label: 'roll target Δ',
-        showWhen: { key: 'defensive_leg_roll_enabled', value: true }, indent: true,
+        showWhen: { key: 'defensive_leg_roll', value: true }, indent: true,
         tooltip: 'Delta target for the newly sold untested leg after a defensive roll. Matches entry delta by default.' },
       { key: 'max_leg_rolls_per_trade', label: 'max leg rolls',
-        showWhen: { key: 'defensive_leg_roll_enabled', value: true }, indent: true,
+        showWhen: { key: 'defensive_leg_roll', value: true }, indent: true,
         tooltip: 'Maximum defensive leg rolls per trade (put + call rolls combined).' },
     ],
   },
 
   // ── VIX FILTER ────────────────────────────────────────────────────────────
   {
-    id: 'VIX_FILTER', title: 'VIX FILTER',
+    id: 'VIX_FILTER', title: 'VOL FILTER',
     params: [
-      { key: 'vix_entry_filter_enabled', label: 'enabled',
-        color: v => v ? 'green' : 'red',
-        transform: v => v ? 'ON' : 'OFF', options: [true, false],
-        tooltip: 'Skip new entries and rolls when VIX is above the threshold on the entry date.' },
-      { key: 'vix_entry_max', label: 'max VIX',
-        tooltip: 'VIX level above which entries are blocked. Also applies to 21-DTE roll continuations.' },
+      { key: 'vix_filter', label: 'mode', color: 'amber',
+        transform: v => {
+          const labels = { 'OFF': 'OFF', 'rv_pct:70': 'RV>70', 'rv_pct:80': 'RV>80', 'rv_pct:90': 'RV>90' };
+          return labels[v] || String(v).toUpperCase();
+        },
+        options: ['OFF', 'rv_pct:70', 'rv_pct:80', 'rv_pct:90'],
+        tooltip: 'Skip new entries when realised volatility percentile is above threshold. OFF = no filter. RV>70 = block when 20-day RV ranks above 70th percentile.' },
     ],
   },
 ];
