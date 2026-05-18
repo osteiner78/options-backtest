@@ -40,8 +40,20 @@ EXIT_COLORS = {
     "ROLLED": "#9b59b6",
 }
 
-# Apply gruvbox style once at import
-plt.style.use("seaborn-v0_8-whitegrid")
+
+def _apply_mpl_style() -> None:
+    """Apply matplotlib style; no-op if the style is not available."""
+    try:
+        plt.style.use("seaborn-v0_8-whitegrid")
+    except Exception:
+        pass
+
+
+def _show_if_interactive() -> None:
+    """Call plt.show() only in interactive backends (not headless Agg)."""
+    import matplotlib
+    if matplotlib.get_backend().lower() != "agg":
+        plt.show()
 
 
 # ── Private plot helpers ──────────────────────────────────────────────────
@@ -236,6 +248,8 @@ def plot_backtest(
         params: Flat PARAMS dict.
         output_path: File path for the saved PNG. Defaults to "backtest_results.png".
     """
+    _apply_mpl_style()
+
     fig = plt.figure(figsize=(16, 22))
     fig.suptitle(
         f'SPY Short Strangle Backtest  [{params["start_date"]} → {params["end_date"]}]\n'
@@ -257,7 +271,7 @@ def plot_backtest(
 
     plt.tight_layout(rect=[0, 0, 1, 0.98])
     plt.savefig(output_path, dpi=150, bbox_inches="tight")
-    plt.show()
+    _show_if_interactive()
     logger.info(f"Saved: {output_path}")
 
 
@@ -278,6 +292,8 @@ def plot_engine_comparison(
         trades_market: List of Trade objects from a market engine run.
         title: Chart title.
     """
+    _apply_mpl_style()
+
     # Filter to root trades
     roots_syn = [t for t in trades_synthetic if t.parent_trade_num is None]
     roots_mkt = [t for t in trades_market if t.parent_trade_num is None]
@@ -355,7 +371,7 @@ def plot_engine_comparison(
     ax2.legend(facecolor=C["bg2"], labelcolor=C["fg"], edgecolor=C["bg2"], fontsize=9)
 
     plt.tight_layout()
-    plt.show()
+    _show_if_interactive()
 
     # ── Summary statistics ────────────────────────────────────────────────
     pnl_syn = sum(t.pnl for t in trades_synthetic)

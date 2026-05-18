@@ -534,39 +534,7 @@ class MarketEngine:
         self._market = market
         self._use_cdi = params.get("use_cdi_ivs", False)
 
-        # Detect whether this DB has the `underlying` column (B3 DB) or not (SPY DB)
-        cols = {
-            row[1]
-            for row in self._con.execute("PRAGMA table_info(options_data)").fetchall()
-        }
-        self._has_underlying_col = "underlying" in cols
-
-        # Detect CDI columns for B3 RB3 database
-        self._has_cdi_cols = False
-        if self._use_cdi:
-            if "implied_volatility_cdi" in cols and "delta_cdi" in cols:
-                self._has_cdi_cols = True
-                logger.info("  MarketEngine: using CDI-based IVs/deltas (daily r)")
-            else:
-                logger.warning("  MarketEngine: use_cdi_ivs=True but CDI columns not found in DB, falling back to flat-12%")
-                self._use_cdi = False
-
-        # ── Column-name resolution (computed once, used by all query methods) ──
-        use_cdi_cols = self._use_cdi and self._has_cdi_cols
-        self._delta_col = "delta_cdi" if use_cdi_cols else "delta"
-        self._iv_col = "implied_volatility_cdi" if use_cdi_cols else "implied_volatility"
-        # Defensive validation: only known columns may be interpolated into SQL.
-        _ALLOWED_COLS = {
-            "delta", "delta_cdi",
-            "implied_volatility", "implied_volatility_cdi",
-        }
-        if self._delta_col not in _ALLOWED_COLS or self._iv_col not in _ALLOWED_COLS:
-            raise ValueError(
-                f"Unexpected DB column names: delta={self._delta_col}, iv={self._iv_col}"
-            )
-        # B3 stale-quote filter: skip deep-OTM rows with implausibly low IV (< 2.0).
-        # In CDI mode the filter applies to the CDI IV column; otherwise the raw IV column.
-        self._iv_where = f"AND {self._iv_col} < 2.0" if self._has_underlying_col else ""
+        self._detect_db_schema()
 
         logger.info(
             f"MarketEngine: connected to {db_path_str} "
@@ -576,6 +544,36 @@ class MarketEngine:
         self._exec_mode = params.get("execution_mode", "bid_ask")
         self._tick_size = params.get("tick_size", 0.05)
         self.uses_real_fills = self._exec_mode == "bid_ask"
+
+    def _detect_db_schema(self) -> None:
+        """Detect DB columns and configure CDI / IV / delta column names."""
+        cols = {
+            row[1]
+            for row in self._con.execute("PRAGMA table_info(options_data)").fetchall()
+        }
+        self._has_underlying_col = "underlying" in cols
+
+        self._has_cdi_cols = False
+        if self._use_cdi:
+            if "implied_volatility_cdi" in cols and "delta_cdi" in cols:
+                self._has_cdi_cols = True
+                logger.info("  MarketEngine: using CDI-based IVs/deltas (daily r)")
+            else:
+                logger.warning("  MarketEngine: use_cdi_ivs=True but CDI columns not found in DB, falling back to flat-12%")
+                self._use_cdi = False
+
+        use_cdi_cols = self._use_cdi and self._has_cdi_cols
+        self._delta_col = "delta_cdi" if use_cdi_cols else "delta"
+        self._iv_col = "implied_volatility_cdi" if use_cdi_cols else "implied_volatility"
+        _ALLOWED_COLS = {
+            "delta", "delta_cdi",
+            "implied_volatility", "implied_volatility_cdi",
+        }
+        if self._delta_col not in _ALLOWED_COLS or self._iv_col not in _ALLOWED_COLS:
+            raise ValueError(
+                f"Unexpected DB column names: delta={self._delta_col}, iv={self._iv_col}"
+            )
+        self._iv_where = f"AND {self._iv_col} < 2.0" if self._has_underlying_col else ""
 
     def get_db_expiration(self, date_str: str, dte_min: int, dte_max: int,
                           expected_month: Optional[pd.Timestamp] = None) -> Optional[pd.Timestamp]:

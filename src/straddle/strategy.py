@@ -399,6 +399,79 @@ class Trade:
 
 # ── Defensive leg roll ───────────────────────────────────────────────────
 
+def _find_defensive_roll_strikes(
+    trade: Trade,
+    S_d: float,
+    T_d: float,
+    r_d: float,
+    vix_d: float,
+    dte_rem: int,
+    engine,
+    params: dict,
+    comm: float,
+) -> Optional[tuple]:
+    """Find the new strike for a defensive leg roll, or None if invalid.
+
+    Returns (untested_side, untested_old_strike, new_strike, new_open_mark,
+    close_cost_ps, new_credit_ps, net_credit_dollar, trigger_d, tested_side) on success.
+    """
+    trigger_delta = params.get("defensive_trigger_delta", 0.30)
+    target_delta = params.get("leg_roll_target_delta", 0.16)
+
+    ctx = PricingContext(eval_date=None, expiration=trade.expiration)
+
+    put_delta = engine.get_daily_delta(
+        trade.active_put_strike, S_d, dte_rem, vix_d, r_d, "put", ctx=ctx,
+    )
+    call_delta = engine.get_daily_delta(
+        trade.active_call_strike, S_d, dte_rem, vix_d, r_d, "call", ctx=ctx,
+    )
+
+    tested_side = None
+    trigger_d = None
+    if abs(put_delta) >= trigger_delta:
+        tested_side = "put"
+        trigger_d = abs(put_delta)
+    elif abs(call_delta) >= trigger_delta:
+        tested_side = "call"
+        trigger_d = abs(call_delta)
+
+    if tested_side is None:
+        return None
+
+    untested_side = "call" if tested_side == "put" else "put"
+    untested_old_strike = (
+        trade.active_call_strike if untested_side == "call" else trade.active_put_strike
+    )
+
+    close_mark = engine.get_leg_mark(
+        untested_old_strike, S_d, dte_rem, vix_d, r_d, untested_side, ctx=ctx,
+    )
+    close_cost_ps = engine.apply_fill_adj(close_mark, "close")
+
+    new_strike, new_open_mark = engine.find_strike_at_delta(
+        S_d, T_d, r_d, vix_d, target_delta, untested_side, ctx=ctx,
+    )
+
+    if untested_side == "put" and new_strike <= untested_old_strike:
+        return None
+    if untested_side == "call" and new_strike >= untested_old_strike:
+        return None
+
+    new_credit_ps = engine.apply_fill_adj(new_open_mark, "open")
+    net_credit_dollar = (
+        (new_credit_ps - close_cost_ps) * params.get("contract_multiplier", 100.0)
+        - 2.0 * comm
+    )
+    if net_credit_dollar <= 0:
+        return None
+
+    return (
+        untested_side, untested_old_strike, new_strike, new_open_mark,
+        close_cost_ps, new_credit_ps, net_credit_dollar, trigger_d, tested_side,
+    )
+
+
 def attempt_defensive_leg_roll(
     trade: Trade,
     eval_date: pd.Timestamp,
@@ -423,94 +496,21 @@ def attempt_defensive_leg_roll(
     """
     if not params.get("defensive_leg_roll_enabled", False):
         return False
-    # Defensive leg rolls are not supported in iron-condor mode: rolling only the
-    # short leg without adjusting its matching wing creates a variable-width
-    # vertical whose risk characteristics differ from the original spread.
     if trade.is_iron_condor:
         return False
     if len(trade.leg_rolls) >= params.get("max_leg_rolls_per_trade", 2):
         return False
 
-    trigger_delta = params.get("defensive_trigger_delta", 0.30)
-    target_delta = params.get("leg_roll_target_delta", 0.16)
     comm = params["commission_per_leg"]
-
-    ctx = PricingContext(eval_date=eval_date, expiration=trade.expiration)
-
-    # Read current per-leg deltas
-    put_delta = engine.get_daily_delta(
-        trade.active_put_strike,
-        S_d,
-        dte_rem,
-        vix_d,
-        r_d,
-        "put",
-        ctx=ctx,
+    result = _find_defensive_roll_strikes(
+        trade, S_d, T_d, r_d, vix_d, dte_rem, engine, params, comm,
     )
-    call_delta = engine.get_daily_delta(
-        trade.active_call_strike,
-        S_d,
-        dte_rem,
-        vix_d,
-        r_d,
-        "call",
-        ctx=ctx,
-    )
-
-    # Determine which side (if any) is tested
-    tested_side = None
-    trigger_d = None
-    if abs(put_delta) >= trigger_delta:
-        tested_side = "put"
-        trigger_d = abs(put_delta)
-    elif abs(call_delta) >= trigger_delta:
-        tested_side = "call"
-        trigger_d = abs(call_delta)
-
-    if tested_side is None:
+    if result is None:
         return False
 
-    # Roll the UNTESTED side (the profitable one)
-    untested_side = "call" if tested_side == "put" else "put"
-    untested_old_strike = (
-        trade.active_call_strike if untested_side == "call" else trade.active_put_strike
-    )
-
-    # Cost to buy back old untested leg (ask fill)
-    close_mark = engine.get_leg_mark(
-        untested_old_strike,
-        S_d,
-        dte_rem,
-        vix_d,
-        r_d,
-        untested_side,
-        ctx=ctx,
-    )
-    close_cost_ps = engine.apply_fill_adj(close_mark, "close")
-
-    # Find new untested leg at target_delta (closer to ATM)
-    new_strike, new_open_mark = engine.find_strike_at_delta(
-        S_d,
-        T_d,
-        r_d,
-        vix_d,
-        target_delta,
-        untested_side,
-        ctx=ctx,
-    )
-
-    # Sanity: new strike must move toward ATM vs old strike
-    if untested_side == "put" and new_strike <= untested_old_strike:
-        return False
-    if untested_side == "call" and new_strike >= untested_old_strike:
-        return False
-
-    new_credit_ps = engine.apply_fill_adj(new_open_mark, "open")
-
-    # Net credit must be positive (roll for credit only)
-    net_credit_dollar = (new_credit_ps - close_cost_ps) * params.get("contract_multiplier", 100.0) - 2.0 * comm
-    if net_credit_dollar <= 0:
-        return False
+    (untested_side, untested_old_strike, new_strike, new_open_mark,
+     close_cost_ps, new_credit_ps, net_credit_dollar,
+     trigger_d, tested_side) = result
 
     # ── Execute: record event, update trade state ────────────────────────
     event = LegRollEvent(
@@ -530,21 +530,15 @@ def attempt_defensive_leg_roll(
     else:
         trade.current_call_strike = new_strike
 
-    # Add roll credit to net_credit so profit-target % references cumulative premium
     trade.net_credit += net_credit_dollar
 
     # Recompute baseline mid: tested-side mark + new untested mark
     tested_old_strike = (
         trade.active_put_strike if tested_side == "put" else trade.active_call_strike
     )
+    ctx = PricingContext(eval_date=eval_date, expiration=trade.expiration)
     tested_mark = engine.get_leg_mark(
-        tested_old_strike,
-        S_d,
-        dte_rem,
-        vix_d,
-        r_d,
-        tested_side,
-        ctx=ctx,
+        tested_old_strike, S_d, dte_rem, vix_d, r_d, tested_side, ctx=ctx,
     )
     trade.current_baseline_mid = tested_mark + new_open_mark
 
@@ -552,6 +546,70 @@ def attempt_defensive_leg_roll(
 
 
 # ── Trade evaluation ─────────────────────────────────────────────────────
+
+def _compute_daily_marks(
+    trade: Trade,
+    eval_date: pd.Timestamp,
+    S_d: float,
+    vix_d: float,
+    r_d: float,
+    dte_rem: int,
+    engine,
+    params: dict,
+    comm: float,
+) -> tuple:
+    """Compute daily mid marks, close cost, P&L, and track source.
+
+    Returns (pnl, pnl_pct, close_cost, exit_db_source, mid_d, put_mid_d, call_mid_d, ctx).
+    Side effect: updates trade.mtm_total_days and trade.mtm_source_days.
+    """
+    ctx = PricingContext(eval_date=eval_date, expiration=trade.expiration)
+
+    put_mid_d, put_src = engine.get_leg_mark_with_source(
+        trade.active_put_strike, S_d, dte_rem, vix_d, r_d, "put", ctx=ctx,
+    )
+    call_mid_d, call_src = engine.get_leg_mark_with_source(
+        trade.active_call_strike, S_d, dte_rem, vix_d, r_d, "call", ctx=ctx,
+    )
+    short_mid_d = put_mid_d + call_mid_d
+
+    exit_db_source = "unknown"
+    if put_src != "unknown":
+        trade.mtm_total_days += 1
+        if put_src == "db" and call_src == "db":
+            trade.mtm_source_days += 1
+        exit_db_source = "db" if (put_src == "db" and call_src == "db") else "synthetic"
+
+    _mult = params.get("contract_multiplier", 100.0)
+    if trade.is_iron_condor:
+        long_put_mid_d = engine.get_leg_mark(
+            trade.long_put_strike, S_d, dte_rem, vix_d, r_d, "put",
+            ctx=ctx, buy_or_sell="sell",
+        )
+        long_call_mid_d = engine.get_leg_mark(
+            trade.long_call_strike, S_d, dte_rem, vix_d, r_d, "call",
+            ctx=ctx, buy_or_sell="sell",
+        )
+        long_mid_d = long_put_mid_d + long_call_mid_d
+        mid_d = short_mid_d - long_mid_d
+        if dte_rem > 0:
+            close_cost = (
+                engine.apply_fill_adj(short_mid_d, "close")
+                - engine.apply_fill_adj(long_mid_d, "open")
+            ) * _mult + 4.0 * comm
+        else:
+            close_cost = (short_mid_d - long_mid_d) * _mult + 4.0 * comm
+    else:
+        mid_d = short_mid_d
+        if dte_rem > 0:
+            close_cost = engine.apply_fill_adj(mid_d, "close") * _mult + 2.0 * comm
+        else:
+            close_cost = mid_d * _mult + 2.0 * comm
+
+    pnl = trade.net_credit - close_cost
+    pnl_pct = pnl / trade.net_credit
+    return pnl, pnl_pct, close_cost, exit_db_source, mid_d, put_mid_d, call_mid_d, ctx
+
 
 @dataclass
 class TradeStepResult:
@@ -815,53 +873,10 @@ def evaluate_trade_step(
         trade, eval_date, S_d, vix_d, r_d, dte_rem, T_d, data, engine, params
     )
 
-    ctx = PricingContext(eval_date=eval_date, expiration=expiration)
-
-    # 2. Daily marks (with source tracking merged into single query)
-    put_mid_d, put_src = engine.get_leg_mark_with_source(
-        trade.active_put_strike, S_d, dte_rem, vix_d, r_d, "put", ctx=ctx,
+    # 2. Daily marks
+    pnl, pnl_pct, close_cost, exit_db_source, mid_d, put_mid_d, call_mid_d, ctx = _compute_daily_marks(
+        trade, eval_date, S_d, vix_d, r_d, dte_rem, engine, params, comm,
     )
-    call_mid_d, call_src = engine.get_leg_mark_with_source(
-        trade.active_call_strike, S_d, dte_rem, vix_d, r_d, "call", ctx=ctx,
-    )
-    short_mid_d = put_mid_d + call_mid_d
-
-    # Source tracking for daily MTM
-    exit_db_source = "unknown"
-    if put_src != "unknown":
-        trade.mtm_total_days += 1
-        if put_src == "db" and call_src == "db":
-            trade.mtm_source_days += 1
-        exit_db_source = "db" if (put_src == "db" and call_src == "db") else "synthetic"
-
-    if trade.is_iron_condor:
-        long_put_mid_d = engine.get_leg_mark(
-            trade.long_put_strike, S_d, dte_rem, vix_d, r_d, "put",
-            ctx=ctx, buy_or_sell="sell",
-        )
-        long_call_mid_d = engine.get_leg_mark(
-            trade.long_call_strike, S_d, dte_rem, vix_d, r_d, "call",
-            ctx=ctx, buy_or_sell="sell",
-        )
-        long_mid_d = long_put_mid_d + long_call_mid_d
-        mid_d = short_mid_d - long_mid_d
-        _mult = params.get("contract_multiplier", 100.0)
-        if dte_rem > 0:
-            close_cost = (
-                engine.apply_fill_adj(short_mid_d, "close")
-                - engine.apply_fill_adj(long_mid_d, "open")
-            ) * _mult + 4.0 * comm
-        else:
-            close_cost = (short_mid_d - long_mid_d) * _mult + 4.0 * comm
-    else:
-        _mult = params.get("contract_multiplier", 100.0)
-        mid_d = short_mid_d
-        if dte_rem > 0:
-            close_cost = engine.apply_fill_adj(mid_d, "close") * _mult + 2.0 * comm
-        else:
-            close_cost = mid_d * _mult + 2.0 * comm
-    pnl = trade.net_credit - close_cost
-    pnl_pct = pnl / trade.net_credit
 
     # Record MTM (this is added even if we exit; evaluation happens at EOD)
     trade.daily_marks.append((eval_date, pnl))
@@ -1035,9 +1050,9 @@ def run_backtest(
         r_default = params.get("risk_free_rate", RISK_FREE_RATE_DEFAULT)
         comm = params["commission_per_leg"]
         single_position = params.get("single_position", True)
-        # latest_open_exit tracks when the current chain finishes.
+        # chain_close_date tracks when the current chain finishes.
         # Used to skip new monthly entries while a prior position is open.
-        latest_open_exit = pd.Timestamp.min
+        chain_close_date = pd.Timestamp.min
 
         end_ts = pd.Timestamp(params["end_date"])
 
@@ -1060,19 +1075,19 @@ def run_backtest(
         for idx, (entry_date, expiration) in enumerate(entry_iter, start=1):
             if entry_date not in data.index:
                 continue
-            if single_position and entry_date <= latest_open_exit:
+            if single_position and entry_date <= chain_close_date:
                 skipped_entries += 1
                 continue  # prior chain still open; skip this monthly entry
-            row = data.loc[entry_date]
-            S = float(row["underlying_close"])
-            vix = float(row["vix_close"])
+            row_d = data.loc[entry_date]
+            S = float(row_d["underlying_close"])
+            vix = float(row_d["vix_close"])
             if is_vol_blocked(entry_date, vix, params, data):
                 vix_blocked_dates.append(str(entry_date.date()))
                 continue
 
             entry_dte = (expiration - entry_date).days
             T = entry_dte / 365.0
-            r = float(row.get("risk_free_rate", r_default))
+            r = float(row_d.get("risk_free_rate", r_default))
 
             entry_ctx = PricingContext(eval_date=entry_date, expiration=expiration, target_delta=params["target_delta"])
             kw = build_entry(engine, S, T, r, vix, entry_dte, entry_ctx, params)
@@ -1094,20 +1109,20 @@ def run_backtest(
             # Iterative roll continuation -- follows the chain until a terminal exit
             active = trade
             while active is not None:
-                closed, new_active = evaluate_trade(
+                completed_trade, new_active = evaluate_trade(
                     active, data, engine, params, end_date=end_ts
                 )
-                trades.append(closed)
+                trades.append(completed_trade)
                 if new_active is not None:
                     trade_num += 1
                     new_active.trade_num = trade_num
-                    closed.child_trade_num = trade_num
+                    completed_trade.child_trade_num = trade_num
                     active = new_active
                 else:
                     active = None
             # Chain complete: update barrier so next monthly entry waits
             # until this chain (including any rolls) has fully exited.
-            latest_open_exit = closed.exit_date
+            chain_close_date = completed_trade.exit_date
             if progress_callback:
                 progress_callback({
                     'current_date': str(entry_date.date()),
