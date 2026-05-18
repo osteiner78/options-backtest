@@ -20,6 +20,8 @@ import pandas as pd
 from tqdm import tqdm
 from straddle.params import RISK_FREE_RATE_DEFAULT
 
+from straddle.engines import PricingContext
+
 from straddle.strategy import (
     Trade,
     get_monthly_expiration,
@@ -257,6 +259,212 @@ class PortfolioManager:
         return len(days_since) >= self.entry_cooldown_days
 
 
+# ── Portfolio backtest helpers ────────────────────────────────────────────
+
+def _evaluate_open_positions(
+    eval_date,
+    portfolio,
+    engine,
+    params,
+    data,
+    underlying_close,
+    vix_d,
+    r_d,
+    _last_res,
+    all_trades,
+    trade_num,
+    comm_per_leg,
+) -> int:
+    """Evaluate all open positions for the current day.
+
+    Returns updated trade_num (incremented by roll continuations).
+    """
+    portfolio.reset_daily_aggregates()
+
+    for trade_num_open, pos in list(portfolio.open_positions.items()):
+        t = pos.trade
+        res = evaluate_trade_step(t, eval_date, data, engine, params)
+
+        if res.exited:
+            t.exit_date = eval_date
+            t.exit_dte = (t.expiration - eval_date).days
+            t.exit_type = res.exit_type
+            t.pnl = res.pnl
+            t.pnl_pct = res.pnl_pct
+
+            portfolio.available_cash -= res.close_cost
+            portfolio.remove_position(t.trade_num)
+            all_trades.append(t)
+
+            if res.new_trade is not None:
+                trade_num += 1
+                nt = res.new_trade
+                nt.trade_num = trade_num
+                t.child_trade_num = trade_num
+
+                _roll_ctx = PricingContext(eval_date=eval_date, expiration=nt.expiration)
+                put_ask_mark = engine.get_leg_mark(
+                    nt.put_strike, underlying_close, nt.entry_dte, vix_d, r_d, "put",
+                    ctx=_roll_ctx, buy_or_sell="buy",
+                )
+                call_ask_mark = engine.get_leg_mark(
+                    nt.call_strike, underlying_close, nt.entry_dte, vix_d, r_d, "call",
+                    ctx=_roll_ctx, buy_or_sell="buy",
+                )
+                new_bpr = calculate_margin(
+                    nt,
+                    underlying_close,
+                    put_ask=engine.apply_fill_adj(put_ask_mark, "close"),
+                    call_ask=engine.apply_fill_adj(call_ask_mark, "close"),
+                )
+                if nt.is_iron_condor:
+                    new_mid_close_ps, new_n_comm = _compute_close_mid_and_commissions(
+                        nt.put_mid_ps, nt.call_mid_ps,
+                        nt.long_put_mid_ps, nt.long_call_mid_ps,
+                    )
+                else:
+                    new_mid_close_ps, new_n_comm = _compute_close_mid_and_commissions(
+                        nt.put_mid_ps, nt.call_mid_ps,
+                    )
+                portfolio.available_cash += nt.net_credit
+                portfolio.add_position(nt, new_bpr)
+                portfolio.last_entry_date = eval_date
+
+                portfolio.total_unrealized_liability -= (
+                    engine.apply_fill_adj(new_mid_close_ps, "close") * 100.0
+                    + new_n_comm * comm_per_leg
+                )
+        else:
+            portfolio.total_unrealized_liability -= res.close_cost
+
+            portfolio.utilized_bpr -= pos.current_bpr
+            pos.current_bpr = calculate_margin(
+                t,
+                underlying_close,
+                put_ask=engine.apply_fill_adj(res.put_mid_d, "close"),
+                call_ask=engine.apply_fill_adj(res.call_mid_d, "close"),
+            )
+            portfolio.utilized_bpr += pos.current_bpr
+            _last_res[trade_num_open] = res
+
+    return trade_num
+
+
+def _process_laddering_entries(
+    eval_date,
+    portfolio,
+    engine,
+    params,
+    data,
+    all_trading_dates,
+    underlying_close,
+    vix_d,
+    r_d,
+    trade_num,
+    _vol_blocked_exps,
+    comm_per_leg,
+) -> int:
+    """Evaluate new trade entries for the current day (laddering).
+
+    Returns updated trade_num.
+    """
+    vol_blocks_entry = is_vol_blocked(eval_date, vix_d, params, data)
+    new_exp = get_monthly_expiration(
+        eval_date, params["dte_min"], params["dte_max"],
+        params.get("calendar", "NYSE"), engine=engine,
+    )
+    if new_exp is not None and vol_blocks_entry:
+        if new_exp not in _vol_blocked_exps:
+            portfolio.vix_blocked_dates.append((eval_date, vix_d))
+        _vol_blocked_exps.add(new_exp)
+
+    if new_exp is not None and not vol_blocks_entry:
+        entry_dte = (new_exp - eval_date).days
+        T_new = entry_dte / 365.0
+        entry_ctx = PricingContext(
+            eval_date=eval_date, expiration=new_exp,
+            target_delta=params["target_delta"],
+        )
+        kw = build_entry(
+            engine, underlying_close, T_new, r_d, vix_d, entry_dte, entry_ctx, params,
+        )
+        if kw is not None:
+            new_trade = Trade(
+                trade_num=trade_num + 1,
+                entry_date=eval_date,
+                expiration=new_exp,
+                entry_dte=entry_dte,
+                entry_vix=vix_d,
+                **kw,
+            )
+            put_ask_mark = engine.get_leg_mark(
+                kw["put_strike"], underlying_close, entry_dte, vix_d, r_d, "put",
+                ctx=entry_ctx, buy_or_sell="buy",
+            )
+            call_ask_mark = engine.get_leg_mark(
+                kw["call_strike"], underlying_close, entry_dte, vix_d, r_d, "call",
+                ctx=entry_ctx, buy_or_sell="buy",
+            )
+            actual_bpr = calculate_margin(
+                new_trade,
+                underlying_close,
+                put_ask=engine.apply_fill_adj(put_ask_mark, "close"),
+                call_ask=engine.apply_fill_adj(call_ask_mark, "close"),
+            )
+
+            if portfolio.can_enter_new_trade(actual_bpr, eval_date, all_trading_dates):
+                trade_num += 1
+                new_trade.max_vix = vix_d
+                new_trade.daily_marks = [(eval_date, 0.0)]
+
+                if new_trade.is_iron_condor:
+                    mid_close_ps, n_comm = _compute_close_mid_and_commissions(
+                        kw["put_mid_ps"], kw["call_mid_ps"],
+                        kw["long_put_mid_ps"], kw["long_call_mid_ps"],
+                    )
+                else:
+                    mid_close_ps, n_comm = _compute_close_mid_and_commissions(
+                        kw["put_mid_ps"], kw["call_mid_ps"],
+                    )
+
+                portfolio.available_cash += kw["net_credit"]
+                portfolio.add_position(new_trade, actual_bpr)
+                portfolio.last_entry_date = eval_date
+
+                portfolio.total_unrealized_liability -= (
+                    engine.apply_fill_adj(mid_close_ps, "close") * 100.0
+                    + n_comm * comm_per_leg
+                )
+
+    return trade_num
+
+
+def _force_close_remaining(last_date, portfolio, _last_res, all_trades) -> None:
+    """Force-close any positions still open at backtest end."""
+    for trade_num_open, pos in list(portfolio.open_positions.items()):
+        t = pos.trade
+        res = _last_res.get(trade_num_open)
+        if res is None:
+            t.exit_date = last_date
+            t.exit_dte = (t.expiration - last_date).days
+            t.exit_type = "FORCE_CLOSE"
+            t.pnl = 0.0
+            t.pnl_pct = 0.0
+            t.exit_source = "unknown"
+            t.daily_marks.append((last_date, 0.0))
+            portfolio.remove_position(t.trade_num)
+            all_trades.append(t)
+            continue
+        t.exit_date = last_date
+        t.exit_dte = (t.expiration - last_date).days
+        t.exit_type = "FORCE_CLOSE"
+        t.pnl = round(t.net_credit - res.close_cost, 2)
+        t.pnl_pct = t.pnl / t.net_credit if t.net_credit else 0.0
+        portfolio.available_cash -= res.close_cost
+        portfolio.remove_position(t.trade_num)
+        all_trades.append(t)
+
+
 def run_portfolio_backtest(
     data: pd.DataFrame,
     params: dict,
@@ -269,7 +477,7 @@ def run_portfolio_backtest(
     This is a chronological simulation that steps forward one trading day at a time,
     managing multiple concurrent positions with Reg-T margin constraints.
     """
-    from straddle.engines import make_engine, PricingContext
+    from straddle.engines import make_engine
 
     created_engine = False
     if engine is None:
@@ -292,7 +500,7 @@ def run_portfolio_backtest(
             (all_trading_dates >= start_ts) & (all_trading_dates <= end_ts)
         ]
 
-        trades: List[Trade] = []
+        all_trades: List[Trade] = []
         trade_num = 0
         _vol_blocked_exps: set = set()
         comm_per_leg = params.get("commission_per_leg", 1.0)
@@ -314,158 +522,19 @@ def run_portfolio_backtest(
             vix_d = float(row["vix_close"])
             r_d = float(row.get("risk_free_rate", RISK_FREE_RATE_DEFAULT))
 
-            # ── Step 1 & 2: Evaluate open positions and update state ─────────
-            portfolio.reset_daily_aggregates()
+            # ── Step 1 & 2: Evaluate open positions ──────────────────────────
+            trade_num = _evaluate_open_positions(
+                eval_date, portfolio, engine, params, data,
+                underlying_close, vix_d, r_d,
+                _last_res, all_trades, trade_num, comm_per_leg,
+            )
 
-            # We iterate over a copy because evaluate_trade_step might trigger an exit (remove)
-            for trade_num_open, pos in list(portfolio.open_positions.items()):
-                t = pos.trade
-
-                # Use unified strategy logic
-                res = evaluate_trade_step(t, eval_date, data, engine, params)
-
-                if res.exited:
-                    # Handle exit
-                    t.exit_date = eval_date
-                    t.exit_dte = (t.expiration - eval_date).days
-                    t.exit_type = res.exit_type
-                    t.pnl = res.pnl
-                    t.pnl_pct = res.pnl_pct
-
-                    # Accounting: subtract cost from cash and remove position
-                    portfolio.available_cash -= res.close_cost
-                    portfolio.remove_position(t.trade_num)
-                    trades.append(t)
-
-                    if res.new_trade is not None:
-                        # Roll continuation
-                        trade_num += 1
-                        nt = res.new_trade
-                        nt.trade_num = trade_num
-                        t.child_trade_num = trade_num
-
-                        # Calculate BPR for the new trade using actual asks.
-                        _roll_ctx = PricingContext(eval_date=eval_date, expiration=nt.expiration)
-                        put_ask_mark = engine.get_leg_mark(
-                            nt.put_strike, underlying_close, nt.entry_dte, vix_d, r_d, "put",
-                            ctx=_roll_ctx, buy_or_sell="buy",
-                        )
-                        call_ask_mark = engine.get_leg_mark(
-                            nt.call_strike, underlying_close, nt.entry_dte, vix_d, r_d, "call",
-                            ctx=_roll_ctx, buy_or_sell="buy",
-                        )
-                        new_bpr = calculate_margin(
-                            nt,
-                            underlying_close,
-                            put_ask=engine.apply_fill_adj(put_ask_mark, "close"),
-                            call_ask=engine.apply_fill_adj(call_ask_mark, "close"),
-                        )
-                        if nt.is_iron_condor:
-                            new_mid_close_ps, new_n_comm = _compute_close_mid_and_commissions(
-                                nt.put_mid_ps, nt.call_mid_ps,
-                                nt.long_put_mid_ps, nt.long_call_mid_ps,
-                            )
-                        else:
-                            new_mid_close_ps, new_n_comm = _compute_close_mid_and_commissions(
-                                nt.put_mid_ps, nt.call_mid_ps,
-                            )
-                        portfolio.available_cash += nt.net_credit
-                        portfolio.add_position(nt, new_bpr)
-                        portfolio.last_entry_date = eval_date
-
-                        # Add new liability to daily total
-                        portfolio.total_unrealized_liability -= (
-                            engine.apply_fill_adj(new_mid_close_ps, "close") * 100.0
-                            + new_n_comm * comm_per_leg
-                        )
-                else:
-                    # Still open: update liability and recalculate margin
-                    portfolio.total_unrealized_liability -= res.close_cost
-
-                    portfolio.utilized_bpr -= pos.current_bpr  # remove stale value
-                    # For ICs, margin is fixed at entry and calculate_margin
-                    # ignores the ask kwargs; for strangles it varies daily.
-                    pos.current_bpr = calculate_margin(
-                        t,
-                        underlying_close,
-                        put_ask=engine.apply_fill_adj(res.put_mid_d, "close"),
-                        call_ask=engine.apply_fill_adj(res.call_mid_d, "close"),
-                    )
-                    portfolio.utilized_bpr += pos.current_bpr  # add updated value
-                    _last_res[trade_num_open] = res
-
-            # ── Step 3: Process entries (laddering) ─────────────────────────
-            # Find the expiration first, then price it once — avoids calling
-            # get_entry_marks twice (once with T_est=45/365 for a BPR guess,
-            # then again with the real expiration). We price with the real
-            # expiration from the start and use those marks for both the BPR
-            # capacity check and the actual trade entry.
-            vol_blocks_entry = is_vol_blocked(eval_date, vix_d, params, data)
-            new_exp = get_monthly_expiration(eval_date, params["dte_min"], params["dte_max"], params.get("calendar", "NYSE"), engine=engine)
-            if new_exp is not None and vol_blocks_entry:
-                if new_exp not in _vol_blocked_exps:
-                    portfolio.vix_blocked_dates.append((eval_date, vix_d))
-                _vol_blocked_exps.add(new_exp)
-            if new_exp is not None and not vol_blocks_entry:
-                entry_dte = (new_exp - eval_date).days
-                T_new = entry_dte / 365.0
-                entry_ctx = PricingContext(eval_date=eval_date, expiration=new_exp, target_delta=params["target_delta"])
-                kw = build_entry(
-                    engine, underlying_close, T_new, r_d, vix_d, entry_dte, entry_ctx, params
-                )
-                if kw is not None:
-                    # Build a provisional trade to compute margin. trade_num is
-                    # only committed after the capacity check passes.
-                    new_trade = Trade(
-                        trade_num=trade_num + 1,
-                        entry_date=eval_date,
-                        expiration=new_exp,
-                        entry_dte=entry_dte,
-                        entry_vix=vix_d,
-                        **kw,
-                    )
-                    # Use actual ask prices for margin (worst-case close cost),
-                    # not the entry mid/bid stored in kw.
-                    put_ask_mark = engine.get_leg_mark(
-                        kw["put_strike"], underlying_close, entry_dte, vix_d, r_d, "put",
-                        ctx=entry_ctx, buy_or_sell="buy",
-                    )
-                    call_ask_mark = engine.get_leg_mark(
-                        kw["call_strike"], underlying_close, entry_dte, vix_d, r_d, "call",
-                        ctx=entry_ctx, buy_or_sell="buy",
-                    )
-                    actual_bpr = calculate_margin(
-                        new_trade,
-                        underlying_close,
-                        put_ask=engine.apply_fill_adj(put_ask_mark, "close"),
-                        call_ask=engine.apply_fill_adj(call_ask_mark, "close"),
-                    )
-
-                    if portfolio.can_enter_new_trade(actual_bpr, eval_date, all_trading_dates):
-                        trade_num += 1
-                        new_trade.max_vix = vix_d
-                        new_trade.daily_marks = [(eval_date, 0.0)]
-
-                        if new_trade.is_iron_condor:
-                            mid_close_ps, n_comm = _compute_close_mid_and_commissions(
-                                kw["put_mid_ps"], kw["call_mid_ps"],
-                                kw["long_put_mid_ps"], kw["long_call_mid_ps"],
-                            )
-                        else:
-                            mid_close_ps, n_comm = _compute_close_mid_and_commissions(
-                                kw["put_mid_ps"], kw["call_mid_ps"],
-                            )
-
-                        # Add new credit to cash and register position
-                        portfolio.available_cash += kw["net_credit"]
-                        portfolio.add_position(new_trade, actual_bpr)
-                        portfolio.last_entry_date = eval_date
-
-                        # Update totals for daily state
-                        portfolio.total_unrealized_liability -= (
-                            engine.apply_fill_adj(mid_close_ps, "close") * 100.0
-                            + n_comm * comm_per_leg
-                        )
+            # ── Step 3: Process laddering entries ────────────────────────────
+            trade_num = _process_laddering_entries(
+                eval_date, portfolio, engine, params, data, all_trading_dates,
+                underlying_close, vix_d, r_d, trade_num,
+                _vol_blocked_exps, comm_per_leg,
+            )
 
             # ── Step 4: Cash return (risk-free / underlying / blend) ────────
             if portfolio.available_cash > 0:
@@ -490,45 +559,21 @@ def run_portfolio_backtest(
             if progress_callback and _day_idx % 5 == 0:
                 progress_callback({
                     'current_date': str(eval_date.date()),
-                    'trades_so_far': len(trades),
+                    'trades_so_far': len(all_trades),
                     'pct': _day_idx / total_days if total_days else 1.0,
                 })
 
         # ── Force-close any positions still open at backtest end ────────────
         if len(sim_dates_list) > 0:
             last_date = sim_dates_list[-1]
-            for trade_num_open, pos in list(portfolio.open_positions.items()):
-                t = pos.trade
-                res = _last_res.get(trade_num_open)
-                if res is None:
-                    t.exit_date = last_date
-                    t.exit_dte = (t.expiration - last_date).days
-                    t.exit_type = "FORCE_CLOSE"
-                    t.pnl = 0.0
-                    t.pnl_pct = 0.0
-                    t.exit_source = "unknown"
-                    t.daily_marks.append((last_date, 0.0))
-                    portfolio.remove_position(t.trade_num)
-                    trades.append(t)
-                    continue
-                t.exit_date = last_date
-                t.exit_dte = (t.expiration - last_date).days
-                t.exit_type = "FORCE_CLOSE"
-                # res.pnl is 0.0 for non-exited results (only set in exited path);
-                # compute from net_credit − close_cost, same as evaluate_trade_step does
-                # for natural exits.
-                t.pnl = round(t.net_credit - res.close_cost, 2)
-                t.pnl_pct = t.pnl / t.net_credit if t.net_credit else 0.0
-                portfolio.available_cash -= res.close_cost
-                portfolio.remove_position(t.trade_num)
-                trades.append(t)
+            _force_close_remaining(last_date, portfolio, _last_res, all_trades)
 
         # ── Phase 4: Final reporting ─────────────────────────────────────────
         equity_df = pd.DataFrame(portfolio.equity_curve)
         if not equity_df.empty:
             equity_df.set_index("date", inplace=True)
 
-        return trades, equity_df, portfolio, len(_vol_blocked_exps)
+        return all_trades, equity_df, portfolio, len(_vol_blocked_exps)
     finally:
         if created_engine and hasattr(engine, "close"):
             engine.close()

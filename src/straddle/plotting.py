@@ -44,6 +44,171 @@ EXIT_COLORS = {
 plt.style.use("seaborn-v0_8-whitegrid")
 
 
+# ── Private plot helpers ──────────────────────────────────────────────────
+
+def _plot_equity_curve(fig, gs, equity_curve, data, params):
+    """1. Equity curve — strangle vs SPY B&H with drawdown shading."""
+    ax = fig.add_subplot(gs[0, :])
+    eq_dates = list(equity_curve.index)
+    eq_vals = list(equity_curve.values)
+    eq_arr = np.array(eq_vals)
+    pk_arr = np.maximum.accumulate(eq_arr)
+
+    ax.plot(eq_dates, eq_vals, color="#2c3e50", lw=2, label="Strangle", zorder=3)
+    underlying_eq = data.loc[
+        pd.Timestamp(params["start_date"]) : pd.Timestamp(params["end_date"]),
+        "underlying_close",
+    ]
+    underlying_eq = underlying_eq / float(underlying_eq.iloc[0]) * params["initial_balance"]
+    ax.plot(
+        underlying_eq.index, underlying_eq.values,
+        color="#e67e22", lw=1.5, ls="--", alpha=0.8, label="B&H", zorder=2,
+    )
+    ax.axhline(params["initial_balance"], color="grey", ls="--", lw=0.8, alpha=0.7)
+    for i in range(len(eq_dates) - 1):
+        if eq_arr[i] < pk_arr[i]:
+            ax.fill_between(
+                [eq_dates[i], eq_dates[i + 1]],
+                [pk_arr[i], pk_arr[i + 1]],
+                [eq_arr[i], eq_arr[i + 1]],
+                alpha=0.25, color="#e74c3c", zorder=2,
+            )
+    ax.yaxis.set_major_formatter(mticker.FuncFormatter(lambda x, _: f"${x:,.0f}"))
+    ax.set_title("Equity Curve  (red = drawdown)", fontweight="bold")
+    ax.legend()
+    return ax
+
+
+def _plot_pnl_bars(fig, gs, trades, exit_colors=None):
+    """2. P&L per trade — colored by exit type."""
+    if exit_colors is None:
+        exit_colors = EXIT_COLORS
+    ax = fig.add_subplot(gs[1, 0])
+    ax.bar(
+        range(1, len(trades) + 1),
+        [t.pnl for t in trades],
+        color=[exit_colors.get(t.exit_type, "#95a5a6") for t in trades],
+        edgecolor="none", alpha=0.85,
+    )
+    ax.axhline(0, color="black", lw=0.8)
+    ax.yaxis.set_major_formatter(mticker.FuncFormatter(lambda x, _: f"${x:,.0f}"))
+    ax.set_title("P&L per Trade", fontweight="bold")
+    ax.set_xlabel("Trade #")
+    ax.legend(
+        handles=[mpatches.Patch(color=c, label=l) for l, c in exit_colors.items()],
+        fontsize=8,
+    )
+    return ax
+
+
+def _plot_cumulative_pnl(fig, gs, trades):
+    """3. Cumulative P&L — running sum with green/red fill."""
+    ax = fig.add_subplot(gs[1, 1])
+    cum = np.cumsum([t.pnl for t in trades])
+    x = range(1, len(trades) + 1)
+    ax.plot(x, cum, color="#2980b9", lw=2)
+    ax.fill_between(x, cum, 0, where=cum >= 0, alpha=0.2, color="#27ae60")
+    ax.fill_between(x, cum, 0, where=cum < 0, alpha=0.2, color="#e74c3c")
+    ax.axhline(0, color="black", lw=0.8)
+    ax.yaxis.set_major_formatter(mticker.FuncFormatter(lambda x_, _: f"${x_:,.0f}"))
+    ax.set_title("Cumulative P&L", fontweight="bold")
+    ax.set_xlabel("Trade #")
+    return ax
+
+
+def _plot_return_histogram(fig, gs, trades):
+    """4. Return distribution — % of premium."""
+    ax = fig.add_subplot(gs[2, 0])
+    pct_vals = [t.pnl_pct * 100 for t in trades]
+    ax.hist(
+        pct_vals, bins=max(8, len(trades) // 2),
+        color="#3498db", edgecolor="white", alpha=0.85,
+    )
+    ax.axvline(0, color="black", lw=1)
+    ax.axvline(
+        np.mean(pct_vals), color="#e74c3c", lw=1.5, ls="--",
+        label=f"Mean {np.mean(pct_vals):.1f}%",
+    )
+    ax.set_title("Return Distribution  (% of premium)", fontweight="bold")
+    ax.set_xlabel("P&L %")
+    ax.legend(fontsize=9)
+    return ax
+
+
+def _plot_exit_type_count(fig, gs, trades, exit_colors=None):
+    """5. Exit type count — bar chart with value labels."""
+    if exit_colors is None:
+        exit_colors = EXIT_COLORS
+    ax = fig.add_subplot(gs[2, 1])
+    cnts = {k: sum(1 for t in trades if t.exit_type == k) for k in exit_colors}
+    bars = ax.bar(
+        cnts.keys(), cnts.values(),
+        color=list(exit_colors.values()),
+        edgecolor="none", alpha=0.85,
+    )
+    ax.set_title("Exit Type Count", fontweight="bold")
+    ax.set_ylabel("# Trades")
+    for bar, v in zip(bars, cnts.values()):
+        if v:
+            ax.text(
+                bar.get_x() + bar.get_width() / 2,
+                bar.get_height() + 0.05, str(v),
+                ha="center", va="bottom", fontweight="bold",
+            )
+    return ax
+
+
+def _plot_exit_avg_pnl(fig, gs, trades, exit_colors=None):
+    """6. Avg P&L by exit type."""
+    if exit_colors is None:
+        exit_colors = EXIT_COLORS
+    ax = fig.add_subplot(gs[3, 0])
+    avgs = {
+        k: (
+            np.mean([t.pnl for t in trades if t.exit_type == k])
+            if any(t.exit_type == k for t in trades)
+            else 0
+        )
+        for k in exit_colors
+    }
+    ax.bar(
+        avgs.keys(), avgs.values(),
+        color=list(exit_colors.values()),
+        edgecolor="none", alpha=0.85,
+    )
+    ax.axhline(0, color="black", lw=0.8)
+    ax.yaxis.set_major_formatter(mticker.FuncFormatter(lambda x, _: f"${x:,.0f}"))
+    ax.set_title("Avg P&L by Exit Type", fontweight="bold")
+    return ax
+
+
+def _plot_vix_overlay(fig, gs, data, params, trades):
+    """7. VIX with entry points — daily VIX, thresholds, and entry scatter."""
+    ax = fig.add_subplot(gs[3, 1])
+    vx = data.loc[
+        pd.Timestamp(params["start_date"]) : pd.Timestamp(params["end_date"]),
+        "vix_close",
+    ]
+    ax.plot(vx.index, vx.values, color="#7f8c8d", lw=0.8, alpha=0.8)
+    ax.axhline(
+        params.get("vix_low", 15), color="#3498db", ls="--", lw=0.9,
+        label=f'VIX={params.get("vix_low", 15)}',
+    )
+    ax.axhline(
+        params.get("vix_high", 25), color="#e74c3c", ls="--", lw=0.9,
+        label=f'VIX={params.get("vix_high", 25)}',
+    )
+    ax.scatter(
+        [t.entry_date for t in trades],
+        [t.entry_vix for t in trades],
+        color="#2c3e50", s=35, zorder=5, label="Entry",
+    )
+    ax.set_title("VIX with Entry Points", fontweight="bold")
+    ax.legend(fontsize=8)
+    ax.set_ylabel("VIX")
+    return ax
+
+
 # ── Main backtest visualization ─────────────────────────────────────────
 
 def plot_backtest(
@@ -80,173 +245,15 @@ def plot_backtest(
         y=0.99,
     )
 
-    eq_dates = list(equity_curve.index)
-    eq_vals = list(equity_curve.values)
-    eq_arr = np.array(eq_vals)
-    pk_arr = np.maximum.accumulate(eq_arr)
+    gs = fig.add_gridspec(4, 2)
 
-    # 1. Equity curve
-    ax1 = fig.add_subplot(4, 2, (1, 2))
-    ax1.plot(eq_dates, eq_vals, color="#2c3e50", lw=2, label="Strangle", zorder=3)
-    # SPY buy-and-hold normalised to same starting balance
-    underlying_eq = data.loc[
-        pd.Timestamp(params["start_date"]) : pd.Timestamp(params["end_date"]),
-        "underlying_close",
-    ]
-    underlying_eq = underlying_eq / float(underlying_eq.iloc[0]) * params["initial_balance"]
-    ax1.plot(
-        underlying_eq.index,
-        underlying_eq.values,
-        color="#e67e22",
-        lw=1.5,
-        ls="--",
-        alpha=0.8,
-        label="B&H",
-        zorder=2,
-    )
-    ax1.axhline(params["initial_balance"], color="grey", ls="--", lw=0.8, alpha=0.7)
-    for i in range(len(eq_dates) - 1):
-        if eq_arr[i] < pk_arr[i]:
-            ax1.fill_between(
-                [eq_dates[i], eq_dates[i + 1]],
-                [pk_arr[i], pk_arr[i + 1]],
-                [eq_arr[i], eq_arr[i + 1]],
-                alpha=0.25,
-                color="#e74c3c",
-                zorder=2,
-            )
-    ax1.yaxis.set_major_formatter(mticker.FuncFormatter(lambda x, _: f"${x:,.0f}"))
-    ax1.set_title("Equity Curve  (red = drawdown)", fontweight="bold")
-    ax1.legend()
-
-    # 2. P&L per trade
-    ax2 = fig.add_subplot(4, 2, 3)
-    ax2.bar(
-        range(1, len(trades) + 1),
-        [t.pnl for t in trades],
-        color=[EXIT_COLORS.get(t.exit_type, "#95a5a6") for t in trades],
-        edgecolor="none",
-        alpha=0.85,
-    )
-    ax2.axhline(0, color="black", lw=0.8)
-    ax2.yaxis.set_major_formatter(mticker.FuncFormatter(lambda x, _: f"${x:,.0f}"))
-    ax2.set_title("P&L per Trade", fontweight="bold")
-    ax2.set_xlabel("Trade #")
-    ax2.legend(
-        handles=[mpatches.Patch(color=c, label=l) for l, c in EXIT_COLORS.items()],
-        fontsize=8,
-    )
-
-    # 3. Cumulative P&L
-    ax3 = fig.add_subplot(4, 2, 4)
-    cum = np.cumsum([t.pnl for t in trades])
-    x = range(1, len(trades) + 1)
-    ax3.plot(x, cum, color="#2980b9", lw=2)
-    ax3.fill_between(x, cum, 0, where=cum >= 0, alpha=0.2, color="#27ae60")
-    ax3.fill_between(x, cum, 0, where=cum < 0, alpha=0.2, color="#e74c3c")
-    ax3.axhline(0, color="black", lw=0.8)
-    ax3.yaxis.set_major_formatter(mticker.FuncFormatter(lambda x_, _: f"${x_:,.0f}"))
-    ax3.set_title("Cumulative P&L", fontweight="bold")
-    ax3.set_xlabel("Trade #")
-
-    # 4. Return distribution
-    ax4 = fig.add_subplot(4, 2, 5)
-    pct_vals = [t.pnl_pct * 100 for t in trades]
-    ax4.hist(
-        pct_vals,
-        bins=max(8, len(trades) // 2),
-        color="#3498db",
-        edgecolor="white",
-        alpha=0.85,
-    )
-    ax4.axvline(0, color="black", lw=1)
-    ax4.axvline(
-        np.mean(pct_vals),
-        color="#e74c3c",
-        lw=1.5,
-        ls="--",
-        label=f"Mean {np.mean(pct_vals):.1f}%",
-    )
-    ax4.set_title("Return Distribution  (% of premium)", fontweight="bold")
-    ax4.set_xlabel("P&L %")
-    ax4.legend(fontsize=9)
-
-    # 5. Exit type count
-    ax5 = fig.add_subplot(4, 2, 6)
-    cnts = {k: sum(1 for t in trades if t.exit_type == k) for k in EXIT_COLORS}
-    bars = ax5.bar(
-        cnts.keys(),
-        cnts.values(),
-        color=list(EXIT_COLORS.values()),
-        edgecolor="none",
-        alpha=0.85,
-    )
-    ax5.set_title("Exit Type Count", fontweight="bold")
-    ax5.set_ylabel("# Trades")
-    for bar, v in zip(bars, cnts.values()):
-        if v:
-            ax5.text(
-                bar.get_x() + bar.get_width() / 2,
-                bar.get_height() + 0.05,
-                str(v),
-                ha="center",
-                va="bottom",
-                fontweight="bold",
-            )
-
-    # 6. Avg P&L by exit type
-    ax6 = fig.add_subplot(4, 2, 7)
-    avgs = {
-        k: (
-            np.mean([t.pnl for t in trades if t.exit_type == k])
-            if any(t.exit_type == k for t in trades)
-            else 0
-        )
-        for k in EXIT_COLORS
-    }
-    ax6.bar(
-        avgs.keys(),
-        avgs.values(),
-        color=list(EXIT_COLORS.values()),
-        edgecolor="none",
-        alpha=0.85,
-    )
-    ax6.axhline(0, color="black", lw=0.8)
-    ax6.yaxis.set_major_formatter(mticker.FuncFormatter(lambda x, _: f"${x:,.0f}"))
-    ax6.set_title("Avg P&L by Exit Type", fontweight="bold")
-
-    # 7. VIX with entries
-    ax7 = fig.add_subplot(4, 2, 8)
-    vx = data.loc[
-        pd.Timestamp(params["start_date"]) : pd.Timestamp(params["end_date"]),
-        "vix_close",
-    ]
-    ax7.plot(vx.index, vx.values, color="#7f8c8d", lw=0.8, alpha=0.8)
-    ax7.axhline(
-        params.get("vix_low", 15),
-        color="#3498db",
-        ls="--",
-        lw=0.9,
-        label=f'VIX={params.get("vix_low", 15)}',
-    )
-    ax7.axhline(
-        params.get("vix_high", 25),
-        color="#e74c3c",
-        ls="--",
-        lw=0.9,
-        label=f'VIX={params.get("vix_high", 25)}',
-    )
-    ax7.scatter(
-        [t.entry_date for t in trades],
-        [t.entry_vix for t in trades],
-        color="#2c3e50",
-        s=35,
-        zorder=5,
-        label="Entry",
-    )
-    ax7.set_title("VIX with Entry Points", fontweight="bold")
-    ax7.legend(fontsize=8)
-    ax7.set_ylabel("VIX")
+    _plot_equity_curve(fig, gs, equity_curve, data, params)
+    _plot_pnl_bars(fig, gs, trades)
+    _plot_cumulative_pnl(fig, gs, trades)
+    _plot_return_histogram(fig, gs, trades)
+    _plot_exit_type_count(fig, gs, trades)
+    _plot_exit_avg_pnl(fig, gs, trades)
+    _plot_vix_overlay(fig, gs, data, params, trades)
 
     plt.tight_layout(rect=[0, 0, 1, 0.98])
     plt.savefig(output_path, dpi=150, bbox_inches="tight")
