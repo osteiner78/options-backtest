@@ -308,6 +308,27 @@ def _compute_vix_regime_stats(trades: List) -> List[Dict]:
     return rows
 
 
+def _compute_source_tracking_stats(trades: list) -> dict:
+    entry_db_count = sum(1 for t in trades if getattr(t, 'entry_source', 'unknown') == 'db')
+    exit_db_count = sum(
+        1 for t in trades
+        if t.exit_type is not None and getattr(t, 'exit_source', 'unknown') == 'db'
+    )
+    mtm_db_pct_list = []
+    for t in trades:
+        total = getattr(t, 'mtm_total_days', 0)
+        source_days = getattr(t, 'mtm_source_days', 0)
+        if total > 0:
+            mtm_db_pct_list.append(source_days / total)
+    return {
+        "entry_db_count": entry_db_count,
+        "entry_db_total": len(trades),
+        "entry_db_pct": entry_db_count / len(trades) * 100.0 if trades else 0.0,
+        "exit_db_count": exit_db_count,
+        "mtm_avg_db_pct": float(np.mean(mtm_db_pct_list)) * 100.0 if mtm_db_pct_list else 0.0,
+    }
+
+
 # ── Public API ───────────────────────────────────────────────────────────
 
 def compute_metrics(trades, equity_curve, params, data) -> dict:
@@ -355,23 +376,7 @@ def compute_metrics(trades, equity_curve, params, data) -> dict:
     results["lr_total_credit"] = float(sum(ev.net_credit_dollar for ev in all_lr_events))
 
     # Source tracking stats
-    entry_db_count = sum(1 for t in trades if getattr(t, 'entry_source', 'unknown') == 'db')
-    exit_db_count = sum(
-        1 for t in trades
-        if t.exit_type is not None and getattr(t, 'exit_source', 'unknown') == 'db'
-    )
-    mtm_db_pct_list = []
-    for t in trades:
-        total = getattr(t, 'mtm_total_days', 0)
-        source_days = getattr(t, 'mtm_source_days', 0)
-        if total > 0:
-            mtm_db_pct_list.append(source_days / total)
-
-    results["entry_db_count"] = entry_db_count
-    results["entry_db_total"] = len(trades)
-    results["entry_db_pct"] = entry_db_count / len(trades) * 100.0 if trades else 0.0
-    results["exit_db_count"] = exit_db_count
-    results["mtm_avg_db_pct"] = float(np.mean(mtm_db_pct_list)) * 100.0 if mtm_db_pct_list else 0.0
+    results.update(_compute_source_tracking_stats(trades))
 
     # Structured stats for API consumers
     results["exit_stats"] = _compute_exit_stats(trades)
@@ -447,23 +452,7 @@ def compute_portfolio_metrics(
     results["cash_yield_earned"] = results["final"] - results["init"] - realized_pnl
 
     # Source tracking stats (same as compute_metrics)
-    entry_db_count = sum(1 for t in trades if getattr(t, 'entry_source', 'unknown') == 'db')
-    exit_db_count = sum(
-        1 for t in trades
-        if t.exit_type is not None and getattr(t, 'exit_source', 'unknown') == 'db'
-    )
-    mtm_db_pct_list = []
-    for t in trades:
-        total = getattr(t, 'mtm_total_days', 0)
-        source_days = getattr(t, 'mtm_source_days', 0)
-        if total > 0:
-            mtm_db_pct_list.append(source_days / total)
-
-    results["entry_db_count"] = entry_db_count
-    results["entry_db_total"] = len(trades)
-    results["entry_db_pct"] = entry_db_count / len(trades) * 100.0 if trades else 0.0
-    results["exit_db_count"] = exit_db_count
-    results["mtm_avg_db_pct"] = float(np.mean(mtm_db_pct_list)) * 100.0 if mtm_db_pct_list else 0.0
+    results.update(_compute_source_tracking_stats(trades))
 
     # Structured stats for API consumers
     results["exit_stats"] = _compute_exit_stats(trades)

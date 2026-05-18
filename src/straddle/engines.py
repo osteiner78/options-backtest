@@ -635,10 +635,8 @@ class MarketEngine:
     ) -> tuple:
         """Nearest-delta strike and mark from DB at entry."""
         if ctx is None or ctx.eval_date is None or ctx.expiration is None or ctx.eval_date < self._DB_START:
-            pk, ck, pm, cm, _ = self._synth.get_entry_marks(S, T, r, vix, ctx)
-            adj_combined = self._synth.apply_fill_adj(pm + cm, "open")
-            factor = adj_combined / (pm + cm) if (pm + cm) > 0 else 1.0
-            return pk, ck, pm * factor, cm * factor, False
+            pk, ck, pm, cm = self._synthetic_fallback_entry(S, T, r, vix, ctx)
+            return pk, ck, pm, cm, False
 
         date_str = ctx.eval_date.strftime("%Y-%m-%d")
         exp_str = ctx.expiration.strftime("%Y-%m-%d")
@@ -648,13 +646,8 @@ class MarketEngine:
         call_row = self._best_row(date_str, exp_str, "call", +target_delta)
 
         if put_row is None or call_row is None:
-            # No valid DB row -- fall back to synthetic
-            pk, ck, pm, cm, _ = self._synth.get_entry_marks(S, T, r, vix, ctx)
-            # Apply entry fill adjustment (MarketEngine.apply_fill_adj is a no-op,
-            # so the caller won't re-apply — we must bake it in here).
-            adj_combined = self._synth.apply_fill_adj(pm + cm, "open")
-            factor = adj_combined / (pm + cm) if (pm + cm) > 0 else 1.0
-            return pk, ck, pm * factor, cm * factor, False
+            pk, ck, pm, cm = self._synthetic_fallback_entry(S, T, r, vix, ctx)
+            return pk, ck, pm, cm, False
 
         exec_mode = self._exec_mode
         tick = self._tick_size
@@ -663,11 +656,8 @@ class MarketEngine:
             put_price = float(put_row["bid"]) if float(put_row["bid"]) > 0 else None
             call_price = float(call_row["bid"]) if float(call_row["bid"]) > 0 else None
             if put_price is None or call_price is None:
-                # No valid bid -- fall back to synthetic
-                pk, ck, pm, cm, _ = self._synth.get_entry_marks(S, T, r, vix, ctx)
-                adj_combined = self._synth.apply_fill_adj(pm + cm, "open")
-                factor = adj_combined / (pm + cm) if (pm + cm) > 0 else 1.0
-                return pk, ck, pm * factor, cm * factor, False
+                pk, ck, pm, cm = self._synthetic_fallback_entry(S, T, r, vix, ctx)
+                return pk, ck, pm, cm, False
 
         elif exec_mode == "mid":
             put_price = float(put_row["mark"])
@@ -692,6 +682,14 @@ class MarketEngine:
             call_price,
             True,  # used_market_data=True
         )
+
+    def _synthetic_fallback_entry(
+        self, S: float, T: float, r: float, vix: float, ctx
+    ) -> Tuple[float, float, float, float]:
+        pk, ck, pm, cm, _ = self._synth.get_entry_marks(S, T, r, vix, ctx)
+        adj_combined = self._synth.apply_fill_adj(pm + cm, "open")
+        factor = adj_combined / (pm + cm) if (pm + cm) > 0 else 1.0
+        return pk, ck, pm * factor, cm * factor
 
     def get_daily_mark(
         self,

@@ -33,6 +33,19 @@ _REG_T_UNDERLYING_PCT = 0.20
 _REG_T_MIN_FLOOR_PCT = 0.10
 
 
+def _compute_close_mid_and_commissions(
+    put_mid_ps: float, call_mid_ps: float,
+    long_put_mid_ps: Optional[float] = None,
+    long_call_mid_ps: Optional[float] = None,
+) -> Tuple[float, int]:
+    if long_put_mid_ps is not None and long_call_mid_ps is not None:
+        return (
+            put_mid_ps + call_mid_ps - long_put_mid_ps - long_call_mid_ps,
+            4,  # 4 legs = 4 commissions
+        )
+    return (put_mid_ps + call_mid_ps, 2)
+
+
 def calculate_reg_t_strangle_margin(
     underlying_price: float,
     put_strike: float,
@@ -348,15 +361,14 @@ def run_portfolio_backtest(
                             call_ask=engine.apply_fill_adj(call_ask_mark, "close"),
                         )
                         if nt.is_iron_condor:
-                            new_n_comm = 4
-                            new_mid_close_ps = (
-                                nt.put_mid_ps + nt.call_mid_ps
-                                - (nt.long_put_mid_ps or 0.0)
-                                - (nt.long_call_mid_ps or 0.0)
+                            new_mid_close_ps, new_n_comm = _compute_close_mid_and_commissions(
+                                nt.put_mid_ps, nt.call_mid_ps,
+                                nt.long_put_mid_ps, nt.long_call_mid_ps,
                             )
                         else:
-                            new_n_comm = 2
-                            new_mid_close_ps = nt.put_mid_ps + nt.call_mid_ps
+                            new_mid_close_ps, new_n_comm = _compute_close_mid_and_commissions(
+                                nt.put_mid_ps, nt.call_mid_ps,
+                            )
                         portfolio.available_cash += nt.net_credit
                         portfolio.add_position(nt, new_bpr)
                         portfolio.last_entry_date = eval_date
@@ -435,14 +447,14 @@ def run_portfolio_backtest(
                         new_trade.daily_marks = [(eval_date, 0.0)]
 
                         if new_trade.is_iron_condor:
-                            n_comm = 4
-                            mid_close_ps = (
-                                kw["put_mid_ps"] + kw["call_mid_ps"]
-                                - kw["long_put_mid_ps"] - kw["long_call_mid_ps"]
+                            mid_close_ps, n_comm = _compute_close_mid_and_commissions(
+                                kw["put_mid_ps"], kw["call_mid_ps"],
+                                kw["long_put_mid_ps"], kw["long_call_mid_ps"],
                             )
                         else:
-                            n_comm = 2
-                            mid_close_ps = kw["put_mid_ps"] + kw["call_mid_ps"]
+                            mid_close_ps, n_comm = _compute_close_mid_and_commissions(
+                                kw["put_mid_ps"], kw["call_mid_ps"],
+                            )
 
                         # Add new credit to cash and register position
                         portfolio.available_cash += kw["net_credit"]
