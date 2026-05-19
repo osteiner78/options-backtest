@@ -70,6 +70,8 @@ export function renderPerformanceBar() {
   const underlyingPnl = metrics.ret_cash_underlying * init;
   const rfPnl         = metrics.ret_cash_rf  * init;
 
+  const cashMode = (params.cash_investment_mode || 'underlying').toLowerCase();
+
   // ── Options component: MaxDD and Calmar derived from cumulative trade P&L curve ──
   // computeOptionsMDD returns a POSITIVE fraction (magnitude of max drawdown).
   // We display it negative to match the convention used in all other rows.
@@ -100,6 +102,11 @@ export function renderPerformanceBar() {
   const optionsIR     = metrics.options_info_ratio != null ? formatNum(metrics.options_info_ratio) : null;
   const optionsMDD    = metrics.options_max_drawdown != null ? formatPct(metrics.options_max_drawdown) : null;
   const optionsCalmar = metrics.options_calmar != null ? formatNum(metrics.options_calmar) : null;
+
+  // When cash mode is risk_free there is no underlying exposure → blank out its metrics
+  const hasUnderlying = cashMode !== 'risk_free';
+  // When cash mode is underlying there is no risk-free exposure → blank out its metrics
+  const hasRiskFree   = cashMode !== 'underlying';
 
   return `
     <div class="perf-bar">
@@ -137,10 +144,12 @@ export function renderPerformanceBar() {
             <td class="ptl">  o/w ${market}</td>
             <td class="r">${formatSignedPct(metrics.ret_cash_underlying)}</td>
             <td class="r">${formatPct(metrics.cagr_cash_underlying)}</td>
-            <td class="r c-amb">${formatNum(underlyingSharpe)}</td>
-            <td class="r c-amb">${formatNum(metrics.underlying_info_ratio)}</td>
-            <td class="r c-neg">${formatPct(underlyingMDD)}</td>
-            <td class="r c-amb">${underlyingCalmar != null ? formatNum(underlyingCalmar) : '--'}</td>
+            ${hasUnderlying ? `
+              <td class="r c-amb">${formatNum(underlyingSharpe)}</td>
+              <td class="r c-amb">${formatNum(metrics.underlying_info_ratio)}</td>
+              <td class="r c-neg">${formatPct(underlyingMDD)}</td>
+              <td class="r c-amb">${underlyingCalmar != null ? formatNum(underlyingCalmar) : '--'}</td>
+            ` : `${na}${na}${na}${na}`}
             <td class="r ${underlyingPnl >= 0 ? 'c-pos' : 'c-neg'}">${fp(underlyingPnl)}</td>
           </tr>
 
@@ -148,7 +157,12 @@ export function renderPerformanceBar() {
             <td class="ptl">  o/w risk-free</td>
             <td class="r">${formatSignedPct(metrics.ret_cash_rf)}</td>
             <td class="r">${formatPct(metrics.cagr_cash_rf)}</td>
-            ${na}${na}${na}${na}
+            ${hasRiskFree ? `
+              <td class="r c-dim">--</td>
+              <td class="r c-dim">--</td>
+              <td class="r c-dim">--</td>
+              <td class="r c-dim">--</td>
+            ` : `${na}${na}${na}${na}`}
             <td class="r ${rfPnl >= 0 ? 'c-pos' : 'c-neg'}">${fp(rfPnl)}</td>
           </tr>
 
