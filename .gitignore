@@ -60,4 +60,4 @@ src/straddle.egg-info/
 .playwright-cli/
 
 # Generated reports (pre-v7 backtest html output)
-reports/
+./reports/

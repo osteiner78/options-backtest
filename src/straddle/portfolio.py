@@ -505,8 +505,6 @@ def run_portfolio_backtest(
         _vol_blocked_exps: set = set()
         comm_per_leg = params.get("commission_per_leg", 1.0)
 
-        cash_yield_annual = params.get("cash_yield_annual", 0.04)
-        daily_rf_rate = cash_yield_annual / 252.0
         cash_investment_mode = params["cash_investment_mode"]
         underlying_allocation_pct = params["underlying_allocation_pct"]
         prev_underlying_close: Optional[float] = None
@@ -544,12 +542,13 @@ def run_portfolio_backtest(
                 if cash_investment_mode == "underlying":
                     cash_daily_return = underlying_daily_ret
                 elif cash_investment_mode == "blend":
+                    rf_daily = r_d / 252.0
                     cash_daily_return = (
                         underlying_allocation_pct * underlying_daily_ret
-                        + (1.0 - underlying_allocation_pct) * daily_rf_rate
+                        + (1.0 - underlying_allocation_pct) * rf_daily
                     )
                 else:  # "risk_free"
-                    cash_daily_return = daily_rf_rate
+                    cash_daily_return = r_d / 252.0
                 portfolio.available_cash *= (1.0 + cash_daily_return)
 
             prev_underlying_close = underlying_close

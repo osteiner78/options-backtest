@@ -234,6 +234,7 @@ MARKET_PRESETS: dict = {
         # different gap/vol dynamics (political events, BRL/USD shocks).
         # TODO: calibrate against B3 intraday gap data.
         "gap_vix_multiplier": 3.0,
+        "cash_yield_annual": 0.10,     # approximate CDI (10% avg)
         "tick_size": 0.05,
     },
     "petr4": {
@@ -266,10 +267,10 @@ MARKET_PRESETS: dict = {
         # PETR4 gaps are driven by oil prices, BRL/USD, and political events.
         # TODO: calibrate against B3 intraday gap data.
         "gap_vix_multiplier": 3.0,
+        "cash_yield_annual": 0.10,     # approximate CDI (10% avg)
         "tick_size": 0.05,
     },
 }
-
 
 def apply_market_preset(
     params: dict,
