@@ -1,6 +1,7 @@
 import { store, toggleTradeLog } from '../../store.js';
 import { getVar } from '../../utils/chartHelpers.js';
 import { currencySymbol } from '../../utils/format.js';
+import { getPlotViewportRect } from '../charts/ChartArea.js';
 
 export function renderPnLStrip() {
   const { tradeLogOpen } = store;
@@ -141,10 +142,22 @@ export function drawPnL() {
     tradesByDate[t.exit_date].push(t);
   }
 
-  const LEFT  = 8;
-  const RIGHT = 8;
-  const plotW = Math.max(10, w - LEFT - RIGHT);
+  // ── Align plot area with the equity chart above ──
+  let LEFT, RIGHT, plotW;
+  const plotRect = getPlotViewportRect();
+  if (plotRect && plotRect.right > plotRect.left) {
+    LEFT  = Math.max(0, plotRect.left  - svgRect.left);
+    const rightEdge = Math.min(w, plotRect.right - svgRect.left);
+    plotW = Math.max(10, rightEdge - LEFT);
+    RIGHT = w - LEFT - plotW;
+  } else {
+    LEFT  = 50;   // approximate uPlot y-axis width
+    RIGHT = 8;
+    plotW = w - LEFT - RIGHT;
+  }
+
   const dayW  = plotW / dates.length;
+  const barW  = Math.max(3, dayW); // minimum 3 px so bars are always visible
 
   const plotH = h - AXIS_H;
   const PAD   = 3;
@@ -157,7 +170,7 @@ export function drawPnL() {
   // Baseline
   out += `<line x1="${LEFT}" y1="${mid}" x2="${LEFT + plotW}" y2="${mid}" stroke="${bg3}" stroke-width="0.8"/>`;
 
-  // Year separator lines + labels
+  // Year separator lines + labels (same positions as equity chart)
   const minMs = dateMs(dates[0]);
   const maxMs = dateMs(dates[dates.length - 1]);
   const span  = maxMs - minMs || 1;
@@ -170,17 +183,17 @@ export function drawPnL() {
     out += `<text x="${(x + 3).toFixed(1)}" y="${h - 2}" font-family="IBM Plex Mono,monospace" font-size="10" fill="${fg4}">${y}</text>`;
   }
 
-  // Daily aggregated bars — one per calendar day, colour by net sign
+  // Daily aggregated bars — only for days with non-zero P&L
   for (let i = 0; i < dates.length; i++) {
     const pnl = dailyNetPnl[i];
     if (pnl === 0) continue;
-    const x  = LEFT + i * dayW;
-    const bw = Math.max(1, dayW - 0.5);
+    const cx = LEFT + i * dayW + dayW / 2; // center of the day slot
+    const x  = cx - barW / 2;              // bar centered on day
     const bh = Math.abs(pnl) / maxAbs * halfH;
     const y  = pnl >= 0 ? mid - bh : mid;
     const color = pnl >= 0 ? pos : neg;
-    out += `<rect x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${bw.toFixed(1)}" height="${bh.toFixed(1)}" fill="${color}" opacity="0.75"/>`;
-    _rects.push({ x1: x, x2: x + bw, date: dates[i], pnl, trades: tradesByDate[dates[i]] || [] });
+    out += `<rect x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${barW.toFixed(1)}" height="${bh.toFixed(1)}" fill="${color}" opacity="0.75"/>`;
+    _rects.push({ x1: x, x2: x + barW, date: dates[i], pnl, trades: tradesByDate[dates[i]] || [] });
   }
 
   svg.innerHTML = out;
