@@ -57,7 +57,8 @@ function loadParams() {
       }
       return { ...defaultParams, ...stored };
     } catch (e) {
-      console.error('Failed to parse saved params', e);
+      console.error('Failed to parse saved params — clearing corrupted data', e);
+      localStorage.removeItem(PARAMS_KEY);
     }
   }
   return defaultParams;
@@ -85,13 +86,20 @@ const initialState = {
 };
 
 const listeners = new Set();
+let batching = false;
+
+export function batch(fn) {
+  batching = true;
+  try { fn(); } finally { batching = false; }
+  listeners.forEach(l => l(store));
+}
 
 export const store = new Proxy(initialState, {
   set(target, key, value) {
     target[key] = value;
     if (key === 'params') localStorage.setItem(PARAMS_KEY, JSON.stringify(value));
     if (key === 'theme')  localStorage.setItem(THEME_KEY, value);
-    listeners.forEach(l => l(target));
+    if (!batching) listeners.forEach(l => l(target));
     return true;
   },
 });
@@ -107,14 +115,20 @@ export function updateParams(newParams) {
 
 export function setStatus(status) {
   store.status = status;
+  if (status === 'running') {
+    store.error = null;
+    store.progress = null;
+  }
 }
 
 export function setResults(results) {
-  store.results = results;
-  store.status = 'completed';
-  store.error = null;
-  store.progress = null;
-  store.lastRun = new Date();
+  batch(() => {
+    store.results = results;
+    store.status = 'completed';
+    store.error = null;
+    store.progress = null;
+    store.lastRun = Date.now();
+  });
 }
 
 export function setProgress(progress) {

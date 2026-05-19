@@ -18,3 +18,4 @@
 [57465515ms] [LOG] [vite] server connection lost. Polling for restart... @ http://localhost:5173/@vite/client:968
 [58634116ms] [LOG] [vite] server connection lost. Polling for restart... @ http://localhost:5173/@vite/client:968
 [66410132ms] [LOG] [vite] server connection lost. Polling for restart... @ http://localhost:5173/@vite/client:968
+[70488557ms] Duplicate export of 'batch'

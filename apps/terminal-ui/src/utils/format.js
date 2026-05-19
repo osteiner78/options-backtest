@@ -19,6 +19,8 @@ export const formatSignedPct = (v, digits = 1) => {
   return `${sign}${(v * 100).toFixed(digits)}%`;
 };
 
+const MARKET_CURRENCIES = { bova11: 'R$', petr4: 'R$' };
+
 /** Return the currency symbol for a market identifier. */
 export const currencySymbol = (market) =>
-  (market === 'bova11' || market === 'petr4') ? 'R$' : '$';
+  MARKET_CURRENCIES[market] ?? '$';

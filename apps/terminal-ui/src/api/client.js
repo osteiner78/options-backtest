@@ -70,10 +70,15 @@ export function streamResults(runId, onProgress) {
       let data;
       try { data = JSON.parse(event.data); } catch { return; }
 
-      if (onProgress) onProgress(data);
+      try {
+        if (onProgress) onProgress(data);
+      } catch (_) {
+        // callback errors must not abort the SSE stream
+      }
 
       if (data.status === 'completed') {
         es.close();
+        clearTimeout(sseTimeout);
         try {
           const result = await fetchResults(runId);
           resolve(result);
@@ -82,14 +87,28 @@ export function streamResults(runId, onProgress) {
         }
       } else if (data.status === 'failed') {
         es.close();
+        clearTimeout(sseTimeout);
         reject(new Error('Backtest failed'));
       }
     };
 
+    const sseTimeout = setTimeout(() => {
+      es.close();
+      reject(new Error('SSE stream timed out after 30s'));
+    }, 30000);
+
     es.onerror = () => {
       es.close();
-      // Fall back to a single poll attempt
-      fetchResults(runId)
+      clearTimeout(sseTimeout);
+      // Fall back to a single poll attempt with timeout
+      const controller = new AbortController();
+      const pollTimeout = setTimeout(() => controller.abort(), 30000);
+      fetch(`${BASE_URL}/backtest/${runId}`, { signal: controller.signal })
+        .then(r => {
+          clearTimeout(pollTimeout);
+          if (!r.ok) throw new Error(`Failed to fetch results (HTTP ${r.status})`);
+          return r.json();
+        })
         .then(r => {
           if (r.status === 'completed') resolve(r);
           else if (r.status === 'failed') reject(new Error(r.error || 'Backtest failed'));
