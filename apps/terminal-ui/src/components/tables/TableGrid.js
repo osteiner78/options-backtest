@@ -7,6 +7,11 @@ const EXIT_COLORS = {
   STOP: 'c-neg', EXPIRY: 'c-amb', FORCE_CLOSE: 'c-dim',
 };
 
+function exitTypeLabel(type, manageAtDte) {
+  if (type === '21DTE') return `${manageAtDte}DTE`;
+  return type;
+}
+
 export function renderTableGrid() {
   const { results, params } = store;
   const sym = currencySymbol(params.market);
@@ -46,7 +51,7 @@ export function renderTableGrid() {
           <tbody>
             ${exitData.map(d => `
               <tr>
-                <td class="${EXIT_COLORS[d.type] || ''} fw6">${d.type}</td>
+                <td class="${EXIT_COLORS[d.type] || ''} fw6">${exitTypeLabel(d.type, params.manage_at_dte)}</td>
                 <td class="r">${d.n}</td>
                 <td class="r c-dim">${(d.pct * 100).toFixed(0)}%</td>
                 <td class="r ${winRateClass(d.winRate)}">${(d.winRate * 100).toFixed(0)}%</td>

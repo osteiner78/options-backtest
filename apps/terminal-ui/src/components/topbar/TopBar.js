@@ -1,5 +1,5 @@
 import { store, setStatus, setResults, setError, setProgress, toggleThemePanel, toggleRunHistory, setRunHistory } from '../../store.js';
-import { triggerBacktest, streamResults, fetchRuns } from '../../api/client.js';
+import { triggerBacktest, streamResults, fetchRuns, labelRun } from '../../api/client.js';
 import { normalizeResults } from '../../api/adapters.js';
 import { renderButton } from '../primitives/Button.js';
 
@@ -43,6 +43,23 @@ export function initTopBar() {
   document.addEventListener('click', async (e) => {
     if (e.target.id === 'btn-theme') {
       toggleThemePanel();
+      return;
+    }
+
+    if (e.target.id === 'btn-save') {
+      const runId = store.lastRunId;
+      if (!runId) {
+        setError('Run a backtest first before saving.');
+        return;
+      }
+      const label = window.prompt('Label this run:', '');
+      if (label == null) return; // user cancelled
+      labelRun(runId, label)
+        .then(() => {
+          // Silently refresh history so the label appears if history is opened
+          fetchRuns(50).then(runs => setRunHistory(runs)).catch(() => {});
+        })
+        .catch(err => setError(err.message || 'Failed to save run'));
       return;
     }
 

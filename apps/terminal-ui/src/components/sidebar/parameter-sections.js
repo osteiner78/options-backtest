@@ -64,6 +64,7 @@ export const parameterSections = [
       { key: 'execution_mode', label: 'execution', color: 'blue',
         transform: v => String(v).toUpperCase().replace(/_/g, ' '),
         options: ['bid_ask', 'mid', 'mid_plus_1tick'],
+        showWhen: { key: 'mode', value: 'market' },
         tooltip: 'Fill price model. bid_ask: sell at bid / buy to close at ask (conservative). mid: midpoint (realistic). mid_plus_1tick: mid + tick_size (optimistic).' },
       { key: 'profit_target_pct', label: 'profit tgt', color: 'green',
         format: v => Math.round(v * 100) + '%', pct: true,

@@ -46,6 +46,12 @@ const defaultParams = {
 
 const ENUM_FIELDS = ['market', 'mode', 'cash_investment_mode', 'portfolio_mode', 'strategy_mode', 'execution_mode'];
 
+const MARKET_SYNTHETIC_DEFAULTS = {
+  spy:    { put_slope: 0.30,  call_slope: 0.10 },
+  bova11: { put_slope: 0.746, call_slope: 0.074 },
+  petr4:  { put_slope: 0.522, call_slope: -0.046 },
+};
+
 function loadParams() {
   const saved = localStorage.getItem(PARAMS_KEY);
   if (saved) {
@@ -83,6 +89,7 @@ const initialState = {
   theme: loadTheme(), // 'gruvbox' | 'tokyo'
   runHistory: [], // [{run_id, created_at, status, label, params}]
   runHistoryOpen: false,
+  lastRunId: null,
 };
 
 const listeners = new Set();
@@ -110,7 +117,19 @@ export function subscribe(listener) {
 }
 
 export function updateParams(newParams) {
-  store.params = { ...store.params, ...newParams };
+  const current = store.params;
+  const next = { ...current, ...newParams };
+  // Auto-update synthetic slopes when market changes (or mode switches to synthetic)
+  const marketChanged = newParams.market && newParams.market !== current.market;
+  const modeChangedToSynthetic = newParams.mode === 'synthetic' && current.mode !== 'synthetic';
+  if ((marketChanged || modeChangedToSynthetic) && next.mode === 'synthetic') {
+    const defs = MARKET_SYNTHETIC_DEFAULTS[next.market];
+    if (defs) {
+      next.put_slope = defs.put_slope;
+      next.call_slope = defs.call_slope;
+    }
+  }
+  store.params = next;
 }
 
 export function setStatus(status) {
@@ -128,6 +147,7 @@ export function setResults(results) {
     store.error = null;
     store.progress = null;
     store.lastRun = Date.now();
+    store.lastRunId = results?.run_id || null;
   });
 }
 
