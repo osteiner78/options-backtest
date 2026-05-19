@@ -57,6 +57,7 @@ src/straddle.egg-info/
 
 # Tool state
 .opencode/
+.playwright-cli/
 
 # Generated reports (pre-v7 backtest html output)
 reports/
