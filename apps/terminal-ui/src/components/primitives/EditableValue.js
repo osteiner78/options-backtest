@@ -23,6 +23,7 @@ export function bindEditableValues(root, onCommit) {
     const input = document.createElement('input');
     input.className = type === 'date' ? 'pv-input pv-date' : 'pv-input';
     input.value = originalText;
+    input.autocomplete = 'off';
     if (type === 'date') input.placeholder = 'YYYY-MM-DD';
 
     pv.textContent = '';

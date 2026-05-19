@@ -61,6 +61,13 @@ function loadParams() {
       for (const f of ENUM_FIELDS) {
         if (typeof stored[f] === 'string') stored[f] = stored[f].toLowerCase();
       }
+      // Sanitize corrupted numeric fields (e.g. string instead of number)
+      for (const k of ['underlying_allocation_pct', 'profit_target_pct', 'stop_loss_pct', 'max_bpr_allocation', 'target_delta', 'wing_delta']) {
+        if (typeof stored[k] === 'string') {
+          const n = parseFloat(stored[k]);
+          stored[k] = Number.isFinite(n) ? n : defaultParams[k];
+        }
+      }
       return { ...defaultParams, ...stored };
     } catch (e) {
       console.error('Failed to parse saved params — clearing corrupted data', e);

@@ -65,7 +65,12 @@ export function initSidebar() {
   bindEditableValues(document, (key, raw) => {
     const original = store.params[key];
     const paramDef = findParam(key);
-    if (paramDef?.pct) {
+    // Defensive: detect pct params even if findParam fails (module-loading edge case)
+    const isPct = paramDef?.pct || (
+      typeof original === 'number' && original >= 0 && original <= 1 &&
+      (String(raw).trim().endsWith('%') || /^\d+(\.\d+)?$/.test(String(raw).trim()))
+    );
+    if (isPct) {
       // Percentage params store fractions (0.50 = 50%).
       // Accept "50", "50%", or "0.50" — all treated as the intended percentage.
       const n = parseFloat(String(raw).trim().replace('%', ''));
