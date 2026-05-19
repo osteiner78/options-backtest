@@ -1,7 +1,6 @@
 import { store, toggleTradeLog } from '../../store.js';
 import { getVar } from '../../utils/chartHelpers.js';
 import { currencySymbol } from '../../utils/format.js';
-import { getPlotViewportRect } from '../charts/ChartArea.js';
 
 export function renderPnLStrip() {
   const { tradeLogOpen } = store;
@@ -129,71 +128,76 @@ export function drawPnL() {
   const dates = Object.keys(results.equity_curve);
   if (!dates.length) return;
 
-  // Build daily aggregated net P&L and trade index
-  const dailyNetPnl = new Array(dates.length).fill(0);
-  const tradesByDate = {};
+  // Bucket trades by calendar week (Mon–Sun) to get wider, visible bars
+  const weekPnl = new Map();   // weekStartDate -> netPnl
+  const weekTrades = new Map(); // weekStartDate -> [trades]
+
+  function weekStart(d) {
+    const date = new Date(d + 'T00:00:00Z');
+    const day = date.getUTCDay(); // 0=Sun, 1=Mon...
+    const diff = (day === 0 ? 6 : day - 1); // days since Monday
+    date.setUTCDate(date.getUTCDate() - diff);
+    return date.toISOString().slice(0, 10);
+  }
 
   for (const t of results.trades) {
     if (t.exit_date == null || t.pnl == null) continue;
-    const idx = dates.indexOf(t.exit_date);
-    if (idx === -1) continue;
-    dailyNetPnl[idx] += t.pnl;
-    if (!tradesByDate[t.exit_date]) tradesByDate[t.exit_date] = [];
-    tradesByDate[t.exit_date].push(t);
+    const ws = weekStart(t.exit_date);
+    weekPnl.set(ws, (weekPnl.get(ws) || 0) + t.pnl);
+    if (!weekTrades.has(ws)) weekTrades.set(ws, []);
+    weekTrades.get(ws).push(t);
   }
 
-  // ── Align plot area with the equity chart above ──
-  let LEFT, RIGHT, plotW;
-  const plotRect = getPlotViewportRect();
-  if (plotRect && plotRect.right > plotRect.left) {
-    LEFT  = Math.max(0, plotRect.left  - svgRect.left);
-    const rightEdge = Math.min(w, plotRect.right - svgRect.left);
-    plotW = Math.max(10, rightEdge - LEFT);
-    RIGHT = w - LEFT - plotW;
-  } else {
-    LEFT  = 50;   // approximate uPlot y-axis width
-    RIGHT = 8;
-    plotW = w - LEFT - RIGHT;
-  }
+  // Only weeks with non-zero P&L
+  const activeWeeks = [...weekPnl.entries()].filter(([, pnl]) => pnl !== 0);
+  if (!activeWeeks.length) return;
 
-  const dayW  = plotW / dates.length;
-  const barW  = Math.max(3, dayW); // minimum 3 px so bars are always visible
+  // Fixed padding — no uPlot bbox dependency
+  const PAD_X = 10;
+  const LEFT  = PAD_X;
+  const RIGHT = PAD_X;
+  const plotW = Math.max(10, w - LEFT - RIGHT);
 
   const plotH = h - AXIS_H;
   const PAD   = 3;
   const mid   = plotH / 2;
   const halfH = mid - PAD;
-  const maxAbs = Math.max(...dailyNetPnl.map(Math.abs), 1);
+  const maxAbs = Math.max(...activeWeeks.map(([, pnl]) => Math.abs(pnl)), 1);
+
+  // Compute x using same proportional mapping as equity chart (timestamp-based)
+  const minMs = dateMs(dates[0]);
+  const maxMs = dateMs(dates[dates.length - 1]);
+  const span  = maxMs - minMs || 1;
+  const toX = (ms) => LEFT + ((ms - minMs) / span) * plotW;
+
+  // Bar width: span 5 days (Wed–next Tue) centered on week start, clamped to visible area
+  const weekSpanMs = 5 * 24 * 60 * 60 * 1000; // visual width ~5 days
 
   let out = '';
 
   // Baseline
   out += `<line x1="${LEFT}" y1="${mid}" x2="${LEFT + plotW}" y2="${mid}" stroke="${bg3}" stroke-width="0.8"/>`;
 
-  // Year separator lines + labels (same positions as equity chart)
-  const minMs = dateMs(dates[0]);
-  const maxMs = dateMs(dates[dates.length - 1]);
-  const span  = maxMs - minMs || 1;
+  // Year separator lines + labels
   const minYear = new Date(minMs).getUTCFullYear();
   const maxYear = new Date(maxMs).getUTCFullYear();
   for (let y = minYear + 1; y <= maxYear; y++) {
-    const x = LEFT + ((Date.UTC(y, 0, 1) - minMs) / span) * plotW;
+    const x = toX(Date.UTC(y, 0, 1));
     if (x < LEFT || x > LEFT + plotW) continue;
     out += `<line x1="${x.toFixed(1)}" y1="0" x2="${x.toFixed(1)}" y2="${plotH}" stroke="${dim}" stroke-width="1" opacity="0.5"/>`;
     out += `<text x="${(x + 3).toFixed(1)}" y="${h - 2}" font-family="IBM Plex Mono,monospace" font-size="10" fill="${fg4}">${y}</text>`;
   }
 
-  // Daily aggregated bars — only for days with non-zero P&L
-  for (let i = 0; i < dates.length; i++) {
-    const pnl = dailyNetPnl[i];
-    if (pnl === 0) continue;
-    const cx = LEFT + i * dayW + dayW / 2; // center of the day slot
-    const x  = cx - barW / 2;              // bar centered on day
+  // Weekly aggregated bars
+  for (const [ws, pnl] of activeWeeks) {
+    const cx = toX(dateMs(ws));
+    const bw = Math.max(6, Math.min(20, (weekSpanMs / span) * plotW));
+    const x  = Math.max(LEFT, cx - bw / 2);
     const bh = Math.abs(pnl) / maxAbs * halfH;
     const y  = pnl >= 0 ? mid - bh : mid;
     const color = pnl >= 0 ? pos : neg;
-    out += `<rect x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${barW.toFixed(1)}" height="${bh.toFixed(1)}" fill="${color}" opacity="0.75"/>`;
-    _rects.push({ x1: x, x2: x + barW, date: dates[i], pnl, trades: tradesByDate[dates[i]] || [] });
+    out += `<rect x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${bw.toFixed(1)}" height="${bh.toFixed(1)}" fill="${color}" opacity="0.75"/>`;
+    _rects.push({ x1: x, x2: x + bw, date: ws, pnl, trades: weekTrades.get(ws) || [] });
   }
 
   svg.innerHTML = out;
