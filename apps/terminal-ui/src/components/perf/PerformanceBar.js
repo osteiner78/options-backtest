@@ -90,6 +90,17 @@ export function renderPerformanceBar() {
 
   const na = `<td class="r c-dim">--</td>`;
 
+  // Server-side per-component metrics (portfolio mode) — fall back to client-side derivations
+  const portSharpe  = metrics.portfolio_sharpe  != null ? formatNum(metrics.portfolio_sharpe) : formatNum(metrics.sharpe);
+  const portIR      = metrics.portfolio_info_ratio != null ? formatNum(metrics.portfolio_info_ratio) : formatNum(metrics.info_ratio);
+  const portMDD     = metrics.portfolio_max_drawdown != null ? formatPct(metrics.portfolio_max_drawdown) : formatPct(metrics.max_drawdown);
+  const portCalmar  = metrics.portfolio_calmar  != null ? formatNum(metrics.portfolio_calmar) : formatNum(metrics.calmar);
+
+  const optionsSharpe = metrics.options_sharpe != null ? formatNum(metrics.options_sharpe) : null;
+  const optionsIR     = metrics.options_info_ratio != null ? formatNum(metrics.options_info_ratio) : null;
+  const optionsMDD    = metrics.options_max_drawdown != null ? formatPct(metrics.options_max_drawdown) : null;
+  const optionsCalmar = metrics.options_calmar != null ? formatNum(metrics.options_calmar) : null;
+
   return `
     <div class="perf-bar">
       <div class="perf-bar-label">PERFORMANCE</div>
@@ -104,10 +115,10 @@ export function renderPerformanceBar() {
             <td class="ptl c-amb fw6">PORTFOLIO</td>
             <td class="r c-pos fw6">${formatSignedPct(metrics.total_return)}</td>
             <td class="r c-pos fw6">${formatPct(metrics.annualized_return)}</td>
-            <td class="r c-amb fw6">${formatNum(metrics.sharpe)}</td>
-            <td class="r c-amb fw6">${formatNum(metrics.info_ratio)}</td>
-            <td class="r c-neg fw6">${formatPct(metrics.max_drawdown)}</td>
-            <td class="r c-amb fw6">${formatNum(metrics.calmar)}</td>
+            <td class="r c-amb fw6">${portSharpe}</td>
+            <td class="r c-amb fw6">${portIR}</td>
+            <td class="r c-neg fw6">${portMDD}</td>
+            <td class="r c-amb fw6">${portCalmar}</td>
             <td class="r c-pos fw6">${fp(portPnl)}</td>
           </tr>
 
@@ -115,9 +126,10 @@ export function renderPerformanceBar() {
             <td class="ptl">  o/w short strangles</td>
             <td class="r">${formatSignedPct(metrics.ret_options)}</td>
             <td class="r">${formatPct(metrics.cagr_options)}</td>
-            ${na}${na}
-            <td class="r c-neg">${optMDD > 0 ? formatPct(-optMDD) : '--'}</td>
-            <td class="r c-amb">${optCalmar != null ? formatNum(optCalmar) : '--'}</td>
+            <td class="r c-amb">${optionsSharpe != null ? optionsSharpe : '--'}</td>
+            <td class="r c-amb">${optionsIR != null ? optionsIR : '--'}</td>
+            <td class="r c-neg">${optionsMDD != null ? optionsMDD : (optMDD > 0 ? formatPct(-optMDD) : '--')}</td>
+            <td class="r c-amb">${optionsCalmar != null ? optionsCalmar : (optCalmar != null ? formatNum(optCalmar) : '--')}</td>
             <td class="r ${optPnl >= 0 ? 'c-pos' : 'c-neg'}">${fp(optPnl)}</td>
           </tr>
 
@@ -126,7 +138,7 @@ export function renderPerformanceBar() {
             <td class="r">${formatSignedPct(metrics.ret_cash_underlying)}</td>
             <td class="r">${formatPct(metrics.cagr_cash_underlying)}</td>
             <td class="r c-amb">${formatNum(underlyingSharpe)}</td>
-            ${na}
+            <td class="r c-amb">${formatNum(metrics.underlying_info_ratio)}</td>
             <td class="r c-neg">${formatPct(underlyingMDD)}</td>
             <td class="r c-amb">${underlyingCalmar != null ? formatNum(underlyingCalmar) : '--'}</td>
             <td class="r ${underlyingPnl >= 0 ? 'c-pos' : 'c-neg'}">${fp(underlyingPnl)}</td>
@@ -145,7 +157,7 @@ export function renderPerformanceBar() {
             <td class="r c-blue fw6">${formatSignedPct(metrics.underlying_total_return)}</td>
             <td class="r c-blue fw6">${formatPct(metrics.underlying_annualized_return)}</td>
             <td class="r c-blue fw6">${formatNum(metrics.underlying_sharpe)}</td>
-            ${na}
+            <td class="r c-blue fw6">${formatNum(metrics.underlying_info_ratio)}</td>
             <td class="r c-blue fw6">${formatPct(metrics.underlying_max_drawdown)}</td>
             <td class="r c-blue fw6">${formatNum(metrics.underlying_calmar)}</td>
             <td class="r c-blue fw6">${fp(init * metrics.underlying_total_return)}</td>

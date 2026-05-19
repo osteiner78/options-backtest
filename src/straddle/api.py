@@ -182,6 +182,7 @@ class MetricsResponse(BaseModel):
     underlying_total_return: float
     underlying_annualized_return: float
     underlying_sharpe: float
+    underlying_info_ratio: Optional[float] = None
     underlying_max_drawdown: float
     underlying_calmar: float
     exit_breakdown: Dict[str, int]
@@ -196,6 +197,15 @@ class MetricsResponse(BaseModel):
     avg_bpr_util_pct: Optional[float] = None
     peak_bpr_util_pct: Optional[float] = None
     max_streak: Optional[int] = None
+    # Per-component metrics for frontend breakdown tables
+    portfolio_sharpe: Optional[float] = None
+    portfolio_info_ratio: Optional[float] = None
+    portfolio_max_drawdown: Optional[float] = None
+    portfolio_calmar: Optional[float] = None
+    options_sharpe: Optional[float] = None
+    options_info_ratio: Optional[float] = None
+    options_max_drawdown: Optional[float] = None
+    options_calmar: Optional[float] = None
     exit_stats: List[ExitStatRow] = Field(default_factory=list)
     vix_regime_stats: List[VixRegimeStatRow] = Field(default_factory=list)
 
@@ -239,7 +249,8 @@ def _build_metrics_response(metrics: dict, params: dict, trades: list, data: pd.
         sharpe=_clean(metrics.get("sharpe", 0)), info_ratio=_clean(metrics.get("info_ratio")), max_drawdown=_clean(metrics.get("mdd", 0)), calmar=_clean(metrics.get("calmar", 0)),
         win_rate=_clean(metrics.get("wr", 0)), avg_pnl=_clean(metrics.get("avg_pnl", 0)),
         underlying_total_return=_clean(metrics.get("underlying_total_return", 0)), underlying_annualized_return=_clean(underlying_ann),
-        underlying_sharpe=_clean(metrics.get("underlying_sharpe", 0)), underlying_max_drawdown=_clean(underlying_mdd), underlying_calmar=_clean(underlying_calmar),
+        underlying_sharpe=_clean(metrics.get("underlying_sharpe", 0)), underlying_info_ratio=_clean(metrics.get("underlying_ir")),
+        underlying_max_drawdown=_clean(underlying_mdd), underlying_calmar=_clean(underlying_calmar),
         exit_breakdown={"PROFIT": metrics.get("n_p", 0), "STOP": metrics.get("n_s", 0), "21DTE": metrics.get("n_d", 0), "EXPIRY": metrics.get("n_e", 0), "ROLLED": metrics.get("n_r", 0), "FORCE_CLOSE": metrics.get("n_f", 0)},
         ret_options=_clean(short_pnl/init), ret_cash_underlying=_clean(ret_cash_underlying), ret_cash_rf=_clean(ret_cash_rf),
         cagr_options=_clean(_ann(short_pnl/init)), cagr_cash_underlying=_clean(_ann(ret_cash_underlying)), cagr_cash_rf=_clean(_ann(ret_cash_rf)),
@@ -247,6 +258,14 @@ def _build_metrics_response(metrics: dict, params: dict, trades: list, data: pd.
         avg_bpr_util_pct=_clean(metrics.get("avg_bpr_util", 0) / 100.0) if "avg_bpr_util" in metrics else None,
         peak_bpr_util_pct=_clean(metrics.get("peak_bpr_util", 0) / 100.0) if "peak_bpr_util" in metrics else None,
         max_streak=metrics.get("max_streak"),
+        portfolio_sharpe=_clean(metrics.get("portfolio_sharpe")),
+        portfolio_info_ratio=_clean(metrics.get("portfolio_info_ratio")),
+        portfolio_max_drawdown=_clean(metrics.get("portfolio_mdd")),
+        portfolio_calmar=_clean(metrics.get("portfolio_calmar")),
+        options_sharpe=_clean(metrics.get("options_sharpe")),
+        options_info_ratio=_clean(metrics.get("options_info_ratio")),
+        options_max_drawdown=_clean(metrics.get("options_mdd")),
+        options_calmar=_clean(metrics.get("options_calmar")),
         exit_stats=metrics.get("exit_stats", []),
         vix_regime_stats=metrics.get("vix_regime_stats", []),
     )

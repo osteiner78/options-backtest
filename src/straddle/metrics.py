@@ -34,10 +34,10 @@ def _compute_benchmark_stats(data: pd.DataFrame, params: dict) -> Dict:
         return {"underlying_total_return": underlying_total_return, "underlying_sharpe": 0.0}
 
     _rf = data.loc[_daily.index, "risk_free_rate"] / 252
-    underlying_sharpe = float(
-        ((_daily - _rf).mean() / _daily.std(ddof=1)) * np.sqrt(252)
-    )
-    return {"underlying_total_return": underlying_total_return, "underlying_sharpe": underlying_sharpe}
+    std = _daily.std(ddof=1)
+    underlying_sharpe = float(((_daily - _rf).mean() / std) * np.sqrt(252)) if std > 0 else 0.0
+    underlying_ir = float((_daily.mean() / std) * np.sqrt(252)) if std > 0 else 0.0
+    return {"underlying_total_return": underlying_total_return, "underlying_sharpe": underlying_sharpe, "underlying_ir": underlying_ir}
 
 
 def _compute_trade_stats(trades: List) -> Dict:
@@ -400,6 +400,18 @@ def compute_portfolio_metrics(
     # Equity stats from the provided total_equity column (correct for total_return)
     results = _compute_equity_stats(equity_df["total_equity"], params, data)
 
+    # Capture total portfolio metrics before options-only overwrite
+    portfolio_sharpe = results.get("sharpe")
+    portfolio_mdd = results.get("mdd")
+    portfolio_calmar = results.get("calmar")
+
+    # Portfolio info ratio (excess-over-zero) from total equity
+    daily_pct_total = equity_df["total_equity"].pct_change().dropna()
+    if len(daily_pct_total) > 1 and daily_pct_total.std(ddof=1) > 0:
+        portfolio_info_ratio = float(daily_pct_total.mean() / daily_pct_total.std(ddof=1) * np.sqrt(252))
+    else:
+        portfolio_info_ratio = 0.0
+
     # Recompute Sharpe, MDD, Calmar from trade-level daily MTM marks.
     # The portfolio equity curve mixes cash flows with unrealized P&L,
     # producing noisy daily returns. Trade daily_marks are built directly
@@ -430,7 +442,17 @@ def compute_portfolio_metrics(
         )
         mdd = float(results.get("mdd", 0.0))
         results["calmar"] = ann_options / abs(mdd) if mdd and mdd != 0 else 0.0
-    
+
+    # Store explicit component metrics for frontend per-component tables
+    results["portfolio_sharpe"] = portfolio_sharpe
+    results["portfolio_info_ratio"] = portfolio_info_ratio
+    results["portfolio_mdd"] = portfolio_mdd
+    results["portfolio_calmar"] = portfolio_calmar
+    results["options_sharpe"] = results.get("sharpe")
+    results["options_info_ratio"] = results.get("info_ratio")
+    results["options_mdd"] = results.get("mdd")
+    results["options_calmar"] = results.get("calmar")
+
     # Include all trades so exit breakdown counts (including ROLLED) are correct.
     results.update(_compute_trade_stats(trades))
     results.update(_compute_chain_stats(trades))
