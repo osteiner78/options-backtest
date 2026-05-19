@@ -19,3 +19,8 @@
 [58634116ms] [LOG] [vite] server connection lost. Polling for restart... @ http://localhost:5173/@vite/client:968
 [66410132ms] [LOG] [vite] server connection lost. Polling for restart... @ http://localhost:5173/@vite/client:968
 [70488557ms] Duplicate export of 'batch'
+[70575337ms] [LOG] [vite] server connection lost. Polling for restart... @ http://localhost:5173/@vite/client:968
+[70581475ms] [LOG] [vite] server connection lost. Polling for restart... @ http://localhost:5173/@vite/client:968
+[72499363ms] [LOG] [vite] server connection lost. Polling for restart... @ http://localhost:5173/@vite/client:968
+[73182213ms] [LOG] [vite] server connection lost. Polling for restart... @ http://localhost:5173/@vite/client:968
+[74925304ms] [LOG] [vite] server connection lost. Polling for restart... @ http://localhost:5173/@vite/client:968
