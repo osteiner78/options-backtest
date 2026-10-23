@@ -53,6 +53,30 @@ params.py → data.py → engines.py → strategy.py → portfolio.py → metric
 - **FastAPI backend** with SSE progress streaming
 - **Terminal-UI** deployed on GitHub Pages (uses the public Render API by default)
 
+## Data files (not in git)
+
+Large data lives in `data/` and is gitignored:
+
+| File | Size | Used by |
+|---|---|---|
+| `data/Spy Options Database.db` | 9.6 GB | SPY market engine |
+| `data/B3/b3_options_rb3.db` | 267 MB | B3 market engine (`params.py`), skew fit, deep-dive scripts |
+| `data/B3/COTAHIST_A2010.ZIP` … `COTAHIST_A2026.ZIP` | 582 MB | raw B3 exchange files, only needed to rebuild data |
+
+The raw COTAHIST files are stored **zipped** (one `.ZIP` per year, same layout as B3 publishes them;
+the `.TXT` totalled 4.7 GB). `scripts/b3_parser.py` and `scripts/build_b3_options_db.py` read the
+unzipped `COTAHIST_A*.TXT`, so unzip before rebuilding and delete the `.TXT` afterwards:
+
+```bash
+cd data/B3 && unzip -o 'COTAHIST_A*.ZIP'      # → COTAHIST_A*.TXT
+# ... run the build/parsing scripts ...
+rm COTAHIST_A*.TXT
+```
+
+The legacy `data/B3/b3_options.db` (built from COTAHIST, found corrupted — see
+`.agent/plans/003 - migration_context.md`) was deleted on 2026-10-23; it is superseded by
+`b3_options_rb3.db` and can be regenerated with `scripts/build_b3_options_db.py` if ever needed.
+
 ## Quick start
 
 ```bash

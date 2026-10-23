@@ -39,6 +39,7 @@ backtest_results.png
 
 # B3 raw data (large)
 data/B3/COTAHIST_*.TXT
+data/B3/COTAHIST_*.ZIP
 
 # Paper trading artifacts
 data/paper_trades.db-*
